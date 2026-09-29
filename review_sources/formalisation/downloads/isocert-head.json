@@ -1,0 +1,125 @@
+{
+  "sha": "0b160702bc0196739915541478fdfc9bb67a35db",
+  "node_id": "C_kwDOGh_8h9oAKDBiMTYwNzAyYmMwMTk2NzM5OTE1NTQxNDc4ZmRmYzliYjY3YTM1ZGI",
+  "commit": {
+    "author": {
+      "name": "Milan Bankovic",
+      "email": "milan@matf.bg.ac.rs",
+      "date": "2023-01-06T19:01:36Z"
+    },
+    "committer": {
+      "name": "Milan Bankovic",
+      "email": "milan@matf.bg.ac.rs",
+      "date": "2023-01-06T19:01:36Z"
+    },
+    "message": "Removal of unused code",
+    "tree": {
+      "sha": "1561c8bd7754672b64328dc10195a0bfe5f3205e",
+      "url": "https://api.github.com/repos/milanbankovic/isocert/git/trees/1561c8bd7754672b64328dc10195a0bfe5f3205e"
+    },
+    "url": "https://api.github.com/repos/milanbankovic/isocert/git/commits/0b160702bc0196739915541478fdfc9bb67a35db",
+    "comment_count": 0,
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "url": "https://api.github.com/repos/milanbankovic/isocert/commits/0b160702bc0196739915541478fdfc9bb67a35db",
+  "html_url": "https://github.com/milanbankovic/isocert/commit/0b160702bc0196739915541478fdfc9bb67a35db",
+  "comments_url": "https://api.github.com/repos/milanbankovic/isocert/commits/0b160702bc0196739915541478fdfc9bb67a35db/comments",
+  "author": {
+    "login": "milanbankovic",
+    "id": 12121078,
+    "node_id": "MDQ6VXNlcjEyMTIxMDc4",
+    "avatar_url": "https://avatars.githubusercontent.com/u/12121078?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/milanbankovic",
+    "html_url": "https://github.com/milanbankovic",
+    "followers_url": "https://api.github.com/users/milanbankovic/followers",
+    "following_url": "https://api.github.com/users/milanbankovic/following{/other_user}",
+    "gists_url": "https://api.github.com/users/milanbankovic/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/milanbankovic/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/milanbankovic/subscriptions",
+    "organizations_url": "https://api.github.com/users/milanbankovic/orgs",
+    "repos_url": "https://api.github.com/users/milanbankovic/repos",
+    "events_url": "https://api.github.com/users/milanbankovic/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/milanbankovic/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "milanbankovic",
+    "id": 12121078,
+    "node_id": "MDQ6VXNlcjEyMTIxMDc4",
+    "avatar_url": "https://avatars.githubusercontent.com/u/12121078?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/milanbankovic",
+    "html_url": "https://github.com/milanbankovic",
+    "followers_url": "https://api.github.com/users/milanbankovic/followers",
+    "following_url": "https://api.github.com/users/milanbankovic/following{/other_user}",
+    "gists_url": "https://api.github.com/users/milanbankovic/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/milanbankovic/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/milanbankovic/subscriptions",
+    "organizations_url": "https://api.github.com/users/milanbankovic/orgs",
+    "repos_url": "https://api.github.com/users/milanbankovic/repos",
+    "events_url": "https://api.github.com/users/milanbankovic/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/milanbankovic/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "a2d01e16e7ba0ddab77d21739548d2aed365ab83",
+      "url": "https://api.github.com/repos/milanbankovic/isocert/commits/a2d01e16e7ba0ddab77d21739548d2aed365ab83",
+      "html_url": "https://github.com/milanbankovic/isocert/commit/a2d01e16e7ba0ddab77d21739548d2aed365ab83"
+    }
+  ],
+  "stats": {
+    "total": 236,
+    "additions": 0,
+    "deletions": 236
+  },
+  "files": [
+    {
+      "sha": "a6d067b6cad0106c5fe63a2e85bb25c3cacd8fc9",
+      "filename": "checker/common.hpp",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 175,
+      "changes": 175,
+      "blob_url": "https://github.com/milanbankovic/isocert/blob/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Fcommon.hpp",
+      "raw_url": "https://github.com/milanbankovic/isocert/raw/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Fcommon.hpp",
+      "contents_url": "https://api.github.com/repos/milanbankovic/isocert/contents/checker%2Fcommon.hpp?ref=0b160702bc0196739915541478fdfc9bb67a35db",
+      "patch": "@@ -22,55 +22,6 @@\n \n using permutation = std::vector<unsigned>;\n \n-permutation initial_permutation(unsigned n)\n-{\n-  permutation p;\n-  p.resize(n);\n-  for(unsigned i = 0; i < n; i++)\n-    p[i] = i;\n-  return p;\n-}\n-\n-permutation operator ~ (const permutation & p)\n-{\n-  permutation ret;\n-  ret.resize(p.size());\n-  for(unsigned i = 0; i < p.size(); i++)\n-    ret[p[i]] = i;\n-  return ret;\n-}\n-\n-permutation operator * (const permutation & p1, const permutation & p2)\n-{\n-  permutation ret;\n-  ret.resize(p1.size());\n-  for(unsigned i = 0; i < p1.size(); i++)\n-    ret[i] = p1[p2[i]];\n-\n-  return ret;\n-}\n-\n-void shuffle_permutation(permutation & p)\n-{\n-  std::mt19937 g(time(0));\n-  std::shuffle(p.begin(), p.end(), g);  \n-}\n-\n-permutation random_permutation(unsigned n)\n-{\n-  permutation p = initial_permutation(n);\n-  shuffle_permutation(p);\n-  return p;\n-}\n-\n-\n-std::ostream & operator << (std::ostream & ostr, const permutation & p)\n-{\n-  for(unsigned i = 0; i < p.size(); i++)\n-    ostr << p[i] << \" \";\n-  return ostr;\n-}\n-\n class graph {\n private:\n   std::vector<std::vector<bool>> _edges;\n@@ -144,24 +95,6 @@ class graph {\n     return 0;\t\n   }\n   \n-  void out(std::ostream & ostr) const\n-  {\n-    ostr << \"   \";\n-    for(unsigned i = 0; i < num_nodes(); i++)\n-      ostr << std::setw(2) << i  << \" \";\n-    ostr << std::endl;\n-    for(unsigned i = 0; i < num_nodes(); i++)\n-      {\n-\tostr << std::setw(2) << i << \" \";\n-\t\n-\tfor(unsigned j = 0; j < num_nodes(); j++)\n-\t  {\n-\t    ostr << std::setw(2) << _edges[i][j] << \" \";\t    \n-\t  }\n-\tostr << std::endl;\n-      }\n-  }\n-\n   unsigned num_edges() const\n   {\n     unsigned c = 0;\n@@ -267,12 +200,6 @@ class graph {\n   }\n };\n \n-inline\n-std::ostream & operator << (std::ostream & ostr, const graph & g)\n-{\n-  g.out(ostr);\n-  return ostr;\n-}\n \n inline\n std::istream & operator >> (std::istream & istr, graph & g)\n@@ -372,18 +299,6 @@ class coloring {\n       calculate_invariant(g);\n   }\n \n-  \n-  coloring(std::vector<unsigned> && node_colors, unsigned num_of_colors, unsigned invariant)\n-    :_node_colors(std::move(node_colors)),\n-     _cells(num_of_colors),\n-     _invariant(invariant)    \n-  {\n-    for(unsigned i = 0; i < _node_colors.size(); i++)\n-      {\n-\t_cells[_node_colors[i]].push_back(i);\n-      }\n-  }\n-  \n   coloring(std::vector<std::vector<unsigned>> && cells, unsigned num_of_nodes, const graph & g, bool calculate = true)\n     :_node_colors(num_of_nodes),\n      _cells(std::move(cells)),\n@@ -492,96 +407,6 @@ std::ostream & operator << (std::ostream & ostr, const coloring & c)\n   return ostr;\n }\n \n-template<typename T>\n-void print_vector(const std::vector<T> & v)\n-{\n-  for(const auto & x : v)\n-    std::cout << x << \", \";\n-  std::cout << std::endl;\n-}\n-\n-\n-void write_utf8(unsigned code, std::ostream & ostr)\n-{\n-  static char buff[6];\n-  unsigned count = 0;\n-  // one byte (up to 7 bits)\n-  if((code & 0xFFFFFF80) == 0)\n-    {\n-      buff[count++] = (char)code;\n-    }\n-  // two bytes (up to 11 bits)\n-  else if((code & 0xFFFFF800) == 0)\n-    {\n-      char c;\n-\t  \n-      c = 0xC0 | (0x1F & (code >> 6));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & code);\n-      buff[count++] = c;\n-    }\n-  // three bytes (up to 16 bits)\n-  else if((code & 0xFFFF0000) == 0)\n-    {\n-      char c;\n-\n-      c = 0xE0 | (0xF & (code >> 12));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 6));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & code);\n-      buff[count++] = c;\n-    }\n-  // four bytes (up to 21 bits)\n-  else if((code & 0xFFE00000) == 0)\n-    {\n-      char c;\n-\n-      c =  0xF0 | (0x7 & (code >> 18));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 12));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 6));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & code);\n-      buff[count++] = c;\n-    }\n-  // five bytes (up to 26 bits)\n-  else if((code & 0xFC000000) == 0)\n-    {\n-      char c;\n-\n-      c = 0xF8 | (0x3 & (code >> 24));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 18));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 12));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 6));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & code);\n-      buff[count++] = c;\n-    }\n-  else // six bytes (up to 31 bits)\n-    {\n-      char c;\n-\n-      c = 0xFC | (0x1 & (code >> 30));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 24));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 18));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 12));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & (code >> 6));\n-      buff[count++] = c;\n-      c = 0x80 | (0x3F & code);\n-      buff[count++] = c;\t\n-    }\n-  ostr.write(buff, count);\n-}\n-\n template <typename T>\n unsigned read_utf8(T & istr)\n {"
+    },
+    {
+      "sha": "edb6e44355266e0b791408dd8fe7c07d5fb62d7e",
+      "filename": "checker/hash_database.hpp",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 1,
+      "changes": 1,
+      "blob_url": "https://github.com/milanbankovic/isocert/blob/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Fhash_database.hpp",
+      "raw_url": "https://github.com/milanbankovic/isocert/raw/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Fhash_database.hpp",
+      "contents_url": "https://api.github.com/repos/milanbankovic/isocert/contents/checker%2Fhash_database.hpp?ref=0b160702bc0196739915541478fdfc9bb67a35db",
+      "patch": "@@ -41,5 +41,4 @@ class hash_database {\n \n };\n \n-\n #endif // _HASH_DATABASE_H"
+    },
+    {
+      "sha": "d84842d0029af94a44c02b5da4ba26b08eb623c8",
+      "filename": "checker/trie.hpp",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 60,
+      "changes": 60,
+      "blob_url": "https://github.com/milanbankovic/isocert/blob/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Ftrie.hpp",
+      "raw_url": "https://github.com/milanbankovic/isocert/raw/0b160702bc0196739915541478fdfc9bb67a35db/checker%2Ftrie.hpp",
+      "contents_url": "https://api.github.com/repos/milanbankovic/isocert/contents/checker%2Ftrie.hpp?ref=0b160702bc0196739915541478fdfc9bb67a35db",
+      "patch": "@@ -13,17 +13,6 @@ class trie {\n   using elem_type = T;\n private:\n \n-  template <typename U>\n-  static void print_seq(const std::vector<U> & elems, std::ostream & ostr)\n-  {\n-    ostr << \"[ \";\n-    for(unsigned i = 0; i < elems.size(); i++)\n-      {\n-\tostr << elems[i] << \" \";\n-      }\n-    ostr << \"]\" << std::endl;\n-  }\n-\n   class trie_node;\n   \n   using trie_node_ptr = std::shared_ptr<trie_node>;\n@@ -41,37 +30,6 @@ class trie {\n     trie_node()\n       :_valid(false)\n     {}\n-\n-    void print_tree(std::ostream & ostr, unsigned depth) const\n-    {\n-      for(unsigned i = 0; i < depth; i++)\n-\tostr << \" \";\n-      if(_valid)\n-\tostr << \"!\"; \n-      print_seq(_elems, ostr);\n-      \n-      if(_children.has_value())\n-\t{\n-\t  depth++;\n-\t  for(const auto & p : _children.value())\n-\t    p.second->print_tree(ostr, depth);\n-\t}      \n-    }\n-\n-    void print_all(std::ostream & ostr, std::vector<std::reference_wrapper<const elem_type>> && prefix = std::vector<std::reference_wrapper<const elem_type>>()) const\n-    {\n-      std::copy(_elems.begin(), _elems.end(), std::back_inserter(prefix));\n-      \n-      if(_valid)\n-\tprint_seq(prefix, ostr);\n-\n-      if(_children.has_value())\n-\t{\n-\t  for(const auto & p : _children.value())\n-\t    p.second->print_all(ostr, std::move(prefix));\t  \n-\t}    \n-      prefix.resize(prefix.size() - _elems.size(), std::cref(_elems[0]));            \n-    }    \n   };\n \n \n@@ -208,24 +166,6 @@ class trie {\n       }\n     return false;\n   }\n-\n-  void print_tree(std::ostream & ostr) const\n-  {\n-    if(_root.get() == nullptr)\n-      ostr << \"<EMPTY>\" << std::endl;\n-    else\n-      _root->print_tree(ostr, 0);\n-  }\n-\n-  void print_all(std::ostream & ostr) const\n-  {\n-    if(_root.get() == nullptr)\n-      ostr << \"<EMPTY>\" << std::endl;\n-    else\n-      _root->print_all(ostr);\n-  }\n- \n-  \n };\n \n #endif // _TRIE_H"
+    }
+  ]
+}

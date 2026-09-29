@@ -1,0 +1,48 @@
+{
+  "download_date": "2026-09-29",
+  "papers": [
+    {
+      "arxiv_id": "1803.06858v1",
+      "title": "An improved isomorphism test for bounded-tree-width graphs",
+      "source_url_requested": "https://arxiv.org/src/1803.06858",
+      "version_evidence": "1803.06858.metadata.html:24 identifies v1; submission metadata lists only v1",
+      "source_archive": "review_sources/algorithms/1803.06858.source",
+      "source_sha256": "6f65d1a01b80872ce02edf89dc95ade125150eef35460edb3e6bf6e80dc6dd5f",
+      "selected_extracted_file": "review_sources/algorithms/1803.06858v1/articles/canonization.tex",
+      "selected_file_sha256": "66d2d7e629f2a323502d96b633786dfd8b2cb2c2c0adc6ff1d9a49cea89e240c",
+      "pdf_url": "https://arxiv.org/pdf/1803.06858v1",
+      "pdf": "review_sources/algorithms/1803.06858v1.pdf",
+      "pdf_sha256": "8974d36fcdfb1096e4ea3503cf8b54c9ab5ee27638b4e0eb87d75122c958ac6c",
+      "pdf_text": "review_sources/algorithms/1803.06858v1.pdf.txt",
+      "pdf_text_sha256": "9b9c1ad9b4f612cf8b67e6a49e54ee848078a72933fb1763de7489729d770876",
+      "safety": "Complete archive listing checked: only relative directories and ordinary files. Selected TeX members read through tar -xO into fixed local filenames; no source commands or TeX compilation executed."
+    },
+    {
+      "author": "Richard M. Karp",
+      "title": "Reducibility among Combinatorial Problems",
+      "version": "1972 printed paper, pp.85-103; institutional scan",
+      "pdf_url": "https://www2.seas.gwu.edu/~simhaweb/champalg/tsp/papers/KarpOriginal.pdf",
+      "pdf": "review_sources/algorithms/Karp_1972.pdf",
+      "pdf_sha256": "778c8b3507620a68154bc74b29810e0de6d2c4dd7ee5d24b84c7e7ba61404b81",
+      "pdf_text": "review_sources/algorithms/Karp_1972.pdf.txt",
+      "pdf_text_sha256": "4b4c54f636bfc670ea4d941d22ccdc1730c2d2bb16327cff15fac7d4d3d6ddd2",
+      "text_limitation": "Image-only scan: pdftotext contains 19 form-feed characters and no substantive text. No OCR performed.",
+      "verified_images": [
+        {
+          "path": "review_sources/algorithms/Karp_1972_page9.png",
+          "pdf_page": 9,
+          "printed_page": 93,
+          "sha256": "b86cbec3371cc288520aa5089ac4ac292525c594a70e60335fbf9db087848c21"
+        },
+        {
+          "path": "review_sources/algorithms/Karp_1972_page10.png",
+          "pdf_page": 10,
+          "printed_page": 94,
+          "sha256": "ba9ad17bf30d0575d02b1d2e7acb544bda5d58a9bda6ef30e22551f2476d80c1"
+        }
+      ],
+      "safety": "PDF only inspected with pdfinfo, pdftotext and a handful of selected page renders. No OCR or source code executed.",
+      "failed_acquisition": "Old Berkeley paper URL returned HTTP 404. Web search used solely to locate the institutional primary-paper scan; search summaries were not used as ground truth."
+    }
+  ]
+}

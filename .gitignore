@@ -1,0 +1,9 @@
+# Re-downloadable source archives; extracted primary evidence stays tracked.
+review_sources/algorithms/*.source
+review_sources/formalisation/downloads/*.tar
+review_sources/formalisation/downloads/*.tar.gz
+
+# Local interpreter/build scratch.
+__pycache__/
+*.py[cod]
+.lake/

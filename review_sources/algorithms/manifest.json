@@ -1,0 +1,180 @@
+{
+  "download_date": "2026-09-29",
+  "papers": [
+    {
+      "arxiv_id": "2209.02534v4",
+      "source_url": "https://arxiv.org/src/2209.02534v4",
+      "source_archive": "review_sources/algorithms/2209.02534v4.source",
+      "source_sha256": "910ad025a3212ad054529157f51e54d8f05415e06c1048c2cb75431a52dd34a0",
+      "extracted_directory": "review_sources/algorithms/2209.02534v4",
+      "pdf_url": "https://arxiv.org/pdf/2209.02534v4",
+      "pdf": "review_sources/algorithms/2209.02534v4.pdf",
+      "pdf_sha256": "f57ecbad0e6920177208d9041d030cfc67465d245da15bb58bb7dd47c455c6dc",
+      "pdf_text": "review_sources/algorithms/2209.02534v4.pdf.txt",
+      "pdf_text_sha256": "0906cd5af1b3da722e1b8d0326f5f5f60d39b89703840e34083f28017196ef7a",
+      "extracted_files": [
+        {
+          "path": "review_sources/algorithms/2209.02534v4/paper.tex",
+          "sha256": "9e2e8d331ad1dbc77276d900b7486f3d2ee3e4d2f6276f5af529c5b5c1cf24b2"
+        }
+      ],
+      "safety": "Archive paths checked for traversal. Symlinks, hard links, and special files refused. No source commands or TeX compilation executed. PDF read with pdftotext -layout only."
+    },
+    {
+      "arxiv_id": "1806.07466v2",
+      "source_url": "https://arxiv.org/src/1806.07466v2",
+      "source_archive": "review_sources/algorithms/1806.07466v2.source",
+      "source_sha256": "88f76674a6d14a6d28d125eb93788a02e1b8e62289aab81518e06078f631db1a",
+      "extracted_directory": "review_sources/algorithms/1806.07466v2",
+      "pdf_url": "https://arxiv.org/pdf/1806.07466v2",
+      "pdf": "review_sources/algorithms/1806.07466v2.pdf",
+      "pdf_sha256": "412997a6ea9e93b1e6df22382e19e8dee732beaa1887275faa5d9d97b9aeb47d",
+      "pdf_text": "review_sources/algorithms/1806.07466v2.pdf.txt",
+      "pdf_text_sha256": "7034c8932f44e1e8f28503bb36294c2aaa483f3af4553659ed69f1796d812038",
+      "extracted_files": [
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/canGenSets.tex",
+          "sha256": "ac07caa3447299bb806c8df5667e0ef7969ba8a5b31a5af6773c6a3779dc9eb7"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/cosetInt.tex",
+          "sha256": "7e43c33f5e6a26a6025a10505d3a57b451d48b6a91626acc6c62613e985c7f60"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/heredit.tex",
+          "sha256": "bec69aaf964f0743a7edc5fd3d4f5a731f32caf1d32c778f05d4c09d5b267953"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/hereditarilyFiniteObjects.tex",
+          "sha256": "854f46e7511fd73fba0d6b3e239bd85dcf1a8eeb98b05a24f69535a6dc72b86b"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/hypergraphCanonizationExp.tex",
+          "sha256": "e26cc8f3e9dd578b995650daa0fe929f454b66d8720b505593d42fb52aa88825"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/intro.tex",
+          "sha256": "544751b65b058cdf1d92bd9c5c5629968a1b0735dfd4a5b8466cac6e5fa6d1d5"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/multiCoset.tex",
+          "sha256": "02c1500a28afee53b52469ed25867b21dd88a460bca43980ff44a2a741becb21"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/objectReplacement.tex",
+          "sha256": "13213839b631abfa18ba482add1ef38b3090de9331ae5dc4269dfb849197a231"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/openQuestions.tex",
+          "sha256": "96c664ed97f6d1eceeed8ca729aaedd8bd47916e9acc6fc62a80ef856e6c239c"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/articles/preliminaries.tex",
+          "sha256": "5e63f7e5f3a39e2c3b2d41379b2d886739631a016a59508c8f7bf479fb44d18b"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/configurations/commands.tex",
+          "sha256": "73d9067a4f8cfd6aa88cb4cb7e84e3c4b4e33ed29733dad0fd9fe01762b63373"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/configurations/header.tex",
+          "sha256": "ef545f3dbd8bb7e8bcbbe7f50becd3badf559c47cc02ba7d1e179b00f89d0ecf"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/figures/bundling.tex",
+          "sha256": "5f6439ef9777ef3875fff792b44132867ec3a73d6cf2f5bd4de0504a8fead16f"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/main.bbl",
+          "sha256": "179ee61e0a611f61e5c7b6680459b0e771f4b503ae4028e1422f663307c6c648"
+        },
+        {
+          "path": "review_sources/algorithms/1806.07466v2/main.tex",
+          "sha256": "3b2091d3d13f2eed828a7b209cf739a41411089d2114be27d2539e9ef9cf2c28"
+        }
+      ],
+      "safety": "Archive paths checked for traversal. Symlinks, hard links, and special files refused. No source commands or TeX compilation executed. PDF read with pdftotext -layout only."
+    },
+    {
+      "arxiv_id": "2112.05065v2",
+      "source_url": "https://arxiv.org/src/2112.05065v2",
+      "source_archive": "review_sources/algorithms/2112.05065v2.source",
+      "source_sha256": "db0049e319fabcdd6787eb6ecf00ac7bca9d098e6a2ad9f72bd748cd4eb2fae0",
+      "extracted_directory": "review_sources/algorithms/2112.05065v2",
+      "pdf_url": "https://arxiv.org/pdf/2112.05065v2",
+      "pdf": "review_sources/algorithms/2112.05065v2.pdf",
+      "pdf_sha256": "d45a686b1df5681bc62a66c6901dddd1889d94317010aa4ab4bb4c6b912da1ef",
+      "pdf_text": "review_sources/algorithms/2112.05065v2.pdf.txt",
+      "pdf_text_sha256": "8d8a0cb08531960fb729c9050f73065398b99a1218966e30d11466ce4f7d37b5",
+      "extracted_files": [
+        {
+          "path": "review_sources/algorithms/2112.05065v2/perfect-refiners.bbl",
+          "sha256": "cf13beacde6974a915a8529e48382d7cb156b756fa884b14edd184c9e77545d2"
+        },
+        {
+          "path": "review_sources/algorithms/2112.05065v2/perfect-refiners.tex",
+          "sha256": "7fd4def7b8aee21276dac684021b1a941eacb6dda68aa0e4b5e9ae5bfd8dcb53"
+        }
+      ],
+      "safety": "Archive paths checked for traversal. Symlinks, hard links, and special files refused. No source commands or TeX compilation executed. PDF read with pdftotext -layout only."
+    },
+    {
+      "arxiv_id": "1911.04783v4",
+      "source_url": "https://arxiv.org/src/1911.04783v4",
+      "source_archive": "review_sources/algorithms/1911.04783v4.source",
+      "source_sha256": "dd57639404a23921a3bcdef01c6ffa1405627cbee63630ab05dfa892495b7c7d",
+      "extracted_directory": "review_sources/algorithms/1911.04783v4",
+      "pdf_url": "https://arxiv.org/pdf/1911.04783v4",
+      "pdf": "review_sources/algorithms/1911.04783v4.pdf",
+      "pdf_sha256": "70e683b08424bc8ea398c6f5478f496f9a320f702e4c8e761d84165dc2273f49",
+      "pdf_text": "review_sources/algorithms/1911.04783v4.pdf.txt",
+      "pdf_text_sha256": "4362b333dc3eedd0aede44e0e673c5dc22eb3d8f4a049b22ac9c163b9df44fab",
+      "extracted_files": [
+        {
+          "path": "review_sources/algorithms/1911.04783v4/PermAlgoDigraphsJPWW_extended.tex",
+          "sha256": "372f5522fe15d84555acb76e873a6e06d7f9e57b0571f36934ca1b3051188da4"
+        },
+        {
+          "path": "review_sources/algorithms/1911.04783v4/allPrimOneTransGraph.pdf",
+          "sha256": "cc06b129463d6963e272c9b2013ab1cb23e0d3b65484d52a0e49d856a1f9ab2e"
+        },
+        {
+          "path": "review_sources/algorithms/1911.04783v4/allPrimTwoOrMoreTransGraph.pdf",
+          "sha256": "bfba83dac46fbf6238b16d6cdf30276b8d0343a82f2bf1f92daffc542c35ca5a"
+        },
+        {
+          "path": "review_sources/algorithms/1911.04783v4/dp.pdf",
+          "sha256": "7706c5fb9740a4770d0d45348c928646f1af30db7b753be383fccd43f5e7c8e4"
+        },
+        {
+          "path": "review_sources/algorithms/1911.04783v4/elsarticle.cls",
+          "sha256": "759ff163b87bde8d48ca74558107202b1a28c557926a4d62690ce3dbf44eca50"
+        }
+      ],
+      "safety": "Archive paths checked for traversal. Symlinks, hard links, and special files refused. No source commands or TeX compilation executed. PDF read with pdftotext -layout only."
+    },
+    {
+      "arxiv_id": "1705.03283v1",
+      "source_url": "https://arxiv.org/src/1705.03283v1",
+      "source_archive": "review_sources/algorithms/1705.03283v1.source",
+      "source_sha256": "23a60319c9abe9bae02690b76ce54c7aace9ab92aee6d51c6e214780e82aaa22",
+      "extracted_directory": "review_sources/algorithms/1705.03283v1",
+      "pdf_url": "https://arxiv.org/pdf/1705.03283v1",
+      "pdf": "review_sources/algorithms/1705.03283v1.pdf",
+      "pdf_sha256": "9c3f41a7291704805a8e7dc03042dc01020c56da504938901a1e4d161793a428",
+      "pdf_text": "review_sources/algorithms/1705.03283v1.pdf.txt",
+      "pdf_text_sha256": "5c5f14985db6f31d57a79113c1be93ddb4d1d5762be6569eedfdec504b3c49c2",
+      "extracted_files": [
+        {
+          "path": "review_sources/algorithms/1705.03283v1/ir-analysis.bbl",
+          "sha256": "95c826966253279ca3a39e76b265313e985fea83a29767f51abcb2cd042cce9a"
+        },
+        {
+          "path": "review_sources/algorithms/1705.03283v1/ir-analysis.tex",
+          "sha256": "fda07a973092d4600107304dda9308f86bd387233706f3f788839a38c2f22aeb"
+        }
+      ],
+      "safety": "Archive paths checked for traversal. Symlinks, hard links, and special files refused. No source commands or TeX compilation executed. PDF read with pdftotext -layout only."
+    }
+  ]
+}

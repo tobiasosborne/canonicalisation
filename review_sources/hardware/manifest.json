@@ -1,0 +1,92 @@
+[
+  {
+    "path": "amd_ryzen_9_9950x.html",
+    "url": "https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x.html",
+    "final_url": "https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x.html",
+    "retrieved_utc": "2026-09-29T19:39:15.290112+00:00",
+    "bytes": 204642,
+    "sha256": "2f248d59983c9c12069b5742d809919121703d30bb0fd9e7ec35fc99b5a697ba",
+    "content_type": "text/html",
+    "status": "downloaded"
+  },
+  {
+    "path": "amd_zen5_guide_landing.html",
+    "url": "https://docs.amd.com/v/u/en-US/58455_1.00",
+    "final_url": "https://docs.amd.com/v/u/en-US/58455_1.00",
+    "retrieved_utc": "2026-09-29T19:39:15.457211+00:00",
+    "bytes": 2575,
+    "sha256": "246a3401def199195138c24f3a5ba088859513fe2b90d6cce1e10cd5355883dd",
+    "content_type": "text/html;charset=UTF-8",
+    "status": "portal_only_not_requested_document"
+  },
+  {
+    "path": "nvidia_rtx_blackwell_architecture.pdf",
+    "url": "https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf",
+    "final_url": "https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf",
+    "retrieved_utc": "2026-09-29T19:39:23.614208+00:00",
+    "bytes": 8283392,
+    "sha256": "906ff2a409d7a7e4cbc56f5d3a179d574120d19aaba99520670e1a0c064595fa",
+    "content_type": "application/pdf",
+    "status": "downloaded"
+  },
+  {
+    "path": "nvidia_rtx_5080.html",
+    "url": "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/",
+    "final_url": "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/",
+    "retrieved_utc": "2026-09-29T19:39:24.535143+00:00",
+    "bytes": 648708,
+    "sha256": "522bd318b45c73505f4bc509dd55b55a6a40913f4f0870f4ff1b1b0284298463",
+    "content_type": "text/html; charset=UTF-8",
+    "status": "downloaded"
+  },
+  {
+    "path": "nvidia_cuda_best_practices.html",
+    "url": "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html",
+    "final_url": "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html",
+    "retrieved_utc": "2026-09-29T19:39:25.254791+00:00",
+    "bytes": 433259,
+    "sha256": "56dff2de4f38ac898884b14822d0aa999bf8c676606a75310a72507a65c0806e",
+    "content_type": "text/html",
+    "status": "downloaded"
+  },
+  {
+    "path": "nvidia_compute_capabilities.html",
+    "url": "https://developer.nvidia.com/cuda/gpus",
+    "final_url": "https://developer.nvidia.com/cuda/gpus",
+    "retrieved_utc": "2026-09-29T19:39:26.002948+00:00",
+    "bytes": 25141,
+    "sha256": "ccd78d3cd520cb7b7a715a69ea2039096c28e6321e9a1ecd63a307ff62438cf8",
+    "content_type": "text/html; charset=utf-8",
+    "status": "downloaded"
+  },
+  {
+    "path": "kingston_KVR56U46BD8-32.pdf",
+    "url": "https://www.kingston.com/datasheets/KVR56U46BD8-32.pdf",
+    "final_url": "https://www.kingston.com/datasheets/KVR56U46BD8-32.pdf",
+    "retrieved_utc": "2026-09-29T19:39:27.043173+00:00",
+    "bytes": 959031,
+    "sha256": "e604e815bb1e7d5bc746bfa41b66d6aee15ddb7215c65e1bf52375dc5b0dfd4c",
+    "content_type": "application/pdf",
+    "status": "downloaded"
+  },
+  {
+    "path": "pcisig_generations_2025.pdf",
+    "url": "https://pcisig.com/sites/default/files/2026-01/PCI-SIG%20PCIe%207.0%20Webinar_Rev5_FINAL.pdf",
+    "final_url": "https://pcisig.com/sites/default/files/2026-01/PCI-SIG%20PCIe%207.0%20Webinar_Rev5_FINAL.pdf",
+    "retrieved_utc": "2026-09-29T19:39:29.725732+00:00",
+    "bytes": 2500521,
+    "sha256": "45340b920a44039657851e5b358f5070baf633bd58c2048cc4c30cd28f9993ae",
+    "content_type": "application/pdf",
+    "status": "downloaded"
+  },
+  {
+    "path": "amd_zen5_epyc_architecture_landing.html",
+    "url": "https://www.amd.com/content/dam/amd/en/documents/epyc-business-docs/white-papers/5th-gen-amd-epyc-processor-architecture-white-paper.pdf",
+    "final_url": "https://docs.amd.com/v/u/en-US/5th-gen-amd-epyc-processor-architecture-white-paper",
+    "retrieved_utc": "2026-09-29T19:39:30.006851+00:00",
+    "bytes": 2575,
+    "sha256": "9fd3b50198ce797048857210b22f09bf5b4e8c7b9f9bf4e2faa160c38b171eba",
+    "content_type": "text/html;charset=UTF-8",
+    "status": "portal_only_not_requested_document"
+  }
+]

@@ -1,0 +1,101 @@
+{
+  "sha": "ed72f1faaeee9bea5805932ae309af92264cd8d1",
+  "node_id": "C_kwDOFcwZ1doAKGVkNzJmMWZhYWVlZTliZWE1ODA1OTMyYWUzMDlhZjkyMjY0Y2Q4ZDE",
+  "commit": {
+    "author": {
+      "name": "Michael Rothgang",
+      "email": "10105016+grunweg@users.noreply.github.com",
+      "date": "2026-09-29T18:19:17Z"
+    },
+    "committer": {
+      "name": "Michael Rothgang",
+      "email": "10105016+grunweg@users.noreply.github.com",
+      "date": "2026-09-29T18:19:17Z"
+    },
+    "message": "fix(Archive/IMO/Imo2019Q4): fix flexible simp hiding as norm_num (#42868)\n\n#42691 changed a non-terminal `simp` to `norm_num`, which is just as non-terminal: `norm_num` applies `simp` as initial step (and does no further work).\r\nImprove the proof to avoid this non-terminal, thereby fixing the flexible linter warning properly.\n\nCo-authored-by: Oliver Nash <7734364+ocfnash@users.noreply.github.com>",
+    "tree": {
+      "sha": "2daac70a845526a712fb9de349c2575b5f6db7a7",
+      "url": "https://api.github.com/repos/leanprover-community/mathlib4/git/trees/2daac70a845526a712fb9de349c2575b5f6db7a7"
+    },
+    "url": "https://api.github.com/repos/leanprover-community/mathlib4/git/commits/ed72f1faaeee9bea5805932ae309af92264cd8d1",
+    "comment_count": 0,
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "url": "https://api.github.com/repos/leanprover-community/mathlib4/commits/ed72f1faaeee9bea5805932ae309af92264cd8d1",
+  "html_url": "https://github.com/leanprover-community/mathlib4/commit/ed72f1faaeee9bea5805932ae309af92264cd8d1",
+  "comments_url": "https://api.github.com/repos/leanprover-community/mathlib4/commits/ed72f1faaeee9bea5805932ae309af92264cd8d1/comments",
+  "author": {
+    "login": "grunweg",
+    "id": 10105016,
+    "node_id": "MDQ6VXNlcjEwMTA1MDE2",
+    "avatar_url": "https://avatars.githubusercontent.com/u/10105016?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/grunweg",
+    "html_url": "https://github.com/grunweg",
+    "followers_url": "https://api.github.com/users/grunweg/followers",
+    "following_url": "https://api.github.com/users/grunweg/following{/other_user}",
+    "gists_url": "https://api.github.com/users/grunweg/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/grunweg/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/grunweg/subscriptions",
+    "organizations_url": "https://api.github.com/users/grunweg/orgs",
+    "repos_url": "https://api.github.com/users/grunweg/repos",
+    "events_url": "https://api.github.com/users/grunweg/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/grunweg/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "grunweg",
+    "id": 10105016,
+    "node_id": "MDQ6VXNlcjEwMTA1MDE2",
+    "avatar_url": "https://avatars.githubusercontent.com/u/10105016?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/grunweg",
+    "html_url": "https://github.com/grunweg",
+    "followers_url": "https://api.github.com/users/grunweg/followers",
+    "following_url": "https://api.github.com/users/grunweg/following{/other_user}",
+    "gists_url": "https://api.github.com/users/grunweg/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/grunweg/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/grunweg/subscriptions",
+    "organizations_url": "https://api.github.com/users/grunweg/orgs",
+    "repos_url": "https://api.github.com/users/grunweg/repos",
+    "events_url": "https://api.github.com/users/grunweg/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/grunweg/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "e9930a2bc844f15fc7ca8ff10be0abf5e6bb1ecb",
+      "url": "https://api.github.com/repos/leanprover-community/mathlib4/commits/e9930a2bc844f15fc7ca8ff10be0abf5e6bb1ecb",
+      "html_url": "https://github.com/leanprover-community/mathlib4/commit/e9930a2bc844f15fc7ca8ff10be0abf5e6bb1ecb"
+    }
+  ],
+  "stats": {
+    "total": 16,
+    "additions": 8,
+    "deletions": 8
+  },
+  "files": [
+    {
+      "sha": "43da18433a207f3d28b30b24f7303e1cc7218696",
+      "filename": "Archive/Imo/Imo2019Q4.lean",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 8,
+      "changes": 16,
+      "blob_url": "https://github.com/leanprover-community/mathlib4/blob/ed72f1faaeee9bea5805932ae309af92264cd8d1/Archive%2FImo%2FImo2019Q4.lean",
+      "raw_url": "https://github.com/leanprover-community/mathlib4/raw/ed72f1faaeee9bea5805932ae309af92264cd8d1/Archive%2FImo%2FImo2019Q4.lean",
+      "contents_url": "https://api.github.com/repos/leanprover-community/mathlib4/contents/Archive%2FImo%2FImo2019Q4.lean?ref=ed72f1faaeee9bea5805932ae309af92264cd8d1",
+      "patch": "@@ -87,16 +87,16 @@ theorem imo2019_q4 {k n : ℕ} (hk : 0 < k) (hn : 0 < n) :\n   intro h\n   -- We know that n < 6.\n   have := Imo2019Q4.upper_bound hk h\n-  interval_cases n\n+  interval_cases n <;>\n+  simp_rw [prod_range_succ, prod_range_zero, Int.reducePow, Int.reduceSub] at h <;> norm_cast at h\n   -- n = 1\n-  · norm_num at h; simp [le_antisymm h (succ_le_of_lt hk)]\n+  · rw [mul_one, factorial_eq_one] at h\n+    simp [le_antisymm h hk]\n   -- n = 2\n-  · right; congr; norm_num [prod_range_succ] at h; norm_cast at h; rwa [← factorial_inj']\n-    norm_num\n-  all_goals exfalso; norm_num [prod_range_succ] at h; norm_cast at h\n+  · right; congr; rwa [← factorial_inj' (by lia)]\n   -- n = 3\n-  · refine monotone_factorial.ne_of_lt_of_lt_nat 5 ?_ ?_ _ h <;> decide\n+  · refine absurd h (monotone_factorial.ne_of_lt_of_lt_nat 5 ?_ ?_ _) <;> decide\n   -- n = 4\n-  · refine monotone_factorial.ne_of_lt_of_lt_nat 7 ?_ ?_ _ h <;> decide\n+  · refine absurd h (monotone_factorial.ne_of_lt_of_lt_nat 7 ?_ ?_ _) <;> decide\n   -- n = 5\n-  · refine monotone_factorial.ne_of_lt_of_lt_nat 10 ?_ ?_ _ h <;> decide\n+  · refine absurd h (monotone_factorial.ne_of_lt_of_lt_nat 10 ?_ ?_ _) <;> decide"
+    }
+  ]
+}
