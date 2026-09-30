@@ -1,824 +1,549 @@
 # A native C engine for canonicalisation under permutation groups
 
-**Architecture and implementation specification · 29 September 2026 · version 1.0**
+**Architecture and implementation specification · 30 September 2026 · version 2.0**
 
-Prepared for Tobias J. Osborne. This document specifies an implementation; it does not implement it. Performance choices below are engineering proposals and testable hypotheses, not measured results. “Bare metal C” means a native, allocation-controlled C library with direct CPU intrinsics and a thin operating-system layer, running on an ordinary desktop OS. It does not mean a freestanding kernel or bypassing the OS.
+Prepared for Tobias J. Osborne. Reviewed baseline: **v1.0**, 29 September 2026, commit **`fb014c9`**, SHA-256 **`924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`**. The [referee report](Canonicalisation_Referee_Report.md) remains a historical record. The [response](Canonicalisation_Review_Response.md) maps its 18 findings and TensorGR T1–T14 to this revision; the [implementation plan](Canonicalisation_Implementation_Plan.md) defines future gates.
+
+This is an executable design specification, not a claim that C code, Lean proofs, benchmarks or the release gates already exist. Estimates below are engineering judgments. Native C means a C17 library with controlled allocation and ordinary OS services, not a freestanding kernel.
 
 ## 1. Architectural decision
 
-Build one exact search infrastructure with a permutation-group kernel, reversible ordered partitions, graph-stack refinement, typed object adapters, and a locality-aware multicore runtime. Specialise its hot kernels for common representations without creating unrelated graph and minimal-image solvers.
+Share exact permutation/group operations, immutable objects, ordered partitions, search frames and verification infrastructure. Use objective-specific traversals: an equivariant tree for canonical images; disjoint coset enumeration for minima, transporters and complete stabilisers. Do not infer one objective's completeness from another's pruning.
 
-Use the Jefferson–Waldecker–Wilson canonical-image framework as the practical algorithmic foundation. Use Schweitzer–Wiebking to define the breadth of objects and the need to retain labeling cosets during composition. These are complementary ingredients, not interchangeable algorithms. The proposed backtracker does **not** inherit Schweitzer–Wiebking's asymptotic bound merely by supporting the same object types. [R1–R4]
+The local canonical-image papers support the tree construction and group normalisation; the general-object papers motivate labeling cosets and composition. Supporting the same types does not transfer their asymptotic bounds to this engine (§23). Broad finite-group semantics and excellent measured performance on named regimes are separate goals. A complete slow fallback is mandatory; universally small runtime gaps are not promised.
 
-The principal design decisions are:
+The initial CPU core has no GAP, Python, Rust, C++ or GPU-runtime dependency. Portable scalar C is mandatory, with x86-64 Linux/Windows the first performance targets. ARM64 and an optional GPU plugin are separate ports. Small independent requests sharing immutable group contexts are a first-class regime, alongside a single large search.
 
-1. **Exact semantics first.** Canonical images, lexicographic minima, transporter searches, and full stabiliser computations are distinct operations with explicit contracts.
-2. **Native groups.** Support every finite permutation group supplied by generators; do not require its expansion into a graph or enumeration of its elements.
-3. **Logical graph stacks, physical shared data.** A refinement step appends descriptors or deltas, not another copy of the input graph.
-4. **Data movement is a first-class cost.** Optimise cache lines touched, dependent loads, undo traffic, and task-state migration alongside search-node count.
-5. **Multicore primarily across subtrees and independent inputs.** Each worker owns its mutable state. Shared information is immutable or published in batches.
-6. **Fixed mathematical choices, flexible execution.** CPU dispatch, thread count, scheduling, and cache eviction cannot change the answer under a fixed canonicalisation profile.
-7. **A slow complete fallback.** Weak refinement may cost enormous time, but unsupported accelerators must never cause an incorrect result or a silent loss of generality.
+## 2. Scope and semantic objects
 
-No claim of universally best performance is made. Refinement can save an exponential amount of search, or spend most of the runtime proving almost nothing. The architecture must measure that trade-off.
+### 2.1 Supported mathematical model and delivery scope
 
-## 2. Scope and non-goals
+A finite indexed atom domain Ω has size n. An exact group G ≤ Sym(Ω) acts on immutable objects. Built-in schema `EXT-DAG-1` includes atoms, opaque byte literals, tuples, sets, multisets, permutations, subgroups, labeling cosets, coloured directed multigraphs and finite named relations. Subsets are sets of atom nodes; hypergraphs are sets/multisets of such sets; explicit codes are sets of tuples with a declared coordinate/symbol action. These interpretations must be selected explicitly, not guessed from data.
 
-### 2.1 Required mathematical coverage
+The first scalar delivery covers subsets, atom tuples and coloured directed multigraphs. General DAGs and algebraic atoms follow separate adapter gates. A recognised but unavailable type returns `UNSUPPORTED_ACTION`, not an approximation. Mathematical coverage of every finite object with a total exact action is provided by the reference model, subject to the finite machine capacities in §11 for an implementation.
 
-The domain is a finite set of movable atoms Ω, usually indexed internally by 0,…,n−1. The admissible group is G ≤ Sym(Ω), given by permutations generating G, or by a supported exact structured representation. An object has a computable right action of G and exact equality under that action.
+Action `0x0001`, `ATOM-TRANSPORT-1`, maps atom a to g[a], fixes literal bytes and relation names, preserves tuple positions and multiplicities, and acts recursively. A permutation object p becomes g⁻¹pg; a subgroup H becomes g⁻¹Hg. A labeling-coset object Hρ (source Ω, fixed ordered target D_n) becomes g⁻¹Hρ = (g⁻¹Hg)(g⁻¹ρ). A permutation coset under conjugation would be a different action and is not this type. Graph colours and arc labels are fixed byte strings; they are never freely renamed.
 
-Built-in adapters must cover:
+Different row/column actions, symbol actions and tensor slot/dummy conventions require registered action/schema IDs and wrapper proofs. No custom callback may claim the built-in ID without proving it implements the same semantics.
 
-| Object | Exact interpretation | Preferred representation |
-|---|---|---|
-| Subset of Ω | Unordered, without repetitions | Sorted IDs, bitset, or hybrid |
-| Tuple of atoms | Positions distinguished; repetitions allowed | Contiguous IDs |
-| Set or multiset of tuples | Tuple positions distinguished; outer order ignored | Flat tuple store plus offsets/multiplicities |
-| Coloured directed graph | Vertex/arc colours are semantic labels | CSR/CSC or dense bitplanes |
-| Hypergraph | Unordered hyperedges; explicitly defined duplicate policy | Incidence arrays or incidence refinement graph |
-| Finite relational structure | Ordered relation names and tuple positions | Columnar relation tables |
-| Nested finite objects | Atoms, typed tuples, sets, multisets, immutable literals | Semantic DAG with flat child arrays |
-| Permutation as an object | Usually conjugation, explicitly specified | Image array; directed-cycle relation |
-| Subgroup as an object | Equality of generated groups; usually conjugation | Verified stabiliser chain and generators |
-| Labeling coset | A set of bijections, not a chosen generator list | Group handle plus a representative |
-| Explicit code | Set of explicit words with declared coordinate/symbol action | Word table and native coordinate action |
-| Custom object | Exact action, comparison and encoding supplied by adapter | Opaque immutable payload plus adapter |
+### 2.2 Explicit non-goals
 
-The action is part of the problem. Independent permutations of matrix rows and columns, simultaneous permutation of both, conjugation of a group, and permutation of symbols are different equivalence relations. The API must make this impossible to overlook.
+Approximate equality, infinite structures, continuous basis changes and implicit linear-code algorithms are outside this release. Signed **monoterm** symmetries are supported by §8.4. Multi-term Bianchi/cyclic/dimension-dependent identities need a linear-algebra layer over canonical monomials. Clifford multiplication needs an algebraic normal form, such as a declared antisymmetrised gamma basis, before this service. The engine does not supply these higher layers or assume that their coefficient arithmetic fits machine integers.
 
-For the built-in algebraic atoms, fix the actions explicitly: a permutation object p transforms to g⁻¹pg; a subgroup H transforms to g⁻¹Hg; a labeling coset Hρ transforms by precomposition to g⁻¹Hρ=(g⁻¹Hg)(g⁻¹ρ). Its ordered target labels stay fixed. A general permutation coset under conjugation is a different object type from a labeling coset. Native refiners and serializers must implement this distinction.
+## 3. Actions, witnesses and results
 
-Implicitly represented linear codes, enormous induced actions, infinite structures, approximate numeric equality, tensor identities involving sums, continuous changes of basis, and antisymmetric signs are not automatically solved by finite permutation canonicalisation. They require an exact reduction or a separate adapter with a precise action. For a general black-box action, the fallback can enumerate G through a verified chain; there is no promised useful runtime.
+Arrays store `p[v] = v^p`; products act left to right:
 
-### 2.2 Delivery target
+```
+(pq)[v] = q[p[v]]
+(x^p)^q = x^(pq)
+H r = {h r : h in H}
+A = Aut_G(x) = {g in G : x^g = x}.
+```
 
-Primary target: x86-64 Linux and Windows, ordinary desktop memory, one socket, multiple physical cores; also account for shared-cache clusters, chiplets, heterogeneous cores, and SMT. Portable scalar C is mandatory. ARM64 scalar support is architecturally straightforward; NEON/SVE kernels are a later performance port.
+Permutation arrays are source-to-target maps, not inverse images or lists of sources at target positions. If x^p=y^q then p q⁻¹ transports x to y. If x^p=x^q then p q⁻¹ fixes x. Inversion of a product reverses its factors.
 
-Runtime dependencies: C runtime, OS threading/virtual-memory services, optional CPU intrinsics. No Rust, GAP, Python, C++ runtime, GPU runtime, or external graph package is required in production. Existing packages are development oracles and benchmark competitors. Use a small internal unsigned multi-limb integer facility for exact group orders if avoiding a big-integer dependency; a group order can exceed 64 bits even for modest n.
+Objective tags are uint16:
 
-## 3. Mathematical contracts and permutation conventions
-
-Fix the convention before designing data structures:
-
-- A permutation array stores `p[v] = v^p`.
-- Products act left to right: v^(pq) = (v^p)^q; hence `(pq)[v] = q[p[v]]`.
-- Object actions obey (x^p)^q = x^(pq).
-- The pointwise stabiliser of a list L is G_L. The object stabiliser is A = {g∈G : x^g=x}.
-- H r denotes {h r : h∈H}; do not use ambiguous “coset” arguments without side information.
-
-The public operations are:
-
-| Operation | Required answer |
+| Tag / operation | Complete mathematical result |
 |---|---|
-| `CANONICAL_IMAGE(profile)` | c and g∈G, with c=x^g and C_G(x^h)=C_G(x) for every h∈G |
-| `LEX_MIN_IMAGE(order)` | min{enc(x^g):g∈G} under the explicitly named total order, plus a witness |
-| `TRANSPORTER(x,y)` | A g∈G satisfying x^g=y, or proof of exhaustion |
-| `STABILISER(x)` | Generators for exactly A, with a verified complete chain |
-| `CANONICAL_LABELING_COSET` | A g, where g sends x to its canonical image and A is complete |
-| `INTERSECTION/CONSTRAINT_SEARCH` | A group, coset or witness only when the constraint family guarantees that result type |
+| `0x0001 CANONICAL_IMAGE` | §7 profile image c=x^g, g∈G; C_G(x^h)=C_G(x) for h∈G |
+| `0x0002 LEX_MIN_IMAGE` | Least image in the named order (§§4.3–4.4), with g∈G |
+| `0x0003 TRANSPORTER_ONE` | One g∈G with x^g=y, or complete empty result |
+| `0x0004 STABILISER` | Generators for exactly A and a verified complete chain |
+| `0x0005 CANONICAL_LABELING_COSET` | Canonical c and complete Aλ, with typed λ as below |
+| `0x0006 TRANSPORTER_COSET` | Empty, or complete A g, x^g=y |
+| `0x0007 SIGNED_CANONICAL_IMAGE` | Certified zero, or canonical c, sign s∈{−1,+1}, and proved absence of odd stabilisers |
+| `0x0008 CONSTRAINT_ONE`, `0x0009 CONSTRAINT_ENUM` | One solution or exhaustion; respectively an exact streamed general solution set with completion flag |
 
-For equal canonical images x^p=y^q, a transporter from x to y is p q⁻¹. For two images of the same x with x^p=x^q, p q⁻¹ is an automorphism of x. Check these identities in tests with noncommuting permutations.
+A deterministic witness is optional metadata: minimise the image array among all solutions sending x to the selected c, either by complete enumeration or by minimising A g after A is proved complete. Canonical bytes alone do not require this cost. Witness choice is not equivariant under input automorphisms; the complete coset is the natural equivariant output.
 
-A single canonising permutation is generally not unique. Return any valid witness unless deterministic-witness mode is requested. For a deterministic witness, first obtain complete A and choose the lexicographically least element of A g. Do not claim that a chosen witness itself is equivariant under all input automorphisms; the natural equivariant output is the coset.
+### 3.1 Typed labeling-coset contract
 
-### 3.1 Fixed group versus a renamed universe
+Let Ω be the source, D_n={0,…,n−1} the ordered target, ρ:Ω→D_n a bijection, and Λ=Gρ. Compute x′=x^ρ and G′=ρ⁻¹Gρ ≤ Sym(D_n). Solve on D_n for t∈G′; return **λ=ρt:Ω→D_n**, c=(x^ρ)^t=x^λ. Since t=ρ⁻¹gρ, λ=gρ∈Λ. λ is not generally an element of G. The complete set of labelings taking x to c is **Aλ**: if κ∈Λ and x^κ=c, κλ⁻¹∈A, and conversely every aλ works.
 
-The basic canonical-image operation compares inputs for the same G acting on the same indexed Ω. Relabeling x by an arbitrary permutation outside G does not in general preserve its G-orbit.
+For μ:Ω→Ω′, use x^μ, Λ_new=μ⁻¹Λ and output μ⁻¹λ, with A_new=μ⁻¹Aμ. If ρ_new=kρ, k∈G, G′ is unchanged and x^ρ_new is in the same G′ orbit, hence the canonical target bytes are unchanged. A′ on the target reconstructs to A=ρA′ρ⁻¹. Each view retains its source/target domain handle and explicit bijection; never cast a labeling as an endomorphism.
 
-For coordinate-independent composition, also accept an admissible labeling coset Λ=Gρ, where ρ:Ω→{0,…,n−1}. Under a change of names μ:Ω→Ω′ the admissible labelings become μ⁻¹Λ. Internally convert x to x^ρ and G to ρ⁻¹Gρ on the ordered target domain, solve there, and map witnesses back. This avoids conflating an automorphism of the data with a change of its coordinate system.
+The same reconstruction applies to signed problems using χ′(ρ⁻¹gρ)=χ(g). Supply an orientation σ_ρ∈{±1} with the convention [x]=σ_ρ[x^ρ]; return s=σ_ρχ′(t). On replacing ρ by kρ, set σ_(kρ)=χ(k)σ_ρ. On a pure coordinate rename μ use the same orientation for μ⁻¹ρ. These rules make the reconstructed sign independent of the labeling representative. An arbitrary bijection has no intrinsic χ value outside G.
 
-### 3.2 Completion and interruption
+### 3.2 Completion versus validity
 
-Every result has a completion status: `COMPLETE`, `CANCELLED`, `RESOURCE_LIMIT`, `INVALID_INPUT`, `UNSUPPORTED_ACTION`, or `INTERNAL_ERROR`. An interrupted search may return a valid image, witness, lower bound, and verified subgroup found so far. It must not label an unproved incumbent “canonical”, a subgroup “the full automorphism group”, or an unfinished transporter search “no solution”.
+Status is a separate enum: `COMPLETE`, `CANCELLED`, `CAPACITY_LIMIT`, `RESOURCE_LIMIT`, `INVALID_INPUT`, `UNSUPPORTED_ACTION`, `OUTPUT_ERROR`, `INTERNAL_ERROR`. It is never encoded as a sign. Each result independently records `witness_valid`, `image_canonical`, `minimum_proved`, `subgroup_verified`, `stabiliser_complete`, `transport_exhausted`, `zero_certified`, `nonzero_certified`, and `encoding_complete`. False means unproved, not mathematically false.
 
-## 4. Exact output and versioning
+Interrupted results may contain a valid candidate or verified subgroup. `COMPLETE` is relative to the requested objective: a positive transporter witness needs no negative-search coverage; an empty transporter, minimum, canonical image, nonzero sign or complete stabiliser needs its applicable coverage evidence. A zero certificate can complete signed search early without a canonical monomial. Incomplete bytes cannot be used as a canonical database key.
 
-Canonicalisation is useful for databases only if its byte representation is specified.
+Evidence mode is explicit: `TRUSTED_ENGINE` records exhaustion asserted by the implementation; `CHECKED_CERTIFICATE` requires an independent checker of the objective's coverage and rules (§20). A valid witness alone never upgrades one to the other. Bounds carry an objective/order ID and region: a byte bound is not a trace-plus-byte bound.
 
-Define an injective typed encoding with explicit lengths and tags. Atom labels are integers in the ordered target domain. Tuple order is retained. Set children are compared by their complete normalised encodings, sorted, and deduplicated by exact equality. Multisets retain explicit multiplicities. Literal strings are byte strings with an explicit text-normalisation policy; no locale-dependent ordering. Floating-point literals, if admitted, must have a declared bitwise policy for NaNs and signed zero; approximate equality is not an equivalence relation suitable for this engine.
+## 4. Frozen encoding, orders and keys
 
-Use a fixed-endian wire format with an explicit numeric comparator. Do not assume that `memcmp` of little-endian integers implements numeric lexicographic order. The encoding and comparison specification must state whether tuple/set lengths precede contents in the order. Streaming comparisons and stored encodings must agree exactly.
+### 4.1 Wire grammar `CDAG-2` (encoding ID `0x0002`)
 
-Each persisted result records:
+All integers are unsigned. `U16`/`U32` are exactly 2/4 bytes, big endian. `B(s)=U32(len(s)) || s` for raw bytes. `Nat(k)=U32(b) || big_endian_bytes(k,b)` uses the shortest b, with b=0 for k=0 and no leading zero otherwise. Positive multiplicities require k>0. Lengths and counts must fit U32; overflow is a capacity error. No locale, UTF normalisation, implicit numeric coercion or floating-point interpretation occurs; a literal is its bytes.
 
-- object-schema version, action identifier and domain size;
-- admissible-group/labeling context identity, independent of the particular generator list;
-- canonicalisation profile and objective mode;
-- encoding version and canonical bytes;
-- witness and optional complete labeling coset;
-- optional digest used for indexing, never as the only equality test.
+A complete stream is:
 
-Group presentation, worker count, ISA, memory addresses, hash-table iteration, queue order and elapsed time are not semantic inputs. Different generator lists for the same G must give identical canonical bytes for a fixed profile. Algorithmic changes to the canonical tree may change a valid canonical form and require a profile version change. Lexicographic minimum mode is independent of tree heuristics once its encoding order is fixed.
+```
+43 4e 02 | U16(schema=1) | U16(action=1) | U32(n) |
+U32(q) | record[0] ... record[q-1] | U32(root)
+```
 
-A canonical-byte equality is an equivalence test only within the same declared action and admissible-labeling context. Databases mixing different groups must include that context in their keys. A user-supplied context identifier can avoid normalising the ambient group merely for metadata; it must not be silently derived from a presentation-dependent generator hash.
+Unknown type tags, out-of-domain atom IDs and malformed fields are invalid; unknown schema/action/profile/encoding versions are unsupported, never reinterpreted. Here q≥1, all records are reachable from root, and record indices are implicit. Counts determine all variable boundaries; no padding or trailing bytes are permitted. Every child reference is a U32 index smaller than the parent index. Primitive record payloads are:
 
-## 5. Component architecture
-
-| Component | Responsibility | Mutable ownership |
+| Byte tag | Payload after tag | Meaning |
 |---|---|---|
-| Problem builder | Validate types, actions, generators; freeze input | Single construction thread |
-| Object adapters | Action, exact comparison, serialisation, structural refinement | Immutable data; worker scratch |
-| Group kernel | Chains, orbits, membership, cosets, transporters | Shared verified roots; local descendants |
-| Logical graph stack | Relational facts, individualisations, derived invariants | Immutable layers plus local append-only descriptors |
-| Partition kernel | Ordered cells, splitting, worklist, rollback | Worker-private |
-| Search engine | Frames, objective, coverage, pruning and leaf verification | Worker-private |
-| Symmetry service | Verified automorphism publication and subgroup snapshots | Batched coordinator updates |
-| Scheduler | Task ownership, stealing, completion and cancellation | Padded queues and atomic task states |
-| ISA dispatch | Scalar/AVX2/AVX-512 kernel selection | Immutable per worker class |
-| Measurement layer | Counters, timing, allocation and traffic estimates | Local counters, periodic reduction |
-| Persistence layer | Checkpoints, format validation, result encoding | Explicit I/O boundary |
+| `01` | U32(a), a<n | Movable atom |
+| `02` | B(s) | Literal bytes |
+| `03` | U32(k), k child references | Ordered tuple |
+| `04` | U32(k), k increasing distinct child references | Set |
+| `05` | U32(k), k pairs (child reference, Nat(m)), references increasing | Multiset, m>0 |
+| `06` | Perm(p) | Permutation under conjugation |
+| `07` | Group(H) | Subgroup under conjugation |
+| `08` | Group(H), Perm(r) | Labeling coset H r, r its least element |
+| `09` | n values B(vertex_colour), U32(e), e arc records | Coloured directed multigraph |
+| `0a` | U32(r), r relation records | Named finite relations |
 
-Public handles are opaque; hot data is flat. External adapters use a versioned vtable called at operation or refinement-batch boundaries. Built-in adapters are statically dispatched inside tight loops. There must be no indirect callback per edge, point, or bitset word.
+`Perm(p)=U32(s)` followed by s pairs `U32(i),U32(p[i])` in increasing i, exactly the moved support; unlisted points are fixed. Reject duplicate sources, fixed pairs, out-of-range targets or a nonbijection. This code also represents source-to-target labelings in their declared indexed coordinates. `Group(H)` is specified in §9.4.
 
-The common engine has objective-specific node policies. A canonical-image node is an equivariant individualisation/refinement state. A minimum-image or transporter node can be an exact coset search state. These share frames, partitions, group operations, rollback, workers and verification; they need not pretend to have identical pruning semantics.
+An arc record is `U32(source),U32(target),B(label),Nat(multiplicity)`. Loops are permitted. Combine duplicate (source,target,label) arcs by exact addition, delete none with positive multiplicity, and sort by (source,target,B(label)); input zero multiplicities are invalid. Graphs with no arcs remain valid and retain all vertex colours. Labels compare by (byte length, unsigned bytes), including the empty label.
 
-## 6. Objects, graph stacks, and auxiliary vertices
+A relation record is `B(name),U32(arity),U32(k)`, followed by k records of `arity` atom IDs and `Nat(multiplicity)`. Names are unique, sorted by B(name); each name has one arity. Preserve empty named relations and arity-zero tuples. Combine duplicate tuples by summing multiplicities and sort tuples numerically lexicographically. Set-relation imports require multiplicity one and deduplicate instead. That import choice is resolved into the exact multirelation before solving, so a multiset count of two remains distinct from a set entry. Schema-specific wrappers for simple graphs reject loops and coalesce duplicate undirected edges before translating to two opposite unit arcs. The core never silently makes a directed graph undirected.
 
-### 6.1 Semantic objects versus graph encodings
+### 4.2 Extensional normalisation and canonical DAG references
 
-Give objects a native exact representation. A graph representation is a refiner and, where proved, a faithful encoding. It is not automatically the semantic object.
+Validate acyclicity with a bounded explicit traversal before interning. Source sharing, unreachable allocation records and insertion order have no meaning. Discard unreachable input nodes; bottom-up normalise reachable ones by exact type/payload/normalised children. Sets deduplicate equal children; multisets combine equal children and add positive counts. Hashes are lookup aids with exact collision resolution.
 
-For nested objects, distinguish movable atom vertices, set nodes, tuple nodes, tuple-position ports, literal-value nodes, and root markers. Duplicate tuple entries need distinct position ports. Repeated multiset entries need multiplicities or distinct occurrence gadgets. Set semantics must not accidentally become list semantics through child storage order.
+For each distinct normalised node define height 0 if it has no child references, otherwise 1+maximum child height. Number nodes by increasing height; within one height sort their exact record bytes using the already assigned smaller-height child indices. Equal records are one node. For sets/multisets sort by these child indices. This algorithm fixes numbering without expanding occurrences. The root is the last record: every proper descendant has smaller height. Validate imported canonical streams by reconstructing this normal form and requiring byte identity; repeated equal nodes, redundant references, leading zeroes, noncanonical orders or unreachable records are invalid canonical encodings.
 
-DAG sharing is storage-only unless reference identity is explicitly part of the schema. Either use a fully extensional, exact hash-consed DAG, or make occurrence encodings insensitive to storage sharing. An input with two equal subobjects stored separately must canonicalise like one with shared storage.
+Induction on height proves correctness: equal extensional nodes have equal child identities and payloads, hence equal records; unequal nodes have a differing tag, payload or child identity. The root's reachable closure is determined by its value, so representation-equivalent inputs give the same sequence and root. Decoding the sequence reconstructs the value, proving injectivity. This proof assumes exact equality/normal forms for group leaves (§9.4).
 
-For an exact extended graph encoding E, require:
+For x₀=literal, xᵢ₊₁=(xᵢ,xᵢ), the output has i+1 records and 2i references, rather than 2^i occurrences. Charge stored nodes D, references E_D, literal bytes, group payloads and actual output Z. Sorting and comparing records costs their actual lengths/prefixes and exact group-normalisation work; do not recursively re-expand shared children. Comparison may need two separately normalised closures; IDs from unrelated DAGs are not globally comparable.
 
-“g maps object x to object y if and only if g extends to a colour-preserving isomorphism E(x)→E(y).”
+### 4.3 Comparison and persistent keys
 
-Keep base atoms Ω separate from auxiliary vertices Δ. All returned permutations act on Ω. Internal automorphisms acting only on Δ are encoding symmetries and must be discarded when projecting the group. Auxiliary IDs cannot enter semantic colours, ordered traces, or tie-breaks.
+`CDAG-BYTE-1` (order `0x0001`) compares complete canonical streams by unsigned byte lexicographic order, with a proper prefix smaller. Fixed-width numeric fields thus compare numerically; a B field compares length first. The DAG numbering above, rather than an unspecified recursive tree order, defines this order. Comparing streamed or lazy views must reproduce precisely these bytes.
 
-### 6.2 Generality without graph blow-up
+Profile tag `0x0000` means `NO_TREE` for coset-enumeration objectives; canonical and signed image objectives use P1 (`0x0001`). A persistent canonical key is the typed tuple `(schema, action, n, admissible_context, objective, profile, encoding, order, canonical_payload)`. Use exact canonical Group bytes for fixed-G context. A labeling context uses its declared source domain and canonical H r descriptor; coordinate-renamed contexts must be transported to a common domain before comparison. An application may instead supply an exact external context ID whose injectivity it guarantees. A generator hash alone is not a context ID. Signed contexts additionally include the exact character, e.g. its canonical lifted-group descriptor (§8.4).
 
-Extended graph backtracking provides more expressive refiners than graphs confined to Ω, but an existence result for a perfect refiner is not a guarantee of a small or inexpensive representation. [R3]
+For a nonzero signed result the payload is the canonical monomial bytes; the returned coefficient sign belongs to result metadata and to any higher-layer term key requiring coefficients. A certified zero has distinguished payload byte `00` under the signed objective and no monomial stream; ordinary CDAG streams begin `43`. Witnesses, trace certificates, subgroup harvests, capacities, scheduling and diagnostics are never appended to canonical object bytes. Comparing objects across objectives or contexts requires an explicit mathematical comparison, not byte coincidence.
 
-In particular, do not encode a generator list as a distinguished set of permutation gadgets and claim to have encoded its generated subgroup. Another generating set can describe the same subgroup. Conversely, do not enumerate all elements just to make that encoding presentation-independent. Preserve subgroup and labeling-coset atoms in the native group layer; supply safe structural summaries and exact leaf tests.
+### 4.4 A second frozen minimum order
 
-### 6.3 Physical stack layout
+`SIMPLE-UPPER-1` (order `0x0002`) is available only for uncoloured simple undirected graphs (empty vertex/arc labels, no loops, and exactly one arc in each direction for each edge): `U32(n)` followed by upper-triangle bits in order (0,1),(0,2),(1,2),(0,3),…; pack most significant bit first, pad the final byte with zero low bits. Compare unsigned bytes. It is the minimum-search order; return the selected graph in CDAG-2 plus its order key. The fixed n header and padding cannot change comparisons within an orbit.
 
-Use immutable relation handles plus a local descriptor stack. A descriptor contains a relation ID, vertex-label layer, active restriction, coordinate-map handle and provenance. Singleton facts are short records. Sparse derived relations use compact edge slabs. Implicit relations such as “same G-orbit” remain orbit-ID arrays rather than cliques.
+Its first k(k−1)/2 bits are zero in some relabeling exactly when an independent k-set exists. An all-zero prefix beats every prefix containing one; thus computing this minimum for G=Sym(n) decides Independent Set. This proves the public minimum interface includes NP-hard cases using the local Karp source (§23). It proves neither that arbitrary canonical-image output is NP-hard, nor an unconditional exponential bound, nor the same reduction for CDAG-BYTE-1.
 
-Several logical relations can share one physical adjacency structure. Distinguish their ordered relation identity and arc labels exactly. Merge only under an injective combination of relation labels. A bitwise OR that forgets which relation supplied an edge is not a faithful merge.
+## 5. Components and semantic independence
 
-For a base-only canonical search, stop when all base atoms are singleton cells; residual auxiliary permutations need not be enumerated. The adapter must prove that all refinement and trace information read before that point is independent of auxiliary numbering. If it cannot, use a weaker refiner or an explicit auxiliary search. A base witness is always checked against the native object.
+Use opaque immutable group/object/problem handles and worker-owned mutable workspaces. Modules: `api`, `object`, `encoding`, `perm`, `bsgs`, `coset`, `partition`, `refine`, `search`, `symmetry`, `scheduler`, `arena`, `checkpoint`, `cpu_dispatch`, `metrics`, plus an independent checker. Built-in adapters are statically dispatched in hot loops; callbacks run at bounded operation/stage boundaries.
 
-## 7. Canonical-image search specification
+Every storage representation R has a semantic interpretation decode(R). Validation, action, equality, normalisation, refinement, target selection, traces and encoding must factor through decode, up to declared coordinate transport. Formally, if decode(R)=decode(S), each semantic stage returns equal interpreted results, not merely isomorphic implementation tables. Separately require equivariance under the action. Equivariance alone does not prevent a redundant generator or duplicated DAG node from changing a trace.
 
-This section fixes a concrete canonical objective rather than leaving “choose the best leaf” undefined. It is a proposed engineering realisation of the canonical-tree principle; its permutation convention is the one in §3.
+This excludes SGS/base choice, generator order, allocation IDs, auxiliary numbering, edge insertion order and hash iteration from mathematical choices. Representation-equivalence is an explicit Lean interface hypothesis to discharge for built-ins. Metamorphic tests support but do not replace it.
 
-### 7.1 Tree semantics
+## 6. Native objects, auxiliaries and composition
 
-At every node:
+Profile P1 below allocates no auxiliary vertices: N=n. DAG/group/relational adapters initially use exact leaf semantics with weak refinement. Future incidence profiles may use atom/type/tuple-position/literal/root vertices, but must assign new profile IDs and prove their construction and ordering. Tuple-position ports distinguish repeated positions; set storage order does not create positions.
 
-1. Append the branch's individualisation fact.
-2. Run a fixed sequence of object and group refiners to the profile's fixed-point condition.
-3. Produce an ordered partition P of the working domain and an exact node invariant I.
-4. If the base partition is discrete, evaluate a leaf.
-5. Otherwise select a non-singleton base cell by a fixed, equivariant rule and create one child for each atom in it.
+For an extended graph encoding E require: g carries x to y iff it extends to a colour-preserving isomorphism E(x)→E(y). All intermediate base partitions and traces, not just final isomorphism existence, must be invariant under auxiliary-only renaming. Project automorphisms to Ω; discard kernel actions on auxiliaries. Stop at discrete base atoms only if this invariant has been proved. No generator-list graph can stand for the generated subgroup without a presentation-independence proof.
 
-The ordered partition is an over-approximation: every actual automorphism of the current constrained object preserves its cells. A cell need not be a true orbit. The initial fallback refiner is trivial; individualising atoms still terminates.
+At each node fix one finite auxiliary universe of at most N_max vertices before iteration, or supply a well-founded generation rank that covers both allocations and refinements. Per-invocation finite allocation is insufficient. Refiners never merge old cells or erase individualisations. A fixed universe permits at most N−initial_cell_count strict splits; every stage itself must terminate.
 
-Select the target cell by a fixed tuple such as `(size, relation-degree signature, canonical cell position)`. Every component must be invariant under allowed renaming. Visit children in any order. Raw atom IDs may control visitation, but may not eliminate tied branches or decide which structural cell exists.
+Disconnected graphs and independently canonicalised children can still share atoms or have G-coupled component actions. Decomposition must retain overlap constraints, induced groups, complete labeling cosets and reconstruction maps. Replacing children by bare canonical images and sorting is not authorised. Perfect-refiner existence and the recursive general-object theory do not establish small auxiliary size or cheap search for these implementations.
 
-Object refinement must satisfy R_(x^h)(S^h)=R_x(S)^h for h∈G, with the corresponding extension on auxiliary vertices. Group refinement must be G-equivariant. These contracts are stronger than “seems to split the correct vertices on one instance”.
+## 7. Frozen canonical profile P1
 
-### 7.2 Leaf map and objective
+### 7.1 Exact scalar rules (`profile=0x0001`, `BASE-ORBIT-GRAPH-1`)
 
-Read the ordered singleton base partition as L=(l₀,…,l_(n−1)). Let t_L be the unique element of G sending L to its lexicographically least image L^G. Compute this by successive point-orbit minimisation and exact stabilisers. The full list makes the minimising permutation unique, even if intermediate transporters are not unique.
+P1 uses N=n base vertices, all internal type tag `0x00`. On the top-level subset (a set consisting only of atom nodes), the initial key of a is membership 0/1; on a top-level graph it is B(vertex_colour[a]); on every other root it is the empty key. Empty sets qualify as subsets. Partition by equal keys and order cells by increasing key. All atoms are retained, including unused/fixed ones. n=0 has an empty ordered partition. Internal order of members within a cell is not semantic.
 
-Let τ(L) be the concatenation of exact, framed node invariants along the path. The baseline invariant records the ordered cell-size vector after each prescribed refinement stage; richer invariants require a versioned profile. Define the leaf key as
+`split(P, sig)` replaces each old cell, in its old position, by its nonempty signature classes in increasing lexicographic signature order. It never reorders old cells or merges distinctions. Refine each node as follows, taking snapshots where specified:
 
-**K(L) = (τ(L), enc(x^t_L)).**
+```
+append NODE(depth)
+repeat:
+    c0 = number of cells
+    O: snapshot current ordered cells C[0..k-1]
+       for a graph, sig(v) consists of exact counts, in order:
+           for arc labels sorted by B(label), then cell index j:
+               outgoing multiplicity from v into C[j],
+               incoming multiplicity from C[j] into v
+       for every other root, sig(v) is the empty vector
+       P = split(P, sig); append STAGE_O(cell sizes of P)
+    G: F = singleton atoms in current partition order (not branch order)
+       M = lexicographically least F^G
+       choose any u in G with F^u=M
+       compute G_M orbits; sort each orbit's target labels increasingly,
+           then sort the orbit lists lexicographically
+       sig(v) = position of the orbit containing u[v]
+       P = split(P, sig); append STAGE_G(cell sizes of P)
+    if number of cells == c0: break
+if all cells singleton: append LEAF; evaluate §7.2
+else:
+    choose cell minimising (cell size, cell position), among size > 1
+    for EACH a in that cell:
+        replace cell C in place by [{a}, C minus {a}]
+        recurse at depth+1, with a fresh node refinement loop
+```
 
-Choose the lexicographically least key among all leaves. Return its second component and t_L. An explicit terminal marker makes variable-length traces unambiguous. Group normalisation is performed on the ordered target domain when a labeling coset is supplied.
+A graph loop contributes once to each incoming/outgoing count. Count signatures compare lexicographically using the ordinary numerical order on mathematical naturals; machine acceptance uses §11. One complete no-change sweep is always recorded, even at a discrete root. Within O all signatures refer to its entry snapshot; G reads the post-O partition. Continue only after a strict split in the preceding sweep. No timing-dependent refiner, lookahead, auxiliary extension, extra graph layer or optional stage is part of P1. Additional useful profiles need assigned IDs and equivalent precision before release; no such future ID is silently substituted.
 
-Here is the short correctness argument. For h∈G, equivariance identifies the tree for x with the tree for x^h and sends L to L^h, preserving τ. The two lists have the same least G-image, so uniqueness gives t_(L^h)=h⁻¹t_L. Therefore (x^h)^t_(L^h)=x^t_L, and the sets of leaf keys agree. Every leaf image is in x^G. Taking the minimum consequently gives a canonical image. This argument also explains why scheduling must not define the tree or its invariant.
+For O, counts and labels depend only on the semantic graph and ordered cell sets. For G, if F^u=F^v=M, u⁻¹v∈G_M, which preserves every one of its orbits, so the pulled-back ordered orbits agree. Under h∈G, h⁻¹u sends F^h to the same M and gives the transported partition. Thus both stages are representation-independent and equivariant, and preserve constrained automorphisms. Initial colours and target/individualisation rules have the same properties. Raw atom IDs may choose visitation order only.
 
-### 7.3 Group-refiner normalisation
+### 7.2 Trace bytes, leaf map and proof
 
-A concrete baseline uses the ordered list F of currently fixed base atoms. Send F to its least G-image M using a transporter u. Compute the orbits of G_M, order those orbit descriptions on the fixed ordered target domain, and transport the result back by u⁻¹. The result is independent of the choice of u because two choices differ by a stabiliser of M. This normalisation avoids a first-encountered representative. More powerful orbital refiners use the same discipline. [R1, Appendix 7.1]
+Trace tokens have assigned byte encodings:
 
-Cache the normalised fixed list, verified stabiliser and orbit result with exact keys. A cache hit changes cost only. It may not change which refiner is logically invoked, the ordering of its output or whether a fact enters the canonical trace.
-
-### 7.4 Sound pruning
-
-There are four initially approved pruning mechanisms:
-
-| Mechanism | Justification required |
+| Token | Bytes |
 |---|---|
-| Trace prefix worse than complete incumbent | First unequal, finalised token is larger; no descendant can change that token |
-| Proven automorphism identifies siblings | Automorphism belongs to G, fixes x and the current branch constraints, and maps the whole subtree semantics |
-| Exact duplicate state | Full state equivalence plus coordinate transport is known; equal hash or quotient is insufficient |
-| Adapter-specific bound | Bound is valid for every remaining leaf and for the selected objective |
+| `NODE(d)` | `10 \|\| U32(d)` |
+| `STAGE_O(sizes)` | `20 \|\| U32(k) \|\| U32(s_0) ... U32(s_(k-1))` |
+| `STAGE_G(sizes)` | `21 \|\| U32(k) \|\| U32(s_0) ... U32(s_(k-1))` |
+| `LEAF` | `00` |
 
-A shorter equal trace prefix cannot be discarded merely because an incumbent has more tokens. Tentative local traces are not complete incumbents. A lower bound on object bytes cannot override a better trace: compare the lexicographic pair in the specified order.
+Concatenate tokens from root to leaf. Compare unsigned byte lexicographically, with a proper prefix smaller; `00 < 10 < 20 < 21`. Framing is parsed, and no cell members or transporter choices occur in the trace. The objective is the lexicographic pair **(complete trace, CDAG-2 bytes of x^t_L)**, with trace compared first.
 
-Use exact leaf equality to derive automorphisms. Maintain A_known≤Aut_G(x). Incomplete knowledge only reduces pruning. Before orbit pruning at a node, restrict A_known to the pointwise stabiliser of its branch choices, or verify preservation of the complete node constraints directly. Root orbits alone are not a valid pruning rule at descendants.
+At a leaf extract L from the partition's singleton order. Find the unique t_L∈G minimising L^G numerically lexicographically. A constructive procedure starts t=id, H=G; at list position i set a=t[L[i]], choose b=min(a^H) and u∈H with a^u=b, then t←t u and H←H_b. This preserves already minimised entries; the final full list determines t uniquely. Intermediate transporter choices cannot change t.
 
-### 7.5 Generality and complexity
+For h∈G, tree equivariance maps L to L^h with unchanged trace. The lists have the same least image and uniqueness gives t_(L^h)=h⁻¹t_L. Therefore (x^h)^t_(L^h)=x^t_L. Leaf-key sets, and hence minima, coincide. The returned object belongs to x^G. Injective encoding then gives idempotence and orbit-equivalence detection within the same context. For n=0 the empty list has the unique identity action and the root is a leaf.
 
-The scalar fallback refines nothing and explores full individualisations of Ω. It terminates for every finite input with exact action/encoding, potentially after factorially many leaves. If a refiner makes this tree impractical, a complete enumeration of G remains available under a separate minimum-image profile. No polynomial, quasipolynomial or singly exponential worst-case bound is promised for this practical engine.
+Finite termination follows from at most n strict cell splits per node, one last no-change sweep, total group/object operations, and at most n−1 individualisations for n>0. The unpruned tree has at most n! leaves (one for n=0). This is an upper bound on this traversal, not a problem lower bound.
 
-For an external action adapter with no structural refiner, make this expense visible at problem construction. Generic completeness is a guarantee of a correct eventual answer under unbounded resources, not evidence that all object types receive equally effective pruning.
+### 7.3 Pruning and root fast paths
 
-## 8. True minimum-image and transporter policies
+The unpruned evaluator above is normative. An optimisation needs a coverage lemma for this exact key: finalised trace-prefix domination, a checked node-stabilising automorphism and retained equivalent subtree, exact state equality with transport, or a bound for every descendant key. An equal shorter prefix is not worse; compare full framed tokens and preserve the possibility of a smaller next byte. A bound on image bytes cannot override a better trace. Never use a hash/quotient match as exact state equality.
 
-### 8.1 Minimum-image coverage
+Known automorphisms form a verified subgroup A_known≤A. At each node intersect with the stabiliser of its constraints before sibling pruning. Root orbits alone cannot justify deeper pruning. Verify implicit automorphisms by exact membership and object equality before publication. Image-preserving pruning need not preserve complete-group coverage (§8).
 
-A canonical-tree search can retain only a structured subset of orbit representatives. Therefore disabling its trace comparison does **not**, by itself, establish that the result is the global lexicographic minimum. Minimum-image mode must have a separate coverage proof.
+A discrete root returns its one leaf after the required final sweep; signed mode must still certify zero/nonzero. If every generator fixes x, the unsigned orbit is a singleton and returning x is equivalent to P1 regardless of trace. A caller requesting a trace certificate receives the prescribed trace or a checker rule for this shortcut. Signed mode in this case tests χ on generators: any odd one proves zero, otherwise all of G=A is even. Record root-discrete and singleton-orbit frequencies separately.
 
-Use nodes representing exact cosets C=H r. At a node choose a point a moved by H. For each b in a^H choose t_b∈H with a^t_b=b. Then
+### 7.4 Hand-checked golden cases
 
-H r = disjoint union over b∈a^H of H_a t_b r.
+The following abbreviations expand **exactly** via §§4.1 and 7.2: `H(n)=43 4e 02 00 01 00 01 || U32(n)`; `A(a)=01||U32(a)`; `S(ids)=04||U32(len(ids))||U32(ids...)`; `B0=02 00 00 00 00`; `T(ids)=03||U32(len(ids))||U32(ids...)`. Hex groups below separated by spaces are concatenated, not alternative encodings. Where identity attains the minimum key it is the least witness; elsewhere minimise among the witnesses that actually attain that key.
 
-The children cover every permutation exactly once at that split. Repeating until H is trivial enumerates G at worst. At a singleton coset, compare enc(x^r). This construction shares the group, stack, frame and scheduler components with canonical-image search.
-
-Structural refinement can tighten safe candidate domains and lower bounds, but it must not discard a coset merely because its images have a nonpreferred canonical-tree invariant. The objective is the object encoding, not the canonical trace.
-
-### 8.2 Bounds
-
-Adapters can emit an exact forced prefix and an optimistic lower bound on the remaining encoding. If the bound is no smaller than the best complete image, prune for image-only mode. If all minimising witnesses or a full group are required, equality needs a separate coverage argument.
-
-For subsets, use the declared bitstring or sorted-list order, not an implicit mixture. For graphs, a canonical fixed-length adjacency encoding permits bounds from assigned target endpoints; a sorted edge-list encoding requires different bounds. For general nested sets, child reordering can invalidate a naively forced prefix. Until a bound is proved, return “unknown” and continue.
-
-The initial complete version may use only the trivial bound. Faster Linton-style set-specific logic is an adapter optimisation whose contract is checked against coset coverage, not a replacement for it.
-
-### 8.3 Transporter and stabiliser search
-
-Paired-stack search maintains source and target structures. An approximator must contain every true transporter; partition incompatibility can prove emptiness. At a discrete candidate, check bijectivity, membership in G and exact native-object equality.
-
-Canonical-image mode may harvest useful automorphisms without proving that they generate the full stabiliser. The default implementation of `CANONICAL_LABELING_COSET` runs a complete stabiliser search seeded with these generators if completeness is not already proved. This uses the same engine with a different objective. A future fused traversal is allowed only with a group-completeness proof.
-
-Arbitrary Boolean constraints can produce solution sets that are not cosets. Such inputs must request enumeration or one witness, unless closure has been established. Intersections of subgroup/coset/transporter constraints have the expected structure only when their mathematical hypotheses hold.
-
-## 9. Permutation-group kernel
-
-This is a major subsystem, not an incidental utility. Removing GAP from the runtime means implementing the required exact group operations, not merely rewriting the backtracking loop in C.
-
-### 9.1 Required operations
-
-Construct and verify a base and strong generating set (BSGS); sift permutations; compute point orbits and transporters; obtain pointwise stabilisers; change/extend a base; minimise an ordered tuple; enumerate a coset lazily; insert verified generators; compare groups and cosets exactly; and compute exact group order. Add intersections and normaliser/conjugacy services using the common search infrastructure where direct chain operations do not suffice.
-
-Use deterministic Schreier–Sims as the reference constructor. A randomised constructor may propose a chain, but must finish with an exact verification that proves completeness. Checking only that input generators sift to identity is insufficient if the claimed stabiliser levels have not been verified. Require Schreier closure/strongness verification and provenance showing that chain generators lie in the input group. Never interpret a probabilistic chain as an exact proof of nonmembership or exhaustion.
-
-### 9.2 Representation choices
-
-Store dense permutations in contiguous image arrays, normally 32-bit entries. Detect identity, transpositions, small support and structured product elements as tagged forms where they save materialisation. Materialise a dense array only when the expected reuse pays for n writes and additional cache occupancy.
-
-A chain level stores a base point, generator-index span, orbit list, point-to-orbit lookup and a compact Schreier tree. Tree entries identify a parent and generator edge; do not allocate a full n-entry transversal permutation for every orbit point. Inverse generators are explicit handles or cached arrays with clear lifetime rules.
-
-The shared root group is immutable after verification. Worker changes use local chain fragments, generator-index overlays and bounded caches. Do not clone the entire chain at every search node or every steal. Structured Sym(n) and products of symmetric groups have exact specialised providers; they need not manufacture a generic enormous SGS.
-
-### 9.3 Latency-aware transversals
-
-Compact Schreier trees trade memory for dependent loads. Provide three levels:
-
-1. Reconstruct rarely used transporters from short generator words.
-2. Cache short words and selected jump ancestors for hot orbit points.
-3. Materialise dense transporters only for hot entries or batch application.
-
-Every cache has a byte budget and measured hit/reconstruction statistics. Flattening every transversal can turn a manageable chain into O(n times the sum of orbit sizes) storage; this is precisely the trade-off to avoid.
-
-Do tuple minimisation incrementally. When only a few points are queried, apply generator words to those points instead of composing full permutations. If a word becomes long or most of the domain will be scanned, materialise once. Interleave independent point applications to expose memory-level parallelism, but do not expect SIMD to remove the dependency in p[q[v]].
-
-### 9.4 Group objects and presentation-independent bytes
-
-Subgroups occurring inside objects need exact normal forms on an already ordered domain. Sorting the input generators is invalid.
-
-A complete baseline normal form uses the fixed base (0,…,n−1). At level i, let H_i fix 0,…,i−1. For each j in the orbit i^H_i, select the lexicographically least permutation in {h∈H_i : i^h=j}, obtained by successive constrained orbit minimisation. Emit these permutations in increasing (i,j) order, omitting identities by a fixed rule. They form canonical transversals and generate H. For a coset H r, additionally emit its lexicographically least representative. Thus the representation depends on the group/coset, not the supplied generators.
-
-This deliberately conservative scheme may emit O(n³) point entries. Stream it and cache comparisons; do not describe it as a compact practical solution for all large group objects. A proven canonical-generating-set algorithm is the planned replacement if this dominates. Group-object normal forms and subgroup-conjugacy search are separate costs; normalising on an ordered domain does not solve conjugacy for free. Schweitzer–Wiebking explicitly treats canonical group representations and labeling-coset atoms. [R2, §9]
-
-### 9.5 Working-set controls for group operations
-
-A dense 32-bit permutation on 100,000 points consumes 400 KB. One thousand cached dense transporters consume 400 MB before indexing. This is large enough to dominate both group computation and the rest of the search working set. Count transporter bytes separately from generator bytes in every report.
-
-Store generator-major contiguous arrays for full composition and scans. Benchmark small point-major tiles only for batches that repeatedly query the same points across several generators; keeping a full transposed copy doubles the footprint and is not the default. Reuse invariant ambient-group contexts across a batch. Cache only a bounded number of rebased chains, and key them by the exact ordered fixed tuple rather than an unordered set.
-
-Short-circuit the trivial group, already fixed tuple entries, and symbolic full-symmetric cases. Drop globally fixed points from group storage only with an exact support map, retaining their object incidences and output positions. A small moved support can make restricted-group problems much cheaper than their full object size suggests.
-
-If every input generator fixes x under its exact action, then the whole group fixes x: its orbit is a singleton. Return x immediately, with G itself as the complete stabiliser if requested. This shortcut is independent of the canonical profile. Other direct closed-form shortcuts must prove agreement with that profile, or advertise their own versioned profile.
-
-## 10. Partition refinement and rollback
-
-### 10.1 Required arrays
-
-For N working vertices, maintain flat arrays:
-
-| Array | Typical element | Purpose |
-|---|---|---|
-| `lab[N]` | uint32 | Vertices concatenated by ordered cell |
-| `pos[N]` | uint32 | Inverse position |
-| `cell_of[N]` | uint32 | Current cell handle |
-| `cell_start`, `cell_len` | uint32 or uint64 | Active cell spans |
-| `cell_order` | uint32 | Semantic cell order independent of allocation handle |
-| `count[N]` | uint32/uint64 | Current splitter counts |
-| `stamp[N]` | uint32/uint64 | Lazy clearing generations |
-| `touched[]` | uint32 | Vertices/cells changed by current splitter |
-| `worklist[]` | Compact descriptors | Pending relation/cell splitters |
-
-Maintain `lab[pos[v]]=v` and exact coverage of the active domain. Integer widths are selected for a complete kernel family at input construction, not checked inside every edge loop. Use 32-bit IDs when N fits; independently use 64-bit offsets when the edge/incidence count requires them. If 64-bit IDs are unsupported in the first release, return a capacity error explicitly.
-
-### 10.2 Sparse refinement
-
-For splitter cell C and relation r, accumulate exact counts of appropriate incoming/outgoing arcs between each vertex and C. Traverse adjacency of C through the matching orientation, update only touched vertices, collect touched cells, and split them by exact signatures. Distinguish incoming/outgoing direction, arc type and multiplicity. Repeated updates to the same vertex are expected.
-
-Use epoch stamps or touched-list reset to avoid clearing O(N) arrays for a tiny splitter. Handle epoch wrap with a complete reset at a safe boundary. For a simple unweighted relation, integer counts suffice. For many labels, use compressed per-vertex signature records and exact comparison; do not allocate a dense N×number-of-labels table by default.
-
-Use a worklist with an amortised smaller-fragment rule where its standard partition-refinement preconditions hold. Retain a splitter already pending in the correct way when its cell splits. The resulting equitable partition can be computed near O((N+m) log N) for suitable sparse fixed-relation routines; do not promote that local bound to a bound on the whole search or arbitrary derived refiners.
-
-### 10.3 Dense refinement
-
-Represent an adjacency row as packed 64-bit words. Counts into a splitter mask use AND plus population count. Tile rows and word ranges so that the splitter mask and small count blocks remain cached. A singleton splitter often reduces to testing a single bit in each row; dispatch to it rather than scanning whole rows.
-
-Keep sparse and dense relation kernels behind one exact signature interface. A relation may store sparse low-degree rows and bitset high-degree rows. Conversion decisions use storage and time estimates, expected reuse, and a fixed budget. They cannot change the semantic trace. For logical operation order, either produce the same prescribed splitter events or emit only canonical stage results whose ordering is independent of execution order.
-
-### 10.4 Signature sorting
-
-Use direct special cases for all-equal, binary and tiny-count splits. For small cells use in-cache insertion/small-array sorting; for larger fixed-width keys benchmark radix sorting against comparison sorting. Integer accumulation is exact, so traversal order cannot introduce floating-point nondeterminism.
-
-Hashing may select buckets. Equal hashes must be checked by exact signature comparison before equality is asserted. Never use an incidental random hash seed to order canonical cells. A deliberately lossy invariant can be sound if it only weakens refinement and is fixed by the profile, but the baseline keeps exact signatures for auditability.
-
-### 10.5 Reversible state
-
-Use worker-local bump arenas and explicit frame watermarks. The baseline undo trail logs swaps/changed ranges, old cell metadata, stack lengths and group-overlay changes. Rolling back a frame restores all semantic state exactly. Scratch counts may be discarded by epoch rather than restored.
-
-For a heavily changed contiguous region, saving the old region once can beat logging each mutation. The strategy is a physical choice with identical restored state. Trail bandwidth, inverse-map writes and write-allocate traffic must be measured. No per-node `malloc/free`; large allocator calls occur at problem creation, arena growth, task snapshots or output construction.
-
-An iterative DFS frame machine avoids C stack overflow and enables suspension. Each frame holds branch progress, arena/trail watermarks, invariant length, group-view handle and objective state. Set/multiset object recursion also needs depth bounds or an explicit stack.
-
-### 10.6 Refinement termination and semantic work order
-
-The baseline profile fixes the logical order of relations, splitter cells, split signatures and stage boundaries. Within an unordered bucket, allocation or input order cannot assign a semantic colour. If two splitters tie, use their canonical relation/cell positions; do not break the tie by the smallest original vertex ID. Hardware execution may run independent counts in parallel, but commits their ordered results according to this specification.
-
-Allocate a finite bounded auxiliary domain for each refiner invocation, or require a proved terminating generation scheme with a declared bound. Deduplicate already-appended facts by exact identity. After each complete scheduled sweep, continue only if the profile's progress measure strictly improves. The simplest baseline uses strict refinement of the finite working partition; stop after a full sweep without such progress. A stronger profile may also track a strictly shrinking exact group bound, provided the measure and termination proof are explicit. Appending another copy of the same graph is not progress.
-
-This stopping rule can forgo useful refinement without harming completeness. What is forbidden is an unbounded loop that creates fresh auxiliary IDs or numerically fresh colour IDs for unchanged mathematical information.
-
-## 11. Physical memory architecture
-
-### 11.1 Four lifetime regions
-
-1. **Problem region:** immutable atoms, relations, object DAG, normalised labels and verified ambient group.
-2. **Worker region:** partitions, undo trail, counts, active group overlays, DFS frames and scratch encoding.
-3. **Task region:** bounded snapshots and branch recipes for queued/stolen work.
-4. **Publication region:** immutable incumbents and batches of verified generators, reclaimed by epochs.
-
-Use structure-of-arrays where loops stream selected fields; use small packed records when every field is consumed together. Separate hot headers from cold diagnostics. Internal 32-bit indices/relative offsets reduce footprint where capacity allows. Arena slabs larger than the offset range need explicit segmented handles rather than silent truncation.
-
-### 11.2 Sparse versus dense storage arithmetic
-
-For a single simple directed relation with N vertices and m arcs:
-
-- CSR with 32-bit destinations and 64-bit offsets costs approximately 4m+8(N+1) bytes before labels.
-- Keeping CSR and CSC costs approximately 8m+16(N+1) bytes before labels.
-- A row bit matrix costs N²/8 bytes, rounded to row alignment; storing its transpose doubles this.
-- Per-arc 32-bit labels add 4m bytes per orientation unless an exact shared label representation is used.
-
-Ignoring offsets and alignment, one bit matrix crosses one unlabelled CSR at density m/N²≈1/32. With equal numbers of stored orientations the same rough storage crossover applies. It is **not** a speed threshold: small splitters, degree skew, cache residency, bitplane multiplicity and conversion cost determine runtime.
-
-Example: N=100,000 requires about 1.25 GB for one unpadded bit matrix. At m=1,000,000, bidirectional unlabelled CSR/CSC is about 9.6 MB. This makes indiscriminate “vectorise by making it dense” unacceptable.
-
-### 11.3 Worker footprint
-
-A practical starting budget for partition/counter/scratch arrays is 40–64 bytes per working vertex per worker, excluding undo history, subgroup data and snapshots. It is a planning estimate, to be replaced by exact accounting during implementation.
-
-At N=100,000 and 48 bytes/vertex, mutable base state is 4.8 MB per worker. Sixteen workers consume 76.8 MB before trails or group caches. This can exceed the useful shared-cache capacity even when one worker behaves well. Auxiliary expansion increases N, sometimes dramatically.
-
-The admission equation is
-
-M_total = M_immutable + p·M_worker + M_tasks + M_group_caches + M_publications + M_output.
-
-Apply hard byte budgets to every term. Reserve room for a complete rollback, generator verification and final output. If a budget is exhausted, evict reconstructible caches or reduce active concurrency; never delete constraints, pending coverage or exact comparison information. Oversized unavoidable state produces `RESOURCE_LIMIT`.
-
-### 11.4 Cache and TLB policy
-
-Prefer contiguous forward scans and compact vertex IDs. Keep relation data immutable and shared. Align bulk bitsets and queue metadata suitably; pad independent writers to avoid cache-line sharing. Do not pad every vertex record to a cache line.
-
-Allocate worker arenas on their owning workers. Where the OS exposes NUMA, use first-touch placement and node-aware affinity. Shared-cache clusters on a single-socket chiplet processor are not necessarily separate NUMA nodes; query actual topology. Test per-cluster replication only for small, frequently read group metadata or relation indexes, never duplicate the whole object by default.
-
-Large pages are optional for large long-lived arrays after measuring dTLB misses and allocation behaviour. They are not a default remedy for poor locality. Avoid per-node page tricks, copy-on-write mappings and page faults in the hot path.
-
-### 11.5 Physical renumbering and blocking
-
-Consider a one-time physical vertex ordering to cluster adjacency and counter accesses for very large sparse inputs. Keep a bijection between physical slots and semantic atoms. Permutations, incidence data and output maps must all use the correct coordinate view; tuple minimisation still compares the specified semantic target labels. A locality heuristic is not allowed to change the canonical ordering.
-
-Evaluate preprocessing cost and the extra translation arrays against expected reuse. For a tiny/easy instance, leave numbering alone. For repeated hard searches on the same object/group, block adjacency by destination ranges so a counter tile fits in private cache. This may require a secondary edge index and a second pass. Admit it only when the saved random traffic exceeds the sorting/index memory cost. Immutable per-relation tiles can be shared across workers.
-
-## 12. Bandwidth and latency model
-
-Track bytes and dependency chains separately. An edge scan can have sequential adjacency traffic yet be latency-limited by random updates to vertex counters. A group operation can move few bytes overall yet stall on a chain of dependent generator accesses.
-
-For a measured workload, let B_k be traffic through cache/memory level k, β_k its attainable bandwidth, D the longest relevant dependent-miss chain, ℓ its effective latency, and T_compute the execution-port/instruction lower bound. Use the diagnostic bound
-
-T ≥ max(T_compute, max_k B_k/β_k, D·ℓ).
-
-For Q random cache-line requests with average latency ℓ and at most q independent outstanding requests, Qℓ/q is another useful throughput bound. Real throughput may be worse because of TLB misses, branch recovery, bank conflicts, coherency, dependencies and scheduling. These are bounds for the implemented access pattern, not universal lower bounds for canonicalisation.
-
-Do not derive bandwidth from DIMM marketing alone. Measure sustained read-only, read/write, random-update and loaded-latency behaviour for the actual machine and active core set. Vendor performance tools and optimisation manuals support this calibration approach. [R7–R10]
-
-### 12.1 Per-kernel accounting
-
-| Kernel | Useful data traffic | Hidden risk | Architectural response |
-|---|---|---|---|
-| Sparse splitter | Arc IDs plus count/stamp accesses | A 4-byte update can fetch/dirty a whole line | Touched sets, locality, tile large frontiers |
-| Dense count | Bitset rows, masks, count output | Repeated full rows for many small masks | Singleton/sparse-mask paths, batching |
-| Permutation composition | Two input arrays and one output | Gather misses; dependent indices | Lazy words, independent queries, cached compositions |
-| Schreier traversal | Parent/edge records and generator lookups | Serial pointer-like dependency | Compact trees, short words, selective materialisation |
-| Cell split/undo | Partition and inverse-map writes | Trail plus restoration multiplies traffic | Region snapshots versus delta logs |
-| Leaf comparison | Image/encoding stream | Full graph rewrite for a losing leaf | Lazy transformed view and early exact mismatch |
-| Task steal | Recipe or mutable-state snapshot | Cache-cold restart and large memcpy | Coarse tasks, checkpoint reuse, local stealing |
-
-Example model, not a hardware measurement: if a node requires 200 MB of irreducible DRAM traffic and the active core set sustains 60 GB/s for that mix, the bandwidth floor is roughly 3.3 ms per node. Additional workers share that budget. Conversely, a dependent path of 100,000 last-level misses at an assumed 80 ns has an 8 ms serial latency floor. Wide SIMD cannot remove either floor without changing the access pattern.
-
-### 12.2 Refinement value model
-
-Estimate benefit as avoided downstream work, including bytes moved and group cost, against refinement cost and retained memory. A useful refiner can be slower per node while winning overall. Report both nodes and time; selecting refiners solely by nanoseconds per node is misleading.
-
-For a fixed canonical profile, online timings may choose equivalent kernels and storage representations. They may not arbitrarily enable/disable semantic refiners or change target-cell selection. An adaptive semantic policy must itself be a fixed, equivariant rule based on mathematical features and versioned as part of the profile. Memory pressure cannot silently select a different canonical form.
-
-### 12.3 Calibration and dispatch table
-
-An optional short calibration command records a hardware profile; startup must not always run a long benchmark. At minimum measure:
-
-| Measurement | Sweep | Decision it informs |
-|---|---|---|
-| Sequential read and read/write bandwidth | Array sizes across private cache, shared cache and DRAM; core counts | Copy/snapshot policy and concurrency cap |
-| Random counter updates | Working-set size, skew and duplicate frequency | Sparse scalar versus blocked accumulation |
-| Dependent and independent gathers | Chain length and independent streams | Word reconstruction versus dense transporter |
-| AND/popcount | Row length, splitter density and ISA | Dense/hybrid dispatch |
-| Task replay versus snapshot | Partition size, trail depth and destination cluster | Steal payload and grain size |
-| Cache-to-cache publication | Batch size and cluster placement | Generator/incumbent polling intervals |
-
-Persist these as performance hints keyed by CPU/topology, build and memory configuration. They do not identify a canonicalisation profile. If calibration is absent, use conservative scalar/sparse choices and collect low-overhead counters for the next explicit tuning run.
-
-## 13. SIMD and microarchitectural specialisation
-
-### 13.1 Dispatch
-
-Ship a portable scalar baseline plus separately compiled ISA kernels. On x86, verify CPU features and OS extended-state support before using AVX-family instructions. If workers can migrate among heterogeneous cores, use a safe common feature set or bind each worker and dispatch for that verified core class. Do not assume AVX-512 exists on every recent Intel/AMD desktop.
-
-Dispatch once per worker or large operation. Keep baseline translation units free of unsupported instructions. `-march=native` is acceptable for an explicitly local build, not a portable distributed binary.
-
-### 13.2 Useful vector kernels
-
-- AND, OR, AND-NOT, equality and first-difference scans on bitsets.
-- Dense count reductions: scalar POPCNT, AVX2 lookup/bit-sliced techniques, and AVX-512 vector population count where the exact feature is supported.
-- Fixed-width signature comparisons, radix-key construction, zeroing and bulk copies.
-- Batched permutation queries or graph-label gathers when measured profitable.
-
-AVX2 does not provide a general vector population-count instruction. AVX-512 vector-popcount features must be checked separately. Integer masks and exact reductions make scalar/vector equivalence testable.
-
-### 13.3 Where vectorisation is conditional
-
-Sparse counter scatter can contain duplicate destinations. A vector gather/add/scatter sequence may lose increments if duplicates are not combined; conflict handling can cost more than scalar code. Begin with unrolled scalar scatter and benchmark blocked aggregation for large frontiers. SIMD width does not repair poor cache locality.
-
-Test AVX-512 against AVX2/scalar on whole workloads, including frequency behaviour and concurrency. Dense kernels may win while permutation-heavy mixed workloads lose. Keep thresholds calibrated by CPU class and array size.
-
-### 13.4 Other techniques
-
-| Technique | Decision |
+| Case | P1 derivation and complete stream |
 |---|---|
-| LTO and PGO | Use after a diverse training corpus; verify compiler/ISA reproducibility |
-| Software prefetch | Experiment on long predictable adjacency/word walks; keep only measured wins |
-| Loop unrolling | Expose independent work without exhausting registers or instruction cache |
-| Non-temporal stores | Only large cold outputs not reused soon; avoid partition/trail arrays |
-| Huge pages | Optional for measured TLB pressure on long-lived large regions |
-| Branchless operations | Use when unpredictable branch cost exceeds extra work; retain early exits |
-| Compact adjacency compression | Test decode cost versus reduced bandwidth; preserve random-access path |
-| Hardware transactional memory | Not a required synchronisation mechanism |
-| Manual assembly | Only for a proven bottleneck after intrinsic/compiler inspection |
-| GPU | Optional future bulk preprocessing/batch backend, not the default irregular search engine |
+| n=0, empty subset, G=1 | Empty partition; trace `10 00000000 20 00000000 21 00000000 00`. Witness empty. Stream `H(0) 00000001 04 00000000 00000000`. |
+| n=2, x={0}, G=⟨[1,0]⟩ | Initial cells [{1},{0}]; no stage splits; L=(1,0), t=[1,0], c={1}. Trace `10 00000000 20 00000002 00000001 00000001 21 00000002 00000001 00000001 00`. Stream `H(2) 00000002 01 00000001 04 00000001 00000000 00000001`. |
+| n=2, x={0}, G=1 | Initial cells [{1},{0}] remain in place although G-orbit signatures differ. L=(1,0), t=id, c={0}. Same trace as above; stream `H(2) 00000002 01 00000000 04 00000001 00000000 00000001`. |
+| n=2, empty subset, G=Sym(2) | Root stages both [2]; two children both stages [1,1]. Least-witness leaf selects 0 first, t=id. Trace `10 00000000 20 00000001 00000002 21 00000001 00000002 10 00000001 20 00000002 00000001 00000001 21 00000002 00000001 00000001 00`. Stream `H(2) 00000001 04 00000000 00000000`. |
+| n=2, one unit arc 0→1, all labels empty, G=Sym(2) | O signatures are (1,0) at 0 and (0,1) at 1, so cells become [{1},{0}]. G does not split; one further stable sweep is required. Trace `10 00000000 20 00000002 00000001 00000001 21 00000002 00000001 00000001 20 00000002 00000001 00000001 21 00000002 00000001 00000001 00`. Witness [1,0], output arc 1→0. Stream `H(2) 00000001 09 00000000 00000000 00000001 00000001 00000000 00000000 00000001 01 00000000`. |
+| n=0, x=(b,b), b=empty literal | One height-0 literal, one height-1 tuple. Stream `H(0) 00000002 02 00000000 03 00000002 00000000 00000000 00000001`. Shared and duplicate b storage give these same bytes. Trace equals n=0 case above. |
 
-An accelerator proposal must include transfer, launch, memory-residency and exactness costs. A desktop GPU's nominal bandwidth is not bandwidth available to a CPU DFS.
+For the second case CDAG-BYTE-1 minimum is {0}, with identity witness, whereas P1 returns {1}; the objectives differ deliberately. For n=2 empty subset with transposition character −1, [1,0] fixes x and certifies signed zero. For x={0} in the same signed group, A=1, P1 returns {1} with sign −1; {1} returns itself with sign +1. These sign cases are hand checked by listing the two group elements.
 
-## 14. Multicore search architecture
+Hand-checked group payloads: `Group(1)=01 00000000`; on degree two, `Group(Sym(2))=01 00000001 00000002 00000000 00000001`. On degree three, C₃ generated by [1,2,0] is not the full symmetric group on its orbit; its greedy sequence has just [1,2,0], so `Group(C₃)=00 00000001 00000003 00000000 00000001 00000001 00000002 00000002 00000000`. For a labeling-coset payload on degree two, H=1 and r=[1,0] give `01 00000000 00000002 00000000 00000001 00000001 00000000` (Group then Perm). Each support pair lists source then target.
 
-### 14.1 Parallelism hierarchy
+Public convention vectors use p=[1,0,2], q=[0,2,1]: pq=[2,0,1], qp=[1,2,0], p⁻¹=p, and (0,2)^(pq)=(2,1). If Ω=(a,b), ρ=[1,0], G=1, x={a}, then t=id on D_2 and λ=ρ, c={1}, Aλ={ρ}; returning id as the source labeling is wrong. Under μ swapping source coordinates, μ⁻¹ρ=id and the same target c results.
 
-Use parallelism in this order, subject to workload:
+Wrapper gates must add graph loops/duplicate arcs, multiset counts, subgroup/coset presentations, free versus dummy tensor indices, error/status and ownership vectors before exposing those entry points. The vectors here pin the core, not the correctness of an unimplemented tensor reduction. Blind implementations must derive them from the rules, not copy expected constants (§20).
 
-1. Independent canonicalisation requests sharing an immutable group context.
-2. Coarse independent subtrees of one hard search.
-3. Large refinement kernels where outer search exposes too little work.
+## 8. Complete objective-specific reference algorithms
 
-Never run all three at unrestricted concurrency. A global worker budget controls nested work. For many small objects, object-level parallelism usually avoids synchronisation and amortises group setup better than splitting each tiny tree.
+### 8.1 Disjoint coset enumerator
 
-### 14.2 Seed and frontier
+All group enumeration services use the following exact reference, with zero pruning:
 
-Start a worker down one deterministic visitation path to obtain an early complete incumbent and initial symmetries. Other workers may start immediately on expensive problems, or wait for a short configured seed phase. Seed duration is an execution choice, not part of the canonical objective.
+```
+visit(H, r):                         # region H r
+    if H == {id}: consume(r); return
+    a = smallest atom moved by H
+    for b in sorted(a^H):
+        t_b = least image-array element of H with a^t_b=b
+        visit(H_a, t_b r)
+start visit(G, id)
+```
 
-Expand to a bounded frontier of tasks. Estimate task cost from remaining cells, recent refinement/group costs and observed subtree work; estimates only choose scheduling. Use depth-first execution locally, expose older sibling tasks for theft, and preserve hot path state.
+Any transporter t_b suffices for coverage; the least choice freezes reference traversal for budgets/certificates. An element h∈H sends a to b iff h t_b⁻¹∈H_a, proving **H r = ⨆_b H_a t_b r**. Orbits have size>1, so each child stabiliser has smaller order; the faithful degree-n action bounds depth by n. Singleton leaves partition G with |G| leaves. This is a reference cost, not an unavoidable lower bound.
 
-### 14.3 Task payloads
+### 8.2 Consumers and completeness
 
-A task contains problem/profile IDs, an immutable checkpoint reference, a branch recipe, objective data and ownership state. The recipe identifies actual branch choices in the existing input domain; it need not itself be invariant because it is an execution record. Replay recreates the prescribed mathematical state exactly.
-
-Two delivery formats are permitted:
-
-- **Replay recipe:** few bytes transferred, repeated computation on the receiving worker.
-- **Local snapshot:** flat mutable arrays and compact group-overlay data copied once, faster start but substantial traffic.
-
-Choose between them using measured replay time versus snapshot copy plus cache-cold reconstruction time. Do not equate memcpy bandwidth with task-start cost. Checkpoint at coarse depths and cap queued snapshot bytes. A stolen task never holds pointers into the donor's mutable arena.
-
-### 14.4 Scheduling and topology
-
-Give each worker a padded deque and a private arena. Prefer stealing within the same shared-cache cluster, then across clusters, then across exposed NUMA nodes. This is a preference, not a restriction that leaves cores idle indefinitely. Large tasks justify more distant steals.
-
-Use physical cores first. Benchmark SMT separately; it can hide latency but also competes for cache, execution resources and bandwidth. Heterogeneous cores receive tasks proportional to measured throughput; long critical tasks should not be stranded on a much slower core. Keep a configurable cap on simultaneously bandwidth-heavy tasks.
-
-When bandwidth is saturated, more workers may increase elapsed time by evicting hot state and increasing loaded latency. Reduce active workers or mix compute-heavy and bandwidth-heavy tasks. Controller decisions may alter search order, never legal coverage or the canonical profile.
-
-### 14.5 Incumbent publication
-
-Publish an immutable bundle containing a complete trace, canonical encoding/view with stable lifetime, witness, profile ID and generation number. A coordinator or short publication lock compares candidates exactly and atomically publishes the winning bundle; multiword payloads are not updated piecemeal.
-
-Workers poll at coarse safe points and keep local snapshots. A stale incumbent only misses pruning; it cannot cause an incorrect answer, because it is still a valid complete candidate and newer incumbents only improve the objective. Reclaim bundles through epochs or another explicit safe-lifetime scheme.
-
-Do not send the whole best graph to every worker on every improvement. Publish a shared immutable encoding, small trace prefix and a handle. Compare locally and touch later bytes only when necessary.
-
-### 14.6 Automorphism publication
-
-Workers verify candidate automorphisms before submitting them. Batch generators to a coordinator or cluster owner; eliminate redundancy by exact membership tests and publish immutable subgroup snapshots. Workers may use any verified subgroup of the full stabiliser. Delayed updates only reduce pruning.
-
-Generators are expressed on the original input domain. A worker storing a transformed coordinate view must conjugate them consistently before use. Restrict the subgroup to the current node before computing sibling orbits.
-
-Avoid a shared mutable BSGS and a global union-find write on every leaf. A union-find of root orbits is not a substitute for a stabiliser chain at deeper nodes.
-
-### 14.7 Task correctness and termination
-
-Every task has one owner and a terminal state. Accepted states are pending, running, completed, and pruned with a valid justification; cancellation is separate. A parent is complete only when all child coverage is discharged.
-
-If new symmetry merges queued branches, retain at least one live/completed representative. Use an ownership protocol with representative links pointing monotonically to a retained task; do not let two workers cancel each other's equivalent tasks. An in-flight equivalent task can safely finish even if it becomes redundant.
-
-Completion detection must account for active workers, queued tasks, tasks in transfer, and child creation. Use an epoch-aware outstanding-task counter or a proven termination protocol. Observing empty queues alone is insufficient.
-
-### 14.8 Determinism modes
-
-Default: deterministic canonical bytes for a fixed profile, nondeterministic schedule, any valid witness. Strict mode additionally gives a deterministic witness after complete stabiliser computation. Debug replay records task choices and subgroup versions to reproduce execution; exact wall-clock interleaving is not part of the mathematical contract.
-
-### 14.9 Intra-node parallel refinement
-
-Enable cooperative refinement only when a single node has enough work and the pool lacks useful outer tasks. Borrow workers from the same scheduler; do not create a second OpenMP-style pool. One owner retains the node, partition and undo trail.
-
-Dense counting partitions output rows among helpers, so each count has one writer. Helpers share read-only masks, use private accumulation and publish count blocks. The owner performs or commits cell splits in the prescribed semantic order. For bitset intersections over long rows, reduce partial counts exactly with explicit overflow bounds.
-
-Sparse source-frontier traversal naturally scatters to the same counters. Do not put an atomic increment on every edge. Choose one of three measured strategies: output-owner traversal using the reverse index; bounded private accumulators followed by exact reduction; or destination-tiled edge batches with disjoint counter ownership. Private dense arrays cost O(pN) additional memory and clearing/reduction bandwidth, so they are inappropriate for a tiny touched set. For small splitters, remain serial.
-
-Synchronise at refinement-stage boundaries, not per edge or cell. Cancellation waits for outstanding helpers before restoring a frame. A helper cannot mutate a node that its owner has rolled back. Barrier and reduction cost must appear in the dispatch threshold.
-
-### 14.10 Grain size and concurrency admission
-
-Let C_task be expected useful task time and C_transfer include queue, replay/copy, cold-cache and publication overhead. A starting target is C_task at least 20 times C_transfer, giving roughly a 5% transfer overhead budget before search duplication. This is a tuning target, not a universal constant; irregular tails require smaller late-stage steals.
-
-Choose active p subject to memory capacity, exposed tasks and measured throughput. For fixed work with one-core compute time T_comp and total DRAM traffic B, a diagnostic scaling bound is T_p ≥ max(T_comp/p, B/β(p), T_critical). Here β(p) is measured aggregate bandwidth and T_critical includes serial dependency/coordination paths. Real search changes B and node count with p, so log those changes rather than fitting an unjustified linear speedup curve.
-
-When the run becomes bandwidth-limited, test parking surplus workers between coarse tasks instead of busy-spinning. Maintain a short bounded spin for imminent local work and use OS blocking for longer waits. This preserves desktop responsiveness and reduces shared-cache/coherency traffic without changing the search result.
-
-## 15. Expensive refiners and decomposition
-
-Baseline refiners are cheap exact type/colour, incidence, equitable graph and normalised group-orbit refiners. Optional stages include:
-
-- selected orbital relations;
-- bounded lookahead/individualisation probes;
-- stronger relational signatures;
-- specialised subset/tuple incidence refiners;
-- exact subsearch on a small auxiliary structure;
-- bounded higher-dimensional Weisfeiler–Leman refinement;
-- decomposition into components or blocks where mathematically justified.
-
-Each stage declares peak temporary bytes, retained bytes, logical output order, termination measure, and its proof of equivariance. All-pairs orbital generation and 2-WL can require quadratic storage; higher dimensions are worse. Reject configurations that exceed budget before construction, or use an exact streaming/weaker profile explicitly selected before the run.
-
-For fixed-profile portability, specify whether an expensive stage is logically mandatory. If mandatory and resources are insufficient, fail or checkpoint; do not silently omit it. A separate “economy” profile may deliberately use weaker refiners.
-
-Disconnected graph components do not imply independent canonicalisation under arbitrary G. G can couple their permutations. Even for unrestricted graph canonicalisation, repeated isomorphic components bring a component-permutation group. Decomposition must retain the induced action, admissible cosets and reconstruction maps.
-
-Likewise, independently canonicalising children and sorting their images can destroy shared-atom correlations. When replacing a subobject, retain its labeling coset and compatibility on overlaps. This is where the general-object theory is architecturally relevant. A full implementation of its recursive asymptotic algorithm is a distinct future backend, not an unnoticed consequence of this decomposition interface.
-
-## 16. Exactness of caches and fingerprints
-
-There are three different cache uses:
-
-| Cache | Safe key/value contract |
+| Objective | `consume(r)` and termination rule |
 |---|---|
-| Computational memo | Exact same operation on exact same immutable state; recomputation gives identical result |
-| Coordinate-transported memo | Verified isomorphism/transport map accompanies the reused result |
-| Search dominance | Proof that all solutions of discarded state are represented or cannot improve objective |
+| Minimum | Compare the exact selected order key of x^r; retain the least. Exhaust all leaves for completion. |
+| Transporter one | Test exact x^r=y; stop successfully on one hit. Declare empty only after exhaustion. |
+| Stabiliser | Test x^r=x; insert every hit into a verified subgroup. Exhaustion proves every member of A was inserted and no other one was. |
+| Transporter coset | Find one g, then run complete stabiliser consumer for x; return A g. All solutions r satisfy r g⁻¹∈A. If no g, return exhausted empty. |
+| Canonical labeling coset | Run §7 on target coordinates, then complete stabiliser; reconstruct §3.1 and return Aλ. |
+| Constraint one/enumeration | Evaluate the registered total Boolean predicate P(r); stop on first hit, or emit each hit exactly once and exhaust. No closure or coset claim follows from an arbitrary P. |
 
-Do not implement the third as the first with a larger hash. Two states with the same cell sizes or quotient graph can have very different descendants. A BSGS cache key must include group identity, base/fixed tuple and coordinate convention, not just subgroup order.
+For internal subgroup intersection H∩K, enumerate H and test K-membership. For a normaliser inside ambient G enumerate G and test g⁻¹Hg=H. For subgroup conjugacy to K enumerate G and test g⁻¹Hg=K; the complete solution, when nonempty, is N_G(H)g. Coset intersections can use a known ambient enumeration with exact membership in both. These deliberately slow services specify reference semantics; specialised public APIs beyond `CONSTRAINT_*` are deferred until their cost/certificate gates. Predicate enumeration remains available within capacities. Callback nontermination is not repaired by finite group coverage.
 
-Use keyed/randomised hashes for adversarial hash-table resistance if desired, but resolve collisions exactly and keep hash iteration out of canonical order. Persistent digests are identifiers for lookup, not mathematical certificates. A test mode forcing all hashes to collide must still return the same canonical answer.
+Optimised pruning must either prove every omitted region has no relevant solution or map its solutions to retained coverage appropriate to the requested result. Keeping one best image is insufficient for full A or an enumeration stream. A stabiliser prune may omit solutions only with proof they lie in the final generated subgroup. A chain for discovered generators certifies that subgroup, not discovery completeness. Certificates record splits and exact empty/bound/representative justifications; trusted-engine exhaustion is a separate assurance mode.
 
-Use bounded per-worker caches first. Shared caches need enough reuse to justify locking and coherency. Batch immutable cache entries across workers only for common root/group computations. Eviction may cost time but cannot change output.
+### 8.3 Bounds and deterministic witnesses
 
-## 17. API, module boundaries and lifecycle
+The reference uses the bottom bound (unknown). A minimum bound must lower-bound the selected order key for every permutation in H r. Graph forced prefixes use the named adjacency order; sorted DAG records may move when children change, so unproved prefixes are forbidden. Equality with an incumbent can be pruned for image-only minima; all minimising witnesses/full groups need a separate solution-coverage argument. Deterministic witness minimisation adds a distinct search or coset-minimum cost and must appear in metrics.
 
-### 17.1 Public API specification
+### 8.4 Signed canonical images
 
-Provide opaque handles for context, frozen group, frozen object, problem, result and checkpoint. API names below are interface intentions, not implementation code.
+The mathematical signed domain is the vector space over Q on unsigned orbit objects, with relations `[x^g]=χ(g)[x]`, where **χ:G→{±1} is a homomorphism**. More generally a coefficient field of characteristic not two works. Characteristic two and rings with 2-torsion require another contract. Arbitrary signs attached to generators are not automatically a well-defined character.
 
-| Operation | Inputs | Output/lifetime |
-|---|---|---|
-| `context_create` | Allocator, topology/thread policy, budgets | Context owning worker pool |
-| `group_create` | Domain and generators/structured descriptor | Verified immutable reusable group |
-| `object_create` | Schema/action and validated payload | Immutable native object |
-| `problem_create` | Object, group/labeling coset, objective, profile | Frozen semantic problem |
-| `solve` | Problem, cancellation/progress hooks | Status plus owned result |
-| `solve_batch` | Problems, shared context | Per-problem statuses/results |
-| `result_verify_witness` | Original problem and result | Exact witness validity; not independent canonicity proof |
-| `checkpoint_write/read` | Problem and scheduler state | Versioned restart data |
-| `result_encode` | Complete result, encoding version | Canonical byte stream |
+Input may supply signed generators. Validate χ by constructing the lifted generated group on Ω ⊔ {+,−}: each generator acts on Ω as given and swaps the last two points iff its sign is −1. Projection onto G is onto. χ exists exactly when the subgroup fixing every point of Ω in this lift is trivial: a kernel sign swap would give two signs for the same g. A complete chain/kernel calculation certifies this, or complete relation/provenance checking against a certified presentation may do so. Reject inconsistent signs as `INVALID_INPUT`.
 
-Provide explicit retain/release or move ownership; no hidden global state. Callbacks may not recursively mutate the active problem. A context cannot be used concurrently unless the entry point documents it. Batch solves share immutable inputs safely.
+If a∈A and χ(a)=−1, then [x]=−[x], hence [x]=0 over Q. One checked membership/action/sign witness is a complete **one-sided zero certificate**. If every a∈A is even, define a functional on the orbit by f(x^g)=χ(g). It is well-defined: equal images imply g h⁻¹∈A, hence χ(g)=χ(h). It respects the relations and takes f(x)=1, proving nonzero. Thus zero iff A contains an odd element.
 
-### 17.2 Adapter contract
+Reference algorithm: enumerate the stabiliser as in §8.2, stopping immediately if an odd witness is verified. Otherwise exhaustion gives complete A; check χ=+1 on its generators, run/finish P1 for c=x^t, and return s=χ(t), so [x]=s[c]. If p and q reach c, p q⁻¹∈A makes their signs equal. Under x→x^h the nonzero sign changes to χ(h)s while c stays fixed; this covariance is the signed equivalence law, not invariance of the bare coefficient. Unsigned callers do not pay for this completeness search.
 
-An adapter supplies action, exact equality, ordered encoding, leaf comparison, validation and optionally a refinement producer and lower-bound producer. Refiners write into engine-owned builders. They cannot alter worker scheduling, access an evolving global best to choose semantic cell order, or use timing in a canonical invariant.
+The lift g↦g̃ preserves products because swaps compose by sign multiplication, is injective, and projects back to g. Its action on (x,marker) therefore exactly models unsigned transport plus sign. This is the mathematical comparison with xperm-style signed permutations; an xperm wrapper's argument conventions and double-coset reduction still require independent proofs/tests. Ordinary canonisation of the lifted pair does **not** alone report algebraic zero: zero requires that (x,+) transports to (x,−), or equivalent odd-stabiliser evidence. A lifted profile can choose a different base canonical representative, so P1 equivalence must be proved before replacing the explicit-character path.
 
-Each adapter documents the group action, duplicate semantics, auxiliary extension if any, encoding proof, equivariance proof and bound proof. Unsupported refinement returns no additional information; unsupported exact action/encoding is an error. Built-in graph/set/group adapters have no runtime virtual dispatch inside their kernels.
+**Open obligation SIGN-COVER:** whether this arbitrary-G canonical tree, with proposed pruning, exposes enough automorphisms to detect every odd one without separate stabiliser enumeration. No such theorem is claimed. McKay–Piperno Theorem 5, Niehoff and TensorGR's graph prototypes are unverified leads for this purpose, not evidence for arbitrary G. Until proved in this convention, signed nonzero completion uses the exhaustive/complete-stabiliser route. Randomised helpers can find verified odd witnesses but cannot certify nonzero.
 
-### 17.3 Proposed source modules
+## 9. Exact group kernel and group encoding
 
-`api`, `object`, `encoding`, `perm`, `bsgs`, `coset`, `partition`, `relation_sparse`, `relation_dense`, `refine`, `search`, `symmetry`, `scheduler`, `arena`, `checkpoint`, `cpu_dispatch`, `platform`, `metrics`, and independent verification/test executables.
+### 9.1 Reference construction and certification
 
-Keep proof-sensitive semantics in small scalar modules. SIMD kernels implement explicitly specified array operations. The scheduler cannot invent pruning; it accepts pruning decisions and associated metadata from the search/objective layer.
+For ordered base (0,…,n−1), use a deterministic Schreier construction. At a level with generators S for K fixing preceding base points: include inverses, remove identities/duplicates, sort image arrays; build the orbit of a by queue traversal in increasing discovered-label order and sorted generator order, retaining t_b with a^t_b=b. For each b and s form **t_b s t_(b^s)⁻¹**, which fixes a. Recurse with the deduplicated nonidentity Schreier generators, finishing with a trivial subgroup. This direct recursion is finite and exact by the Schreier generation lemma. It can generate enormous intermediate sets; it is a correctness reference, not a claim of an efficient constructor.
 
-### 17.4 C engineering rules
+The practical deterministic closure constructor sifts residues into lower levels, inserts failed residues with straight-line provenance, recomputes affected orbits/Schreier checks, and repeats until all checks pass. Each insertion must strictly enlarge the represented subgroup at a deficient level; finite subgroup growth bounds termination. A randomised constructor may propose the same data but exact verification is mandatory. The implementation milestone must fix insertion/rebuild policies and their operation bounds before performance claims.
 
-Use C17 with a documented atomics/OS abstraction. Audit size arithmetic before allocation; validate permutations as bijections and domain-consistent generators. Check multiplicity/count overflow. Avoid shifts by word width, unaligned type punning and assumptions about signed overflow. `restrict` applies only where non-aliasing is guaranteed. Wire formats never dump padded C structs.
+The independent verifier checks input bijections, each generator's derivation from the original input, base-prefix fixation, orbit reachability via stored tree edges, orbit closure under level generators, transversal images, all Schreier residues' membership in the certified next subgroup, input-generator membership at the root, and terminal triviality. Induction gives both inclusions at every level and completeness. Testing only input generators against a guessed chain is insufficient.
 
-Separate trusted frozen internal data from untrusted import parsing. Use sanitizers, fuzzing and strict warning builds in development. Expensive invariant checks are a diagnostic build option. Release code retains checks needed to prevent invalid inputs, corrupted checkpoints or exhausted budgets from producing a mathematical answer.
+### 9.2 Costs, provenance and operations
 
-## 18. Checkpoint and restart
+Let b be chain length, r_i orbit sizes, s_i active generators, w_i reconstructed word lengths, Q point queries, C dense compositions, and P provenance DAG nodes/edges. A direct closure pass processes Σ_i r_i s_i candidates; dense products cost O(n) entries each and naive dense sifting O(nb). Construction may need many passes; report their sum. Space includes stored generator support/dense bytes, Σ_i r_i tree records, lookups, residues, P and verification scratch. These are selected-algorithm bounds/ledgers, not universal lower bounds or a promised polynomial bound for the naive recursion.
 
-Checkpoint only at coherent safe points. Record immutable problem identity, schema/profile/encoding versions, complete incumbent, verified generators or reconstructible verified group data, queued branch recipes, running-task suspension state and coverage ownership.
+Store shared straight-line derivations (`input`, `inverse`, `product`) with child indices and exact verification; do not expand long words repeatedly. Use compact Schreier trees, bounded word/jump/dense-transporter caches and exact immutable root chains. Charge verification as well as candidate generation. Group order is an exact multi-limb product ∏r_i; it is not uint64 in general.
 
-Prefer portable recipes and compact data over raw address snapshots. Derived caches can be omitted and recomputed. On restart validate version compatibility and witnesses; reconstruct chains exactly. A checkpoint may resume with a different number of workers or ISA and must return the same canonical bytes.
+Membership sifts g by repeatedly mapping the base image back with the corresponding transversal inverse and checking terminal identity. Point stabilisers use Schreier steps; tuple minimisation is §7.2; base change rebuilds/certifies for the requested ordered base (reuse is optional). Group equality checks mutual generator membership in complete chains; containment checks all generators. Enumerators and transporters use §8.1. Tests must include symbolic symmetric/product groups, small support, long Schreier paths, redundant generators and changing bases; benchmark build, verification, sift, rebase, tuple minimum and output separately.
 
-For a large problem, first write new checkpoint contents and a checksum, then atomically publish its manifest. A crashed write must not replace the last complete checkpoint. Checksums detect corruption; they do not establish correctness of an incumbent or full search coverage.
+### 9.3 Physical group representations
 
-## 19. Benchmark and measurement programme
+Dense permutations use uint32 images; tagged identities, sparse support and exact symbolic products avoid unnecessary n-entry materialisation. At n=100,000 one dense permutation is 400 kB, so 1,000 cached transversals cost 400 MB. Tree words trade space for dependent accesses; cache only within explicit budgets. Exact support maps must preserve unused atoms' object incidences and output positions. A group cache key includes the exact semantic group, ordered base/fixed tuple, coordinate maps and operation version, never just its order or generator hash.
 
-This project succeeds on end-to-end performance, not a synthetic bitset loop. Benchmark graph-only and restricted-group problems separately, and report preprocessing honestly.
+### 9.4 Production `Group(H)` grammar and size proof
 
-### 19.1 Workload families
+Use this deterministic priority, never whichever representation the caller supplied:
 
-| Family | What it exposes |
+1. Compute the H-orbits on the ordered domain. H embeds in the product of symmetric groups on those orbits. If its exact order equals the product of orbit factorials, equality follows by finite containment. Encode `01 || U32(k)` followed by each non-singleton orbit as `U32(size), U32(points...)`; points increase, blocks order by least point. Omit singleton orbits. This includes trivial H as `01 00000000`, including n=0,1.
+2. Otherwise encode `00 || U32(k) || Perm(g_1)...Perm(g_k)`. Start K=1; repeatedly choose the lexicographically least image-array g∈H\K and set K←⟨K,g⟩ until K=H. This canonical sequence depends only on H. Each step at least doubles |K|, so k≤floor(log₂|H|)≤log₂(n!)≤n log₂ n for n≥2; n=0,1 use rule 1. Sparse Perm records have at most n pairs, hence O(n² log n) point entries in the worst case.
+
+To find the least outside element without enumerating H, descend in point-image lexicographic order through exact constrained cosets. For C=Jr, C⊆K iff r∈K and J≤K; discard exactly these branches and choose the least surviving point-image branch. Every level fixes another point; complete membership/containment and stabiliser operations make this constructive. The [local canonical-generators lemma](review_sources/algorithms/1803.06858v1/articles/canonization.tex), lines 140–175, supports this approach; the proof above fixes our product convention and subgroup variant.
+
+For a labeling coset H r, first choose its least image-array element r₀ by successive point constraints, then encode the canonical Group(H) and Perm(r₀). The left difference group of the coset is H, so both are determined by the set of labelings. This avoids confusing canonical representation on an ordered domain with subgroup-conjugacy canonicalisation. R2's subgroup-conjugacy corollary has a factor polynomial in group order, not in succinct generator length (§23).
+
+The full fixed-base canonical-transversal stream survives only as diagnostic format `TRANSVERSAL-1`, never CDAG-2. For Sym(n) dense uint32 output is exactly 2n²(n−1) bytes: 1,998,000,000 at n=1,000; 1,999,800,000,000 at 10,000; 1,999,980,000,000,000 at 100,000, excluding framing. Production sparse/symbolic rules improve this contract but still require output budgets. A streaming sink saves memory, not emitted bytes; it must implement §17 backpressure and errors.
+
+## 10. Refinement implementation and termination
+
+Use flat `lab`, `pos`, `cell_of`, cell spans/order, count/stamp arrays and touched lists; maintain lab[pos[v]]=v and exact partition coverage. Semantic cell position differs from allocation handle. Mutable arrays are worker-private. Sparse adjacency and dense bitplanes must yield exactly P1's simultaneous signature vectors and stage results. An asynchronous splitter implementation cannot silently emit its own intermediate cell ordering into the trace.
+
+CSR/CSC traversal visits only relevant incidences; duplicate updates accumulate exactly. Dense rows count AND/popcount against cell masks, with singleton/sparse-mask shortcuts. Signature sorting may use fixed-width radix or comparison sort, but hashes never order semantic classes. Epoch wrap triggers a full safe reset. A smaller-fragment O((N+m)log N) local algorithm may be used only after proving its scheduling, fixed-relation, key-cost and P1-equivalence hypotheses; no such bound is claimed for P1's repeated full sweeps or arbitrary callbacks.
+
+P1 has a fixed domain and strictly increasing cell count between continuing sweeps. New auxiliary profiles obey §6's node-wide bound/rank and must preserve old distinctions. A custom callback is assumed total, deterministic, action-compatible and within its declared cooperative cancellation contract; registration cannot prove these universal facts. Noncooperative callbacks can delay cancellation indefinitely, which must be declared.
+
+## 11. Capacity, rollback and all live memory
+
+### 11.1 Numeric acceptance and schedule-independent capacity
+
+The initial machine API uses 0≤n,N≤2³²−1, uint32 IDs/counts for wire list lengths, uint64 byte offsets checked against SIZE_MAX, and exact multi-limb counts/orders/multiplicities. Wire Nat byte length must fit U32. The initial lifted-character validator additionally requires n+2≤2³²−1, checked before constructing its two sign points; a future direct-character validator needs its own admitted bound. Built-in graph counts cannot exceed the total positive input multiplicity; compute that bound exactly during import. All sizes/products are checked before allocation; no wraparound or saturated arithmetic has semantic meaning.
+
+A problem-time capacity descriptor fixes degree/node/reference/literal/output/count-bit limits. Validation is deterministic over the normalised input. For data-dependent output size, use a count-only canonical traversal/encoder or a conservative input-derived bound; the same policy must be used across executions. Exceeding that policy yields `CAPACITY_LIMIT`, a function of semantic input, objective and descriptor, independent of worker count or lucky early discovery. An API promising this property may conservatively reject an instance with a smaller actual output.
+
+Requested managed-memory budgets use a deterministic admission plan: reserve a complete serial reference workspace plus bounded output/verification buffers; run optional work only from separate reserved slack. Spill/recompute/serialise before declaring a budget failure. A logical work quota, if offered, counts the fixed reference traversal (including regions physically pruned) or is omitted; wall-time/observed-node cutoffs are cancellation policies, not semantic capacity. A remaining unforeseen allocation failure is `RESOURCE_LIMIT` with cause `EXTERNAL_ALLOCATION`, and no claim of schedule-independent OS availability. Never let race-dependent transient peaks cause a purported input-capacity failure.
+
+For a higher-layer rational collector, either exact arbitrary precision plus canonical final-range validation, or a deterministic conservative bound on all intermediate numerators/denominators, is required for schedule-independent capacity. Checking machine overflow in the arrival order is disallowed for that guarantee. Exact rational collection remains a higher-layer operation (§2.2), with its own budget contract.
+
+### 11.2 Live-state equation and recomputation policy
+
+At every phase account for:
+
+```
+M_live = M_input + M_normalised_DAG + M_root_group + M_provenance
+       + sum_workers(arrays + frames + trace_history + trail + snapshots + group_overlays
+                     + comparisons + verification_scratch + helper_buffers)
+       + M_queued_and_in_transfer + M_publications_retired_or_live
+       + M_caches + M_certificate_buffers + M_output_buffers + M_allocator_overhead.
+```
+
+Reserve bytes before creating every component, including replacement objects that coexist with old ones. Bound task/coverage-record slots and publications and drain or block producers when full; include retained link targets and proof summaries. When optional task slots are full, keep a single lazy remainder recipe and continue local serial DFS rather than creating an unbounded frontier. Reclamation lag counts. Host RAM and GPU VRAM have separate ledgers. Output/certificates can stream to a bounded sink; permanent sink storage is charged separately.
+
+The strict memory fallback uses one mutable node state and O(n) branch recipes: rebuild from the immutable root to advance a sibling, discarding deeper arrays rather than retaining an O(Nd) trail. Reference group operations may similarly recompute and stream candidates. Deterministic size planning must bound their largest scratch state; if that one-task requirement exceeds the descriptor, return `CAPACITY_LIMIT` before search. Optional fixed-depth checkpoints/trails reduce recomputation within the reserved slack; eviction never removes coverage. The time tradeoff is replay up to the current depth per reconstruction, including group/refinement work.
+
+A full trail of Θ(N) entries at d frames can be Θ(Nd); at N=d=100,000 and eight bytes/entry it is 80 GB. The earlier 40–64 bytes/vertex/worker is only an array planning estimate, not the budget. At 48 bytes and N=100,000 it is 4.8 MB/worker, 76.8 MB for sixteen, before every other term. Reducing concurrency cannot repair one oversized mandatory task.
+
+### 11.3 Layout and locality
+
+For uint32 destinations/uint64 offsets, CSR ≈4m+8(N+1) bytes and CSR+CSC ≈8m+16(N+1), excluding labels/multiplicity. One padded dense orientation costs 8N ceil(N/64) bytes. At N=100,000,m=10⁶ these are about 9.6 MB for the sparse pair and 1.2504 GB for one dense matrix. Storage crossover around density 1/32 is not a speed threshold.
+
+Use contiguous regions, worker-local arenas and physically local allocation, with explicit maps for any locality renumbering. Query actual cache/NUMA topology. Huge pages, compression, transposed indexes, region snapshots and extra dense transporters are measured choices charged to the ledger, not assumptions of free storage.
+
+## 12. Complexity ledger and performance bounds
+
+### 12.1 Parameters and total cost
+
+Report n base degree; N working vertices; m incidences; relation/label counts; total tuple arity; D/E_D stored DAG nodes/references; literal bytes; multiplicity bit lengths; input generator count/support/dense sizes; chain levels/orbits/word/provenance lengths; evaluated nodes V and leaves L; maximum depth; output/certificate bytes Z. Expanded semantic tree size is separate from stored DAG size. Signed character validation and complete stabiliser costs are separate terms.
+
+A serial ledger is:
+
+```
+T = T_import_validate + T_group_construct_verify + T_normalise
+  + sum_nodes(T_refine + T_group_node + T_split_restore_replay)
+  + sum_leaves(T_tuple_min + T_action + T_compare)
+  + T_signed_completeness + T_output + T_certificate_check.
+```
+
+Add wrapper conversion, batch setup, allocator and collection costs to an end-to-end application boundary. Charge actual relation work across all sweeps/layers, not just unique stored adjacency. Shared storage does not eliminate repeated scans. Custom callbacks carry their own input-size/runtime assumptions; computability supplies no useful uniform time bound. n! and |G| are reference traversal sizes, not universal demands. Neuen–Schweitzer's fixed-k WL-realizable IR lower bound applies only after proving a particular profile satisfies its hypotheses; native G refiners and arbitrary adapters are not automatically covered.
+
+### 12.2 Three lower-bound categories and estimates
+
+Use the [performance appendix](Canonicalisation_Performance_Lower_Bounds.md) normatively: **U** problem/contract bounds, **A** specified-algorithm/work bounds, **H** hardware-model bounds conditional on justified demand and service ceilings. H can translate U or A into time; it is not a claim that the demand is universal. **E** calibrated/assumed engineering targets are estimates, never a fourth kind of proved lower bound. Observed unnecessary nodes, misses or undo writes cannot define U.
+
+For a required work DAG take `max(max_j U_j/R_j^max, max_h B_h/beta_h^max, critical_path_min)`. B_h is mandatory transfer across a named boundary after optimal legal packing/reuse, not logical byte reads. Sum only stages proved sequential without overlap. A latency average or measured STREAM rate is an E parameter, not an absolute maximum service rate/minimum latency. Independent requests can overlap; count span and outstanding-request capacity.
+
+The example is Ryzen 9 9950X, 64 GiB dual-channel DDR5-5600, RTX 5080 nominal 16 GiB VRAM, PCIe 5.0 ×16. Fixed-configuration interface ceilings are 89.6 GB/s DDR, 960 GB/s GDDR and 63.015 GB/s per PCIe direction. A mandatory 1.2504 GB broad row read has conditional floors 13.96 ms host DRAM or 1.303 ms resident GDDR; upload alone is 19.84 ms. These are not solve times or a GPU speedup proof. Local source provenance, clock qualifications, and unmeasured latency/cache/launch estimates remain in the appendix. Decimal GB and seconds are used for rates; GiB/MiB denote binary capacities.
+
+### 12.3 Small-instance batches
+
+Include a regime of many independent small objects (a workload choice, e.g. up to 128 base atoms), whose **measured live working set**, including group/adapter/output scratch, fits the relevant private/shared cache. Do not assume an 80n-byte model from another project. Reuse validated immutable groups, registries and workspaces; no per-call chain rebuild or allocator is required on an admitted fixed-capacity hot path.
+
+Cache-resident computation can be dominated by instructions, dependencies and branch recovery while the batch still streams input/output and touches a collection table. Report compute-resource, fixed-work branch-recovery, mandatory stream and collection-insertion work/span bounds separately; branch misses and hash probes are conditional algorithm/hardware quantities, not universal canonicalisation floors. Collection latency is amortised by available independent requests, and end-to-end throughput includes setup and drain. Measure root-discrete fraction, wrapper/build/sort/encode time and actual automorphism structure. A count of identical factors does not establish an S_k action on the whole contraction structure. The appendix §6.7 specifies these equations without importing TensorGR hardware numbers.
+
+### 12.4 Reproducible gaps
+
+Every timed result with applicable L>0 reports Δ=T−L, ρ=T/L, δ=(T−L)/L, bound category/equation/assumptions and parameter ranges. Ratios are undefined for zero/unavailable L. Investigate T<L rather than clamping. A loose floor does not make all excess time avoidable; a fixed-DAG floor cannot establish optimality across algorithms with different work.
+
+Pin clock/power policy, memory population, topology, compiler/ISA, versions, schema/action/profile/order, output mode and initial/final residency. Separate cold import/setup/solve/emission from warm cached contexts and amortised batches. Report CPU and GPU floors separately, fixed-work replay separately from full solves, all censored cases, work inflation and uncertainty. Engineering targets (e.g. transfer overhead below 5% or a kernel reaching 70% of a matching measured stream rate) require a versioned benchmark policy; they are judgments, not guarantees.
+
+## 13. CPU kernels and optional GPU boundary
+
+Dispatch scalar/AVX2/AVX-512 only after CPU and OS-state feature checks; heterogeneous workers use a verified common subset or pinned per-core dispatch. AVX2 has no general vector popcount; AVX-512 popcount is a separate feature. Duplicate scatter destinations require conflict-safe exact accumulation. Tail handling, overflow and exact stage ordering must match scalar semantics. LTO/PGO, prefetch, unrolling, non-temporal output and compression require measured whole-regime improvement.
+
+The GPU is an optional capability `GPU_BULK`, with runtime/driver dependencies and a separate plugin API. Freeze immutable input buffers, device ownership, pinned-host staging, upload/download sizes, residency lifetimes and completion events before admission; the owner retains them until the final event. A CPU commit waits for all required exact count blocks. GPU resource exhaustion falls back only to a proved equivalent CPU kernel within P1, using reserved CPU capacity; otherwise return the applicable status. Initial release acceptance is CPU-only; GPU floors are future-backend opportunities. No floating-point TFLOPs denominator estimates integer group/refinement speed.
+
+## 14. Parallel runtime and coverage state machine
+
+### 14.1 Modes and ownership
+
+`CALLER_THREADS` is reentrant single-threaded solving with an immutable shared context and one exclusively owned workspace per caller thread, no internal pool or hidden thread creation. `CORE_POOL` owns a bounded pool for independent requests or a hard search. Never nest unrestricted pools. Batch parallelism is the default small-instance policy; coarse subtrees precede cooperative intra-node work for large instances.
+
+Recipes name actual branch choices and reconstruct the exact semantic node. Snapshot/copy/replay choices are physical, within budgets. Prefer local-cache tasks and physical cores; tune SMT and cross-cluster stealing with measurements. Sharing includes immutable complete candidates and verified subgroup snapshots only. A stale candidate/subgroup can lose pruning, never coverage.
+
+### 14.2 Normative coordinator protocol
+
+The first parallel implementation uses a single coordinator mutex for coverage metadata, queues, ownership and publication. Unlock is release; lock is acquire under the C17/OS abstraction. No lock-free deque or epoch algorithm is presumed verified. Immutable problem data is published before workers start. A cancellation request is an atomic release store and polled with acquire; mathematical state changes still occur under the mutex.
+
+Each task has unique ID, region, objective, optional owner, recipe and state `READY`, `RUNNING`, `SUSPENDED`, `WAIT_CHILDREN`, `COVERED`, or `LINK`. A region denotes a subtree's relevant leaf keys or a coset's solution obligations. The invariant is that each root obligation has exactly one accounting route to a live task, a completed proof or a justified representative link. Mathematical search splits are independent of this accounting proof.
+
+| Transition under mutex | Required action / linearisation point |
 |---|---|
-| Small random coloured graphs | Fixed overhead and easy discrete refinement |
-| Sparse regular graphs and graph benchmark suites | Sparse refinement, difficult symmetries |
-| Strongly regular and other weak-refinement graphs | Search explosion; lookahead value |
-| Complete/empty graphs and repeated components | Large automorphism groups, orbit pruning |
-| Directed, coloured, looped and multigraph cases | Adapter/encoding correctness and label traffic |
-| Grid groups acting on subsets | Restricted-group search and group setup |
-| Intransitive, imprimitive and wreath/product actions | Block structure and coupled components |
-| Cyclic, dihedral, alternating and symmetric groups | Distinct chain/orbit regimes |
-| Nested sets/tuples, large hyperedges | Auxiliary growth and object comparison |
-| Subgroup/coset objects with varied generators | Presentation independence and normal-form cost |
-| Huge sparse easy instances | Bandwidth/footprint rather than backtracking |
-| Many small instances sharing one group | Batch throughput and amortisation |
+| Admit root | Reserve its record and serial workspace; insert READY before exposing work. |
+| Claim/steal READY→RUNNING | Remove queue entry and set unique owner in one locked transaction. There is no unaccounted in-transfer interval. |
+| RUNNING→WAIT_CHILDREN | First reserve/build all child records or a lazy remaining-region continuation; atomically attach their complete disjoint coverage and publish READY records. Parent waits; failed reservation leaves parent unchanged. |
+| RUNNING→COVERED | Commit a checked leaf, valid objective bound/emptiness proof, or finished consumer contribution. Owner release is part of commit. |
+| READY/SUSPENDED→LINK | Verify objective-specific equivalence and map to an existing retained lower-ID representative. Transfer any group/enumeration obligations; never link merely because images coincide. |
+| Children all discharged | WAIT_CHILDREN→COVERED with child/link proof references; a LINK is discharged only after its target coverage is discharged. |
+| Cancel/fail/suspend | RUNNING→SUSPENDED after helpers join; preserve region and recipe. It is not COVERED. Pending READY tasks remain covered by accounting but unfinished. |
+| Resume | SUSPENDED→READY after reconstruction validation. |
 
-Use standard hard graph families, including CFI-style constructions, with controlled sizes. Avoid presenting random-graph results as evidence for all canonicalisation.
+Link IDs strictly decrease, so cycles are impossible. Retain link targets and proofs until all dependants and readers release them. New symmetries never cancel two representatives in favour of each other. Running redundant tasks may finish; do not revoke an owner asynchronously. A positive `TRANSPORTER_ONE` or zero-certified signed request may close the objective at the root by its sufficient certificate; abandoned regions then remain irrelevant to that objective, not falsely exhausted.
 
-### 19.2 Baselines and fair comparison
+All references/publications are retained/released under the mutex; workers acquire a reference before unlocking. Retired payloads are freed only at reference count zero and with no helper access. Publish incumbent trace/bytes/witness as one immutable bundle after exact comparison; publish group snapshots only after verification. Parent records retain coverage summaries even when task workspaces are reclaimed. Collapse discharged children into their parent as soon as no representative link/reader needs them; stream any required proof records before reclamation. A summary retains the objective contribution and a durable proof reference where certificates are requested, not every completed task record forever. `COMPLETE` requires root discharge, no unresolved child/link obligations for that objective and committed result evidence, not empty queues or a zero ad hoc work counter.
 
-Compare graph cases against nauty, Traces and a suitable additional graph canoniser; compare general canonical images against Vole; compare set minima against an established minimal-image implementation; use GAP as an algebraic oracle. Pin versions/commits, build flags and exact settings. Vole's documented interface and inspected code demonstrate that native Rust search can still interact with GAP for group operations, so distinguish search time, setup and process/interface overhead. [R5–R6]
+### 14.3 Helpers, cancellation and R1–R3
 
-Different canonisers need not return identical canonical graphs. Compare equivalence decisions, valid witnesses and independently established automorphism groups. Byte-for-byte comparison is appropriate only for the same declared canonical profile, or for a shared explicit lexicographic-minimum objective.
+Helpers receive immutable stage input, generation ID and disjoint output ranges/private accumulators. Only the owner commits partition changes in P1 order. Helper completion is counted under the coordinator; rollback, arena reclamation and suspension wait for all helpers. No per-edge atomic scatter is required. Cancellation latency includes the current bounded kernel/callback and verification stage; totality alone supplies no practical latency bound. Fair scheduling and available resources are assumptions for liveness.
 
-Report both cold total time, including chain construction/encoding, and warm repeated solves with preprocessing amortised. For timeouts, report solved count and a defined penalised/censored statistic; never compare only averages over each solver's different set of solved cases.
+The admissible fast-path/racing rules are:
 
-### 19.3 Required metrics
+- **R1:** every racer computes the same pinned function (action, objective, profile, encoding and sign/completion contract). Only a complete verified result can win.
+- **R2:** a helper contributes only exactly verified automorphisms to the deterministic search. It cannot choose a new trace, discard coverage without a rule, or certify nonzero/completeness. Randomised discovery may use this rule.
+- **R3:** a shortcut has a proof of equality to the pinned result, or answers only a separately requested pure equality test with its own contract. A fast isomorphism test does not return a canonical label.
 
-Elapsed and CPU time; peak RSS and allocated bytes by region; visited/pruned nodes by reason; refinement rounds and arcs/words scanned; undo bytes; group orbit/sift/transversal counts; chain-build time; materialised permutation bytes; leaf comparison bytes; incumbent and generator publications; task sizes; steals; replay/copy time; worker idle time; and time to first complete candidate.
+Stopping a helper cannot lose mathematical coverage. Schedule, thread count, cache pressure and physical kernel selection cannot change complete bytes or the capacity policy (§11). Deterministic witness mode imposes its additional minimum; ordinary mode may return different valid witnesses. Stronger semantic refiners require a new profile, even if benchmark timing favours them.
 
-Use available hardware counters for cycles/instructions, branch misses, LLC traffic/misses, dTLB behaviour and memory-controller traffic. Counter availability and multiplexing differ by platform; record that limitation. Counter-estimated bytes and software-counted logical bytes are different quantities.
+## 15. Stronger refiners and decomposition gates
 
-### 19.4 Core scaling
+Orbitals, lookahead, higher-dimensional WL, component/block reductions and tensor incidence refiners are future profiles or proved P1-equivalent shortcuts. Each declares exact mathematical output/order, representation and action invariance, node-wide termination, peak temporary/retained size and objective-specific pruning theorem. Resource pressure cannot silently omit a mandatory semantic stage. An explicitly selected weaker profile is a different problem identity.
 
-Test 1, 2, 4, … physical cores, all physical cores, then SMT; include per-cluster and heterogeneous-core configurations. Record S_p=T_1/T_p, parallel efficiency, and work inflation W_p/W_1. Parallel search may visit more or fewer nodes depending on incumbent/symmetry discovery, so speedup alone does not identify hardware scaling.
+Tensor slot symmetries, identical-factor exchanges, dummy relabeling, metric/spinor-metric signs and Grassmann parity require a faithful reduction with fixed/free-coordinate rules and valid χ. Do not import the TensorGR prototypes' Sym(V) graph scope as a replacement for arbitrary G. Any narrower pinned simple-undirected-graph backend gets a separate profile and proof boundary; adapters into it need extension/projection proofs.
 
-Add fixed-work kernel replay to separate bandwidth scaling from search-tree changes. Measure loaded latency while other cores run representative refinement, not just an unloaded pointer chase. Plot runtime and bytes/node against core count and active working set. Use medians plus dispersion/tail measures from repeated trials, pinned when appropriate, and record thermal/power conditions.
+## 16. Exact caches and transported skeletons
 
-### 19.5 Optimisation acceptance
+Computational memoisation requires an exact immutable operation/state key. Coordinate-transported memoisation requires a verified bijection and action-compatible transport of the value. Search dominance requires a separate coverage theorem. These are distinct contracts.
 
-Every proposed optimisation provides: correctness argument, regression coverage, before/after wall time, memory impact, changes in node count and hardware-counter evidence where relevant. A kernel enters default dispatch only when it improves a declared regime without unacceptable regressions there.
+A tensor skeleton cache key includes schema/action/profile/encoding, exact normalised contraction incidence, factor/slot types, fixed/free labels, variance and sign/metric/parity policy, admissible group/character, and the operation requested. Literal coefficients may be excluded only after proving they do not affect that operation. The cache must store exact key content plus source/target maps and proved-complete status of any reused group. Renamed skeleton reuse verifies the map and transports witnesses, stabilisers by conjugation and character coordinates; an unverified topology hash is insufficient.
 
-Track a Pareto frontier of elapsed time, memory and robustness across instance families. Do not force one configuration to win all workloads. Semantic profile selection happens explicitly; physical kernel selection may be automatic within a profile.
+Normalised group-refiner keys include G, ordered fixed tuple F (or M with its verified transport), ordered orbit convention and profile stage. A hit must produce exactly the same logical stage/trace as recomputation. Eviction changes time only. Randomised hashing resolves every collision exactly; forced-collision tests must still pass. Shared bounded caches require measured benefit over workspace-local ones.
 
-## 20. Correctness validation and proof obligations
+## 17. API, wrappers, ownership and failures
 
-The following is a required future validation programme, not a claim that an implementation has been tested in this work.
+Opaque retain/release handles: context, registry, group, object, problem, workspace, result, checkpoint. Input builders copy data by default. Explicit borrowed immutable buffers require a release callback and remain unchanged/alive until the last referencing handle is released. Transformed views retain their source and coordinate map. A workspace has one active owner; immutable contexts/registries/groups can be shared. `solve_batch` returns per-input statuses and preserves caller input order regardless of scheduling.
 
-### 20.1 Independent small-instance oracle
+`group_create`, `object_create`, `problem_create`, `workspace_create`, `solve`, `solve_batch`, `result_verify_witness`, `result_encode`, `checkpoint_write/read` specify their domain/action/mode arguments explicitly. `result_verify_witness` checks membership and exact action, not canonicity. Hot small-instance entry points use plain fixed-layout descriptors and preallocated workspace, with no callbacks/heap allocation after successful admission; the general API may use bounded stage callbacks.
 
-Enumerate all group elements for small degrees. Establish exact orbits, lexicographic minima, stabilisers and transporter sets using a simple independent program. Exhaust all manageable graphs/sets at the smallest degrees; sample more diverse objects and groups at larger small degrees. For the chosen canonical-tree profile, also write a slow exhaustive scalar tree evaluator so that pruning and parallelism can be compared against identical semantics.
+External adapters must supply total exact action, equality, comparator, canonical encoder and validation; optional refiner/bound callbacks need the stated invariance, monotonicity, auxiliary and coverage proofs. Adapter registration records assumptions, proof IDs and cancellation behaviour, not a claim the engine verified arbitrary code. Callbacks cannot mutate the active problem, choose semantics from scheduler state, or recursively enter the same workspace. Built-ins validate their declared schemas and have separate proof/test obligations.
 
-A valid witness proves only that an output lies in the orbit. It does not prove canonicity or minimality. Independent enumeration, tree coverage and proof of pruning are necessary to validate those stronger claims.
+Constraint-enumeration streams have unspecified arrival order and contain each solution exactly once on completion; they are not canonical byte streams. A result owns its immutable candidate/evidence; releasing a failed or partial handle is always valid. Allocator failure leaves the old state or a releasable partial state, never a fabricated completion flag. `result_encode` returns canonical bytes only when the corresponding image is complete, or the signed `00` payload when zero is certified; an explicitly named candidate-export API can export unproved objects. The sink receives ordered borrowed chunks valid only during its callback, with accepted byte count; `PAUSE` retains the offset for resume, `FAIL` returns `OUTPUT_ERROR`. No bytes are skipped or duplicated on resume. A final commit marker/length is required before a consumer treats a stream as a complete key. Sink failure may leave `image_canonical=true` and `encoding_complete=false`; it cannot alter the mathematical answer.
 
-### 20.2 Metamorphic properties
+Every public entry point gets client-level golden/error/lifetime vectors before release. Test array direction, product order, inverses, source/target domains, fixed coordinates, character signs, duplicate policy and output-as-input idempotence through wrappers/FFI, not only internal kernels. An xperm benchmark wrapper must explicitly test name-to-slot versus slot-to-name, both halves of the double coset, and up/down dummy pairing; incorrect free-index declarations invalidate the comparison. These tests are obligations, not claims based on the surviving TensorGR header.
 
-- C_G(x^h)=C_G(x) for every tested h∈G; C_G(C_G(x))=C_G(x).
-- All returned g lie in G and satisfy x^g=c.
-- For min mode, compare with the whole small orbit's explicit minimum.
-- Reorder generators, invert them, add redundant generators and vary SGS construction.
-- Permute edge/tuple/set insertion order and allocation order; vary DAG sharing.
-- Vary worker count, task split depth, stealing, SIMD backend and cache budgets.
-- Force hash collisions, epoch wrap, checkpoint/resume, and frequent generator publication.
-- Rename the universe together with its labeling coset and verify coordinate-independent output.
-- Compare full returned stabiliser order and membership with the oracle, not only generator validity.
+C17 code must check sizes, offsets, shifts, overflow, aliasing, ownership and feature preconditions; wire streams never dump structs. Sanitizers/fuzzing and exact invariants are future validation gates. Compiler/runtime/OS assumptions remain outside a pure Lean semantic theorem.
 
-### 20.3 Mandatory adversarial regressions
+## 18. Checkpoints and restart
 
-1. Empty and singleton domains; empty objects and trivial groups.
-2. Repeated tuple entries and repeated multiset members.
-3. Nontrivial subgroup restrictions where unrestricted graph relabeling gives a false equivalence.
-4. The same subgroup with very different generating sets.
-5. Auxiliary-only automorphisms and duplicate gadget occurrences.
-6. Equal refinement traces from nonisomorphic graphs.
-7. Root automorphisms that do not stabilise a deeper branch.
-8. Two workers discovering competing incumbents while another prunes.
-9. Newly equivalent queued tasks attempting simultaneous cancellation.
-10. Disconnected objects with group-coupled components.
-11. Noncommuting permutations revealing composition/inverse mistakes.
-12. Graph colour renaming accidentally treated as permitted or forbidden contrary to the action.
-13. Deliberate integer/size overflow, corrupted permutations and malformed checkpoints.
-14. A profile where the canonical answer differs from the lexicographic minimum.
+First delivery supports **trusted engine resumptions** only. Stop new claims/publications, request safe-point suspension, join helpers, and capture the coordinator's coherent root coverage graph, unfinished recipes, retained representative links, immutable problem/profile/action IDs, validated incumbent and verified group provenance. Hold the metadata lock while snapshot references are acquired; write payloads after releasing it. Save to a new file, complete its checksum/manifest, then atomically replace the manifest. A failed write cannot replace the prior complete checkpoint.
 
-### 20.4 Proof ledger
+Restart validates versions, input identity, bounds, recipes, witnesses and group data, reconstructs workspace state and resumes unfinished coverage. Worker count/ISA can change under the same profile. Checksums detect corruption; witnesses do not prove retained coverage. An untrusted checkpoint requires an independently checked complete coverage certificate and parsing limits; until that milestone it is rejected as a resumable mathematical proof input. Crash safety, coverage correctness and independent certificate soundness are separate obligations.
 
-Before release, every pruning/refinement module has a written lemma and a test mapping. The core obligations are: action consistency; injective encoding; refiner equivariance; approximator over-inclusion; complete splitting; well-founded progress; leaf-map correctness; trace-bound correctness; verified automorphism membership and node stabilisation; group completeness when claimed; and scheduler coverage under interruption and restart.
+## 19. Benchmark programme
 
-The short proof in §7 supplies the canonicality argument for the specified tree. Optimisations must preserve that argument or supply a replacement. A successful benchmark does not discharge a proof obligation.
+Benchmark end-to-end operations with matched output guarantees and action scope. Families include small coloured graphs, sparse regular/strongly regular/CFI-style graphs, complete/empty graphs, repeated components, directed/looped/multigraphs, grid subset actions, intransitive/imprimitive/product/wreath groups, cyclic/dihedral/alternating/symmetric groups, deep DAGs/hyperedges, subgroup/coset atoms with varied presentations, huge sparse easy instances and many small requests sharing groups.
 
-## 21. Implementation sequence and release gates
+Add tensor monomials with signed slot symmetries, dummy relabeling, fixed free indices, metric/spinor signs and Grassmann parity; identical-factor products such as `(R_abcd R^abcd)^m`; Riemann chains; and cases where the actual stabiliser is much smaller than the permutation group suggested by factor count. TensorGR timings and missing prototype implementations are not measurements of this engine and imply no general complexity theorem.
 
-| Phase | Deliverable | Exit condition |
-|---|---|---|
-| 0. Semantics | Conventions, encoding, profiles, adapters and proof ledger | Reviewable mathematical/API specification |
-| 1. Exact scalar group core | Permutations, deterministic verified BSGS, orbits, cosets | Small-group oracle agreement |
-| 2. Reference search | Trivial-refinement canonical tree and complete coset enumeration | Canonicality/minimum/witness properties |
-| 3. Practical serial engine | Native set/graph adapters, sparse refinement, rollback, trace pruning | Agreement with reference; profiling baseline |
-| 4. General objects | Extended incidence, native subgroup/coset atoms, complete stabilisers | Presentation/auxiliary/composition tests |
-| 5. Memory optimisation | Flat storage, lazy clearing, compressed chains, bounded caches | Reduced measured traffic/latency and footprint |
-| 6. Multicore | Coarse tasks, replay/snapshots, publications, checkpoints | Schedule-independent bytes; coverage/race tests |
-| 7. ISA kernels | Dense/hybrid storage, SIMD and PGO | Exact scalar agreement and measured regime wins |
-| 8. Advanced refinement | Orbitals, lookahead, decomposition, stronger signatures | Proof and Pareto benefit per feature |
+Competitors: pinned nauty/Traces and Vole for matching graph/general-group tasks; established set-minimum software and GAP as algebraic oracles; correctly configured xperm full double-coset mode with both cached-SGS and per-call setup timings. SeQuant/bliss, Symbolica graphica and GraphCombinations.jl are **candidate competitors pending local source acquisition and scope audit**; no performance/scaling claim about them is established here. dejavu and Niehoff are likewise discovery leads, not verified canonical-result backends. Compare equivalence/witness/group results across different profiles, exact bytes only for an identical profile/order.
 
-Do not postpone BSGS engineering until after writing the search. Do not parallelise an unvalidated scalar traversal. Do not start by materialising every object as a dense graph. SIMD work follows measurement of actual hot kernels.
+Metrics include import/group build/verification/rebase/wrapper/sort/refine/leaf/output/checker time; nodes/leaves/prunes; root-discrete and singleton-orbit fractions; arcs/words/point queries; permutation/provenance bytes; replay/undo; live memory by §11; queue/helpers/publication costs; cache hits; cycles/instructions/branch misses/LLC/dTLB/DRAM traffic where available. Distinguish logical from controller bytes and calibrations from ceilings. Report tails, dispersion, censored cases and solved counts over the same suite.
 
-This is a substantial algorithmic-systems project. A prototype for graphs/subsets is much smaller than a production engine with exact arbitrary groups, group-valued atoms and deterministic multicore search. Calendar estimates should follow the phase-1/phase-3 measurements and the agreed adapter scope; a credible architecture cannot promise a fixed speedup or a short implementation schedule without them.
+For scaling report speedup, efficiency and W_p/W_1 work inflation at 1,2,4,… physical cores, then SMT and cache-cluster configurations. Fixed-work replay separates hardware scaling from search changes. Optimisation acceptance requires a proof/certificate rule, regressions, before/after end-to-end time/memory/work evidence and declared regime. Aim for a measured Pareto frontier, not universal supremacy.
 
-## 22. Concrete initial defaults
+## 20. Proof and acceptance evidence
 
-The first performance release should start with these defaults, all subject to the stated acceptance gates:
+Before accepting semantics as frozen, require **two blind independently written reference implementations** using this document, agreeing on traces, bytes, signs, statuses under fixed capacity, and deterministic witnesses where requested. Cover oracle-sized cases and generated cases beyond oracle range. Plant an action/sign/encoding corruption and show the comparison catches it. Independent agreement can reveal ambiguity and bugs; it is not a proof of correctness. Implementations and seeds must be retained; unrebuildable prototype reports cannot satisfy this gate.
 
-| Area | Default |
+A separate tiny exhaustive oracle checks all orbit values, minima, complete stabilisers, transporters, characters and reference tree keys on small domains. Public API/FFI tests include noncommuting products, labeling-representative changes, renamed universes, graph duplicate/loop policies, DAG sharing changes, generator reorder/inverse/redundancy, forced collisions, capacity extremes and fault injection. Repeat across schedules, ISAs and checkpoint boundaries after those features exist. Signed cross-feed checks for nonzero inputs must include absolute coefficient conventions, e.g. s_A(C_B(x))·s_A(x)=s_B(x) when the two pinned functions agree on their canonical monomial and return +1 on it.
+
+Proof layers are separate: Lean semantic action/tree/coset/termination theorems; certified constructive group operations; concrete adapter/encoding/refinement proofs; certificate-checker rules; concurrent coverage abstraction; C storage/memory/overflow/atomics and ISA refinement. Use an opposite-group/right-action wrapper to relate `(pq)[v]=q[p[v]]` to mathlib's `Equiv.Perm` multiplication, once, with a proved array correspondence. No axiom standing in for BSGS/adapter completeness can be described as a completed proof of that subsystem.
+
+Initial assurance target: proved reference semantics and a small independently sound certificate checker. Producer certificates include coverage, group verification, branch/bound/symmetry rules and final objective claims; image witnesses alone are insufficient. Full stabilisers and signed nonzero need their stronger coverage rules. Count certificate generation/checking and size. Compiled Lean checker execution trusts its compiler/runtime unless separately justified; kernel-checked proof terms have a different boundary. No claim of C memory safety or liveness follows automatically.
+
+The [finite review checks](Canonicalisation_Review_Checks.py) are sanity checks only. They do not run production C or Lean. Their exact coverage and revision results are recorded in the response; no benchmark or build is authorised as part of this document revision.
+
+## 21. Roadmap and gates
+
+The [implementation plan](Canonicalisation_Implementation_Plan.md) owns dependencies, effort judgments and exit evidence. This table must remain consistent with it:
+
+| Milestone | Gate |
 |---|---|
-| Canonical objective | Fixed equivariant trace plus exact object encoding |
-| Ambient group | Verified native BSGS; symbolic Sym/product shortcuts |
-| Graph input | CSR/CSC; bitsets for measured dense/high-degree regimes |
-| Refinement | Exact ordered partition refinement and normalised group orbits |
-| Expensive refiners | Off in baseline profile; explicit stronger profiles |
-| Integer widths | 32-bit IDs when valid; independently selected 64-bit offsets |
-| Rollback | Local trail with contiguous-region snapshot escape hatch |
-| Worker policy | Physical cores up to measured memory/throughput cap |
-| Tasks | DFS locally; bounded coarse frontier; recipes plus checkpoints |
-| Sharing | Immutable input, complete incumbents, batched verified generators |
-| SIMD | Scalar and AVX2; AVX-512 selected only after capability/performance checks |
-| Hashing | Acceleration with exact collision resolution |
-| Full automorphism group | Complete stabiliser objective; never inferred from a partial harvest |
-| Resource exhaustion | Evict optional physical caches, reduce concurrency, checkpoint or report limit |
+| M0 Specification and blind references | P1/wire/API vectors plus independent agreement and corruption sensitivity |
+| M1 Lean semantic reference | Convention bridge, tree canonicality, coset coverage, termination and signed reference theorem |
+| M2 Certified group kernel | Construction/verifier/provenance, tuple minimum, canonical group bytes and scoped operation bounds |
+| M3 Concrete adapters | Graph/subset/DAG/algebraic encoding/action/refiner proofs, one adapter at a time |
+| M4 Scalar C and certificate checker | Objective-specific complete reference behaviour, checked certificates, fault/fuzz/sanitizer evidence |
+| M5 Batch and serial performance | Honest ledgers/floors, caller-owned workspaces, bounded memory and reuse, wrapper tests |
+| M6 Concurrent abstraction and runtime | State-machine coverage proof, helper/reclamation/checkpoint tests, deterministic capacity |
+| M7 C/runtime verification | Chosen C model/refinement, memory/overflow/atomics assurance stated independently of M1–M3 |
+| M8 ISA and optional GPU | Scalar equality and measured regime wins, then optional residency/transfer-aware plugin |
+| H0 Optional hex source audit | Local pinned commits and SHA-256 provenance before any hex-dependent work |
+| H1 Optional reuse decision | Depends on H0 and the relevant semantic/group/adapter interfaces |
 
-The highest-leverage work is likely to be: preserving strong pruning, reducing repeated chain construction, keeping refinement/rollback state local, and avoiding migration of large mutable snapshots. Wider instructions help the regular kernels; they are not the central architecture.
+H0 is a future acquisition task, not performed here. It is not a prerequisite for the independent reference route. No optimisation bypasses an earlier relevant semantic/representation/scalar gate. Stop this revision after documents and light checks; implementation is a subsequent task.
 
-## 23. Source basis and limits of the investigation
+## 22. Initial engineering defaults
 
-The architectural proposals, memory arithmetic, API, parallel protocol and validation plan are original design recommendations for this specification. References establish the algorithm families and hardware engineering basis. No existing implementation was benchmarked during this task, and no production C code was written.
+Default objective P1 canonical image, CDAG-2 bytes, any valid witness; signed mode explicit. Use verified native groups with deterministic symbolic/product encoding priority. Use CSR/CSC and scalar signatures initially, exact bounded caches, compact provenance and replay-capable rollback. Small batches use caller-owned workspaces; a bounded core pool serves hard instances. Strict capacity admission precedes optional acceleration. Full groups, deterministic witnesses, certificates and streamed materialisation are explicit costs.
 
-**R1.** Christopher Jefferson, Rebecca Waldecker, Wilf A. Wilson, *Computing canonical images in permutation groups with Graph Backtracking*, arXiv:2209.02534, v4, 11 September 2023. Practical canonical-image framework; in particular §§2–4 and Appendix 7. [Paper](https://arxiv.org/abs/2209.02534) · [PDF](https://arxiv.org/pdf/2209.02534)
+Live footprints, chain construction and fixed per-request overhead are initial performance risks. Wider vectors and more workers are considered only after profiling shows suitable work. These are engineering judgments to test, not findings from an implementation.
 
-**R2.** Pascal Schweitzer, Daniel Wiebking, *A unifying method for the design of algorithms canonizing combinatorial objects*, STOC 2019; arXiv:1806.07466. General objects, labeling cosets, composition and canonical group representations. [Paper](https://arxiv.org/abs/1806.07466) · [PDF](https://arxiv.org/pdf/1806.07466)
+## 23. Local source basis and open evidence obligations
 
-**R3.** Christopher Jefferson, Rebecca Waldecker, Wilf A. Wilson, *Perfect refiners for permutation group backtracking algorithms*, Journal of Symbolic Computation 114 (2023), 18–36; arXiv:2112.05065. Extended graphs and expressiveness/limitations of refiners. [Paper](https://arxiv.org/abs/2112.05065)
+Literature ground truth is local primary material with provenance: [algorithm manifest](review_sources/algorithms/manifest.json), [supplement](review_sources/algorithms/manifest_supplemental.json), [formalisation provenance](review_sources/formalisation/PROVENANCE.md), [hardware provenance](review_sources/hardware/README.md). See the [algorithm audit](Canonicalisation_Algorithm_Literature_Review.md) and [formalisation audit](Canonicalisation_Formalisation_Literature_Review.md) for exact passages.
 
-**R4.** Christopher Jefferson, Markus Pfeiffer, Rebecca Waldecker, Wilf A. Wilson, *Permutation group algorithms based on directed graphs*, Journal of Algebra 585 (2021), 723–758; extended version arXiv:1911.04783. Graph-stack transporters, approximators and backtracking. [Extended paper](https://arxiv.org/abs/1911.04783)
+- Jefferson–Waldecker–Wilson, canonical images: [local TeX](review_sources/algorithms/2209.02534v4/paper.tex), full-list minimum around 1226–1239; normalised refiner 1273–1300. §7 supplies the argument in this document's convention.
+- Schweitzer–Wiebking, general objects: [definitions/DAG](review_sources/algorithms/1806.07466v2/articles/heredit.tex), [replacement](review_sources/algorithms/1806.07466v2/articles/objectReplacement.tex), [complexity/corollaries](review_sources/algorithms/1806.07466v2/articles/hereditarilyFiniteObjects.tex). Its 2^{O(k)}N^{O(1)} algorithm is not implemented by this specification; its subgroup-conjugacy corollary depends polynomially on group order.
+- Constructive generators: [local Lemma 21](review_sources/algorithms/1803.06858v1/articles/canonization.tex), 140–175. §9.4 gives our ordered-domain subgroup/coset encoding, not conjugacy search.
+- Refiner expressiveness: [local TeX](review_sources/algorithms/2112.05065v2/perfect-refiners.tex), auxiliary encoding need not be small. Complete search: [local graph-backtracking TeX](review_sources/algorithms/1911.04783v4/PermAlgoDigraphsJPWW_extended.tex).
+- Neuen–Schweitzer: [local TeX](review_sources/algorithms/1705.03283v1/ir-analysis.tex), hypotheses 298–307, theorem 311–319. Karp: [local primary scan](review_sources/algorithms/Karp_1972.pdf), [p.93](review_sources/algorithms/Karp_1972_page9.png), [p.94](review_sources/algorithms/Karp_1972_page10.png); the scan has no text layer. §4.4 gives the additional reduction explicitly.
+- Isabelle graph proof/checker precedent: [local paper](review_sources/formalisation/papers/isocert-2112.14303v5/rules.tex) and pinned source in the formalisation audit. Its abstract checker proof is not end-to-end verification of the C++ executable. Pinned mathlib supplies groups/actions/Schreier's lemma; the local search did not find an efficient BSGS/canoniser there.
 
-**R5.** Vole project and manual, consulted 29 September 2026. The exposed manual identifies version 0.6.0 and describes canonicalisation under arbitrary permutation groups. [Project](https://peal.github.io/vole/) · [Introduction](https://peal.github.io/vole/doc/chap1.html) · [Native interface](https://peal.github.io/vole/doc/chap5.html)
-
-**R6.** Vole source snapshot inspected at commit `37df59049f4e40ce9b1dde3ca4a0544984dba2dc`. Selected files: `rust/src/vole/search/mod.rs`, `search/checkers.rs`, `partition_stack.rs`, `trace.rs`, `solutions.rs`, `datastructures/digraph.rs`, and `perm/stabchain.rs`. Inspection showed reversible partition arrays, trace-based search, base/extended domains and GAP-related canonical-minimum handling. This was a selected-file architectural inspection, not a full correctness audit. [Pinned source tree](https://github.com/peal/vole/tree/37df59049f4e40ce9b1dde3ca4a0544984dba2dc)
-
-**R7.** Intel, *Intel 64 and IA-32 Architectures Optimization Reference Manual*, current documentation landing page. [Documentation](https://www.intel.com/content/www/us/en/developer/articles/technical/intel64-and-ia32-architectures-optimization.html)
-
-**R8.** AMD, *Software Optimization Guide for the AMD Zen5 Microarchitecture*, publication 58455. Consult for target-specific execution/cache guidance; no fixed latency/cache constants have been assumed in this spec. [Documentation](https://docs.amd.com/v/u/en-US/58455_1.00)
-
-**R9.** Intel, *Memory Latency Checker*, documentation consulted 29 September 2026. Describes bandwidth, cache-to-cache and loaded-latency measurements. [Documentation](https://www.intel.com/content/www/us/en/developer/articles/tool/intelr-memory-latency-checker.html)
-
-**R10.** AMD, *μProf*, platform performance measurement tools. [Documentation](https://www.amd.com/en/developer/uprof.html)
-
-**R11.** nauty and Traces project documentation, search-tree and user-guide material. Used as a reference family and planned benchmark baseline, not as a promise of matching its canonical byte representation. [Project](https://pallini.di.uniroma1.it/) · [Search tree](https://pallini.di.uniroma1.it/SearchTree.html)
-
-### Source interpretation
-
-The initial premise is sound as an architectural direction: graph canonicalisation and arbitrary-group canonical images can share an engine. The necessary qualifications are that exact minimum image is a stronger specified objective, succinct group objects need native treatment, complete automorphism output needs a completeness argument, and stronger general theory does not transfer its complexity bound automatically. Those distinctions drive the interfaces and correctness conditions throughout this specification.
+TensorGR's [learnings](Canonicalisation_TensorGR_Learnings.md) are design inputs and reported experiments with stated reproducibility limits. McKay–Piperno Theorem 5, Niehoff, SeQuant/dejavu and `leanprover/hex-graph-iso` / `leanprover/hex-perm-group` remain **unverified local-source dependencies/leads**. H0 must retrieve the hex repositories at exact commits, record hashes/licenses/toolchains, and inspect theorem/executable scope before reuse. Claimed pinned-nauty/simple-undirected and checkChain capabilities are hypotheses to audit, not established components. No network retrieval occurred in this revision. SIGN-COVER, adapter/backend faithfulness, optimisation coverage and concrete C/runtime refinement remain explicit future proof obligations.

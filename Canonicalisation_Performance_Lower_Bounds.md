@@ -1,10 +1,10 @@
 # Analytic performance bounds for the proposed canonicalisation engine
 
-**Referee appendix · 29 September 2026 · specification version 1.0**
+**Referee appendix · 29 September 2026; consistency update 30 September 2026 · specification v2.0**
 
 This appendix analyses [the architecture specification](Canonicalisation_C_Architecture_Specification.md). It assumes the best legal data structures, packing, caching, scheduling and reuse compatible with the operation being analysed. Costs caused only by an avoidable allocation, unnecessary clearing, oversized index, chosen traversal or materialised intermediate are identified separately. No implementation, hardware benchmark or calibration was run. Numerical results are arithmetic consequences of stated assumptions, not measurements.
 
-The principal conclusion is that useful hardware floors can be obtained for **mandatory information movement, mandatory output and a specified computation DAG**. The specification does not yet determine a search tree, group-operation count or unavoidable DRAM traffic sufficiently precisely to give one useful numeric lower bound for every solve. In particular, factorial enumeration is a fallback cost, not a lower bound for canonicalisation as a problem. The deliberately large subgroup output in §9.4 is an exception: its size gives a substantial, exact lower bound for that selected serialization contract.
+The principal conclusion is that useful hardware floors can be obtained for **mandatory information movement, mandatory output and a specified computation DAG**. Version 2.0 freezes P1 and its wire representation, but a profile alone does not establish necessary search work or boundary traffic for every solve; there is still no useful single numeric lower bound for all supported inputs. In particular, factorial enumeration is a fallback cost, not a lower bound for canonicalisation as a problem. The v1.0 full-transversal subgroup output, now diagnostic-only in specification §9.4, is an exception: its size gives a substantial, exact lower bound for that selected serialization contract.
 
 ## 1. What a lower-bound claim means
 
@@ -103,9 +103,9 @@ $$
 
 Taking $k=\lfloor t/2\rfloor$ proves that some indexed subgroups require at least $\lfloor t^2/4\rfloor$ encoding bits. Quotienting by conjugation removes at most a factor $n!$, so the corresponding worst-case floor is $\lfloor t^2/4\rfloor-\log_2(n!)=\Omega(n^2)$ bits as well. This counting argument is original to this appendix and does not establish a cubic serialization requirement. Sym($n$) itself has a short symbolic description.
 
-### 3.3 A mandatory cubic output in specification §9.4
+### 3.3 The historical cubic output, now diagnostic-only
 
-For the subgroup normal form described there, let $r_i$ be the orbit size at fixed-base level $i$, and let
+For the v1.0 full-transversal format retained as `TRANSVERSAL-1` in specification §9.4, let $r_i$ be the orbit size at fixed-base level $i$, and let
 
 $$
 R=\sum_i(r_i-1)
@@ -126,13 +126,13 @@ This is a tight **A/selected-output-contract** lower bound: the entries really a
 | 10,000 | 1.9998 TB | 22.32 s | 33.33 s |
 | 100,000 | 1.99998 PB | 6.20 hours | 9.26 hours |
 
-These are floors/scenarios for crossing the RAM interface, if that crossing is mandatory; persistence can be far slower. The last two outputs cannot reside in the example's RAM or VRAM. Even independently packed point labels retain $nR\lceil\log_2n\rceil$ bits. Since Sym($n$) is known from $n$ and this fixed convention, a symbolic encoding can be tiny; therefore neither (2) nor the packed-entry count is a universal group-information bound. The specification should determine whether its normal form is an expanded audit/reference output or the production wire representation.
+These are floors/scenarios for crossing the RAM interface, if that crossing is mandatory; persistence can be far slower. The last two outputs cannot reside in the example's RAM or VRAM. Even independently packed point labels retain $nR\lceil\log_2n\rceil$ bits. Since Sym($n$) is known from $n$ and this fixed convention, a symbolic encoding can be tiny; therefore neither (2) nor the packed-entry count is a universal group-information bound. Version 2.0 makes this an explicitly selected diagnostic format. Its production Group(H) encoding uses exact symbolic-product detection and a canonical greedy generating sequence, with O(n² log n) worst-case point entries rather than cubic entries. That is still an output cost to budget, not a universal information floor.
 
 ### 3.4 Nested DAG output can be exponential in stored input
 
 Let $x_0$ be a nonempty literal and $x_{i+1}=(x_i,x_i)$, with the pair a typed ordered tuple. A DAG stores $O(k)$ nodes and references for $x_k$; recursively emitting both tuple children produces at least $2^k$ occurrences of the literal. Hence expanded output gives $\Omega(2^k)$ output work and an instance family whose bit complexity is exponential in the compact stored DAG size. This is independent of any permutation search and can occur with the trivial group.
 
-A canonical shared encoding can avoid expansion if equal subobjects receive canonical content identities and sharing is defined extensionally. Raw allocation/DAG node IDs cannot be wire labels, because the specification makes storage sharing nonsemantic. The output contract must say which representation is required. The same distinction affects auxiliary incidence expansion, traversal, comparisons and checkpoint size.
+A canonical shared encoding can avoid expansion if equal subobjects receive canonical content identities and sharing is defined extensionally. Raw allocation/DAG node IDs cannot be wire labels, because the specification makes storage sharing nonsemantic. Version 2.0 §4.2 requires canonical bottom-up DAG references, so this exponential occurrence stream is not its production output contract. The same distinction affects auxiliary incidence expansion, traversal, comparisons and checkpoint size.
 
 ## 4. Search is the largest unknown term
 
@@ -178,7 +178,7 @@ For a concrete **E illustration**, $10^6$ misses at 80 ns give 80 ms if wholly d
 
 Sequential stages with no permitted overlap satisfy $T\ge\sum_a L_a$ where $L_a$ lower-bounds each stage. Within an overlapping stage, do not add compute time and transfer time merely because both exist; use a resource maximum and dependency DAG. Conversely, a required upload → kernel → download chain cannot be replaced by their maximum for a single operation whose result is needed before the next stage.
 
-**Caches matter to the premises.** A logical read is not a DRAM read. At the start of a cold import, at most the initial resident cache bytes can avoid incoming traffic; at completion, output still retained in caches need not yet be written back. Repeated scans of an LLC-resident immutable relation may have almost no DRAM traffic. Include a boundary-state allowance, or explicitly define an interval that streams data larger than cache and drains output. The specification's “200 MB of irreducible DRAM traffic at 60 GB/s” and “100,000 misses at 80 ns” examples are conditional diagnostics until their irreducibility/rate premises are proved.
+**Caches matter to the premises.** A logical read is not a DRAM read. At the start of a cold import, at most the initial resident cache bytes can avoid incoming traffic; at completion, output still retained in caches need not yet be written back. Repeated scans of an LLC-resident immutable relation may have almost no DRAM traffic. Include a boundary-state allowance, or explicitly define an interval that streams data larger than cache and drains output. The original specification's “200 MB of irreducible DRAM traffic at 60 GB/s” and “100,000 misses at 80 ns” examples are conditional diagnostics until their irreducibility/rate premises are proved.
 
 ## 6. Kernel bounds with legal representation alternatives
 
@@ -249,6 +249,18 @@ For variable-length exact encodings, hashing cannot decide equality alone. Worst
 Rollback must recover a sufficient description of changes or reconstruct from a checkpoint; it need not log every intermediate write. If $a$ arbitrary old $w$-bit values become irrecoverably overwritten while the input remains available only through the current state, exact restoration needs that old information somewhere or a recomputation source. In the general family it is $aw$ bits. But swaps can be logged by indices, region snapshots by bytes, and known deterministic updates by a recipe. The optimal time-space trade-off prevents claiming the specification's exact trail traffic is universally necessary. The one-writer partition commit and sequentially dependent refinements do belong in the chosen DAG span.
 
 Every materialised canonical relation/tuple/string stream has its declared output size cost. Losing leaves can compare transformed views and stop early. There is no universal “rewrite the whole graph at every leaf” lower bound. Subgroup/coset objects and extensional DAG expansion require the separate output accounting in §3; they can dominate even a zero-search instance.
+
+### 6.7 Small-instance batch regime
+
+This regime complements the large dense-row examples. Consider B independent small requests sharing a verified immutable group/registry, with each active request's full live state W fitting its assigned cache budget. Degree ≤128 is a useful workload family, not a proof that W fits L1: include DAG/graph construction, chain/provenance, counts, wrapper buffers, output and verification scratch, plus competition from other workers. Warm group reuse does not erase its cold validation/construction cost.
+
+Let U_j be required instruction-resource work for the chosen per-request computation, d its dependent span, M_br the branch recoveries in a fixed replay, r_br a justified minimum nonoverlapping recovery cost, and R_j^max the corresponding service ceiling. Then T is at least max(max_j U_j/R_j^max, S_min), an **A+H** floor, where S_min lower-bounds the critical path using d and only recoveries established to lie on that path. For a serial replay whose recoveries cannot overlap, M_br r_br contributes a span bound. A measured miss rate times an average penalty is **E**, not a universal minimum; a branchless algorithm or different search can change M_br. No TensorGR instruction counts, penalties, cache-byte model or clock numbers are imported.
+
+For the whole batch, define I_B and Z_B as bytes that must cross a declared input/output boundary after reuse, compression and cache boundary allowances. The **U/A+H**, as applicable, streaming floor is max(I_B/beta_in^max, Z_B/beta_out^max); combine demands if they share one bottleneck interface. Even when per-request working data are cache-resident, a long batch can stream input/output beyond cache. Dividing every logical per-request read by DRAM bandwidth is invalid; saying that batch bandwidth never matters is also invalid.
+
+If the application collects canonical terms in a table, collection is an explicit extra operation. For a fixed insertion algorithm needing Q independent or dependent probes with minimum residence time ell_min and at most q outstanding probes, Q ell_min/q is a conditional **A+H** throughput floor, alongside its longest dependent probe chain and required insertion bytes. Sum numerator/denominator big-integer work separately for exact rational collection. Probe count, hash-table collisions and branch recoveries are not mandatory for all legal collectors: sorting, batching, exact interning and better packing can change the algorithm. Per-key serial updates and independent keys have different spans. An assumed latency/occupancy substitution is an **E** model.
+
+For an overlapping steady-state pipeline use the resource maximum plus startup/drain dependencies; for genuinely sequential import → build → solve → encode → collect stages use justified sums. Report cold total, warm per-request latency and full-batch throughput, together with per-stage times, peak W, active workers, root-discrete fraction, actual automorphism structure and collection-table residency. Caller-owned threads with separate workspaces avoid nested pools. A skeleton cache must verify its exact key and coordinate transport, and its construction/amortisation is reported. These are modelling/measurement requirements; no batch timings were taken in this revision.
 
 ## 7. Memory capacity and locality admission
 
@@ -339,9 +351,9 @@ with setup/output sequential-stage floors outside or inside the complete DAG as 
 | $10^8$ nodes, each 1 μs of one-core equivalent compute | E: at least 6.25 s ideal work division over 16 cores | The 1 μs is a calibrated fixed-work quantity or stated scenario, not a universal node lower bound; include span and memory. At 10 μs the envelope becomes 62.5 s. |
 | $10^5$ dependent misses at 80 ns | E: 8 ms path | A mandatory dependent miss path and appropriate loaded latency; materialising transporters can change it. |
 | One broad dense count at $N=10^5$ | Ideal CPU DDR read 13.96 ms; ideal resident GPU GDDR read 1.303 ms; fresh upload alone 19.84 ms | Same mandatory operation; stream residency and transfer DAG declared. |
-| Sym($10^5$) using full §9.4 uint32 output | 1.99998 PB must be emitted; ideal RAM-interface floor 6.20 hours if the entire output crosses it | This exact expanded output contract. A symbolic format removes this obligation. |
+| Sym($10^5$) using diagnostic full-transversal uint32 output | 1.99998 PB must be emitted; ideal RAM-interface floor 6.20 hours if the entire output crosses it | This exact expanded output contract. A symbolic format removes this obligation. |
 
-The first row is not a prediction that a real node will move 200 MB. Its purpose is to show why a proved byte demand, once available, can impose an end-to-end wall-time floor. Until the concrete refiners and profile determine $V$ and their work, the specification cannot support a credible target such as “within twice the absolute minimum runtime.”
+The first row is not a prediction that a real node will move 200 MB. Its purpose is to show why a proved byte demand, once available, can impose an end-to-end wall-time floor. Without a justified per-instance necessary-work argument, even for the frozen P1, the specification cannot support a credible target such as “within twice the absolute minimum runtime.”
 
 ## 10. Tightness and performance gaps
 
@@ -350,10 +362,11 @@ Let $T^*$ be the fastest legal time on the declared input, hardware, output cont
 $$
 \Delta_{\rm floor}=T-L,\qquad
 \rho_{\rm floor}=T/L,\qquad
+\delta_{\rm floor}=(T-L)/L,\qquad
 \eta_{\rm floor}=L/T\quad(L>0).
 $$
 
-These are the absolute time above the bound, ratio to the bound, and fraction of runtime accounted for by it. They do not equal the gap to an optimum. In fact
+These are the absolute time above the bound, ratio to the bound, fractional gap, and fraction of runtime accounted for by it. For zero or unavailable L, ratios are undefined; investigate a measured T<L rather than clamping the gap. They do not equal the gap to an optimum. In fact
 
 $$
 0\le T-T^*\le T-L,\qquad
@@ -380,4 +393,4 @@ These are proposed gates, not completed tests. They supplement specification §1
 
 A performance claim can responsibly say “this full count kernel is within $c$ of the stated interface floor on these sizes” if its demand is proved and the timing boundary matches. It can say “faster than these pinned competitors on this suite” after fair completed measurements. It cannot infer “optimal canonicalisation,” a universal exponential lower bound, GPU acceleration of CPU DFS, or a fixed multicore speedup from those observations.
 
-The next concrete step for the specification is to select executable scalar profiles and wire representations, then instrument their exact group/refinement/search demands. That converts the presently conditional envelopes into auditable per-instance algorithm bounds. The substantial universal limits remain input validation, bit/output size and any separately proved restricted-model hardness; no current engineering argument closes the gap to a general optimal canonicalisation algorithm.
+The revised specification selects P1 and CDAG-2. The next implementation steps are independent reference agreement and instrumentation of exact group/refinement/search demands, as gated by the implementation plan. That converts the presently conditional envelopes into auditable per-instance algorithm bounds. The substantial universal limits remain input validation, bit/output size and any separately proved restricted-model hardness; no current engineering argument closes the gap to a general optimal canonicalisation algorithm.
