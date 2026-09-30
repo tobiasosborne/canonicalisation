@@ -1,10 +1,10 @@
 # Learnings from TensorGR.jl canonicalisation work
 
-30 September 2026. This note distils the TensorGR.jl session-20 canonicalisation work for use in the pending revision of the specification and the implementation plan (see [HANDOFF.md](HANDOFF.md)). It is an input to that revision, not itself a revision.
+30 September 2026. This note distils the TensorGR.jl session-20 canonicalisation work for use in the pending revision of the specification and the implementation plan (see [HANDOFF.md](../HANDOFF.md)). It is an input to that revision, not itself a revision.
 
 ## Source and evidence status
 
-Inspected: `../TensorGR.jl` at commit `b4928910790e6bafd07884b2f956fbaa42348a88`, specifically `reviews/07_julia_best_practices_review.md` §1, `reviews/08_canonicalization_literature_survey.md`, `reviews/08b_parallel_racing_pareto.md`, `reviews/09_canonicalization_perf_bound.md`, `reviews/10_blind_prototype_comparison.md`, and `reviews/10_probes/` (`o_canonir.h`, `s_canonir.h`, `xcheck.c`, `hard.c` and raw timing outputs).
+Inspected: [TensorGR.jl](https://github.com/tobiasosborne/TensorGR.jl) at commit [`b4928910790e6bafd07884b2f956fbaa42348a88`](https://github.com/tobiasosborne/TensorGR.jl/tree/b4928910790e6bafd07884b2f956fbaa42348a88) (a local sibling checkout `../TensorGR.jl` during this work), specifically `reviews/07_julia_best_practices_review.md` §1, `reviews/08_canonicalization_literature_survey.md`, `reviews/08b_parallel_racing_pareto.md`, `reviews/09_canonicalization_perf_bound.md`, `reviews/10_blind_prototype_comparison.md`, and `reviews/10_probes/` (`o_canonir.h`, `s_canonir.h`, `xcheck.c`, `hard.c` and raw timing outputs).
 
 Evidence limits:
 

@@ -1,6 +1,6 @@
 # Formalisation source provenance
 
-Retrieved on 29 September 2026 for the architecture review. These local files, rather than web summaries, supply the evidence used in `Canonicalisation_Formalisation_Literature_Review.md`.
+Retrieved on 29 September 2026 for the architecture review. These local files, rather than web summaries, supply the evidence used in `reviews/formalisation-literature-review.md`.
 
 | Artifact | Primary download URL | SHA-256 |
 |---|---|---|

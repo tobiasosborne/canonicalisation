@@ -2,7 +2,7 @@
 
 **30 September 2026 · aligned with architecture specification v2.0**
 
-This is a plan for future implementation, not work authorised in the document-revision task. The [specification](Canonicalisation_C_Architecture_Specification.md) defines the contracts; the [response](Canonicalisation_Review_Response.md) records decisions against the reviews. Reviewed baseline: v1.0 at `fb014c9`, SHA-256 `924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`. No production C, Lean development, builds or benchmarks have been completed here.
+This is a plan for future implementation, not work authorised in the document-revision task. The [specification](specification.md) defines the contracts; the [response](../reviews/review-response.md) records decisions against the reviews. Reviewed baseline: v1.0 at `7ad98cb`, SHA-256 `924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`. No production C, Lean development, builds or benchmarks have been completed here.
 
 ## Dependencies and release sequence
 
@@ -49,7 +49,7 @@ Maintain named open obligations rather than silently assuming results:
 
 All ranges are **planning judgments**, not literature facts, measured delivery rates or commitments. Assume an experienced Lean/mathlib developer with access to a permutation-group specialist, frozen interfaces and ordinary tooling. Person-weeks are expert effort, not elapsed calendar weeks. They exclude new research whose scope is not yet fixed, and overlap makes their sum misleading.
 
-The [referee report](Canonicalisation_Referee_Report.md), finding 17, assigns 2–6 weeks to the *abstract tree theorem* (A), several further weeks to reference algorithms (B), several months to group/profile and adapter proofs (C–D), and plausibly person-years to the C/runtime surface (E). The [formalisation review](Canonicalisation_Formalisation_Literature_Review.md) includes substantially more executable definitions and proof plumbing in its 8–16 week first milestone. These estimates concern different deliverables and do not conflict.
+The [referee report](../reviews/referee-report.md), finding 17, assigns 2–6 weeks to the *abstract tree theorem* (A), several further weeks to reference algorithms (B), several months to group/profile and adapter proofs (C–D), and plausibly person-years to the C/runtime surface (E). The [formalisation review](../reviews/formalisation-literature-review.md) includes substantially more executable definitions and proof plumbing in its 8–16 week first milestone. These estimates concern different deliverables and do not conflict.
 
 | Scope in this plan | Reconciled judgment | What the range includes |
 |---|---|---|

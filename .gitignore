@@ -1,7 +1,21 @@
-# Re-downloadable source archives; extracted primary evidence stays tracked.
-review_sources/algorithms/*.source
-review_sources/formalisation/downloads/*.tar
-review_sources/formalisation/downloads/*.tar.gz
+# Third-party evidence is not redistributed: only its provenance is tracked.
+# Rebuild it locally with `python3 review_sources/fetch_sources.py --fetch`.
+review_sources/**
+!review_sources/**/
+!review_sources/README.md
+!review_sources/SOURCES.json
+!review_sources/fetch_sources.py
+!review_sources/algorithms/manifest.json
+!review_sources/algorithms/manifest_supplemental.json
+!review_sources/formalisation/PROVENANCE.md
+!review_sources/formalisation/downloads/isocert-head.json
+!review_sources/formalisation/downloads/mathlib-head.json
+!review_sources/formalisation/mathlib/archive-paths.txt
+!review_sources/hardware/README.md
+!review_sources/hardware/manifest.json
+
+# Local agent tooling.
+.claude/
 
 # Local interpreter/build scratch.
 __pycache__/

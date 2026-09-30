@@ -1,6 +1,6 @@
 # Primary hardware sources for the performance appendix
 
-Retrieved 29 September 2026. These archived vendor documents support hardware specifications, not measured canonicalisation performance. See [manifest.json](manifest.json) for source/final URLs, retrieval timestamps, byte lengths, response types and SHA-256 hashes. [fetch_sources.py](fetch_sources.py) records a reproducible retrieval list; PDF responses are checked for PDF magic. Text derivatives are navigation aids; raw HTML/PDF files are the archived evidence.
+Retrieved 29 September 2026. These archived vendor documents support hardware specifications, not measured canonicalisation performance. See [manifest.json](manifest.json) for source/final URLs, retrieval timestamps, byte lengths, response types and SHA-256 hashes. The original retrieval script checked PDF responses for PDF magic; it has been replaced by [../fetch_sources.py](../fetch_sources.py), which verifies these files against [../SOURCES.json](../SOURCES.json). The archived files themselves are not redistributed in the public repository. Text derivatives are navigation aids; raw HTML/PDF files are the archived evidence.
 
 | File | Version/location used | Evidence |
 |---|---|---|

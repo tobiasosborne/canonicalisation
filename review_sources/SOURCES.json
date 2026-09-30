@@ -1,0 +1,1325 @@
+{
+ "description": "Inventory of third-party evidence files used by the reviews but not redistributed in this repository. Rebuild them locally with review_sources/fetch_sources.py; see review_sources/README.md.",
+ "inventory_date": "2026-09-30",
+ "files": [
+  {
+   "path": "review_sources/algorithms/1705.03283.metadata.html",
+   "sha256": "d5ca87f10793cf5e070f78322434a8060258e1228ba3d8e96b30f58c02527315",
+   "bytes": 42271,
+   "kind": "download",
+   "url": "https://arxiv.org/abs/1705.03283",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1705.03283v1.pdf",
+   "sha256": "9c3f41a7291704805a8e7dc03042dc01020c56da504938901a1e4d161793a428",
+   "bytes": 297802,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/1705.03283v1",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1705.03283v1.pdf.txt",
+   "sha256": "5c5f14985db6f31d57a79113c1be93ddb4d1d5762be6569eedfdec504b3c49c2",
+   "bytes": 79782,
+   "kind": "derived",
+   "from": "review_sources/algorithms/1705.03283v1.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1705.03283v1.source",
+   "sha256": "23a60319c9abe9bae02690b76ce54c7aace9ab92aee6d51c6e214780e82aaa22",
+   "bytes": 25851,
+   "kind": "download",
+   "url": "https://arxiv.org/src/1705.03283v1",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1705.03283v1/ir-analysis.bbl",
+   "sha256": "95c826966253279ca3a39e76b265313e985fea83a29767f51abcb2cd042cce9a",
+   "bytes": 4659,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1705.03283v1.source",
+   "member": "ir-analysis.bbl",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1705.03283v1/ir-analysis.tex",
+   "sha256": "fda07a973092d4600107304dda9308f86bd387233706f3f788839a38c2f22aeb",
+   "bytes": 82386,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1705.03283v1.source",
+   "member": "ir-analysis.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858.metadata.html",
+   "sha256": "8d3c14c20754a2cde400216fb999e76eb56c194acee741e93b1f11ca0047442b",
+   "bytes": 42109,
+   "kind": "download",
+   "url": "https://arxiv.org/abs/1803.06858",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858.source",
+   "sha256": "6f65d1a01b80872ce02edf89dc95ade125150eef35460edb3e6bf6e80dc6dd5f",
+   "bytes": 53450,
+   "kind": "download",
+   "url": "https://arxiv.org/src/1803.06858",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858v1.pdf",
+   "sha256": "8974d36fcdfb1096e4ea3503cf8b54c9ab5ee27638b4e0eb87d75122c958ac6c",
+   "bytes": 367184,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/1803.06858v1",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858v1.pdf.txt",
+   "sha256": "9b9c1ad9b4f612cf8b67e6a49e54ee848078a72933fb1763de7489729d770876",
+   "bytes": 106100,
+   "kind": "derived",
+   "from": "review_sources/algorithms/1803.06858v1.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858v1/articles/canonization.tex",
+   "sha256": "66d2d7e629f2a323502d96b633786dfd8b2cb2c2c0adc6ff1d9a49cea89e240c",
+   "bytes": 9300,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1803.06858.source",
+   "member": "articles/canonization.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1803.06858v1/main.tex",
+   "sha256": "23256110be1560df2641384d06b4b188aaca6338c7450f75c99f663ceef9a340",
+   "bytes": 2420,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1803.06858.source",
+   "member": "main.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466.metadata.html",
+   "sha256": "e6c43e1eb4b2348f4de46f6e938f2f441aef793287a42a65cd3ae0094e55c0b3",
+   "bytes": 41158,
+   "kind": "download",
+   "url": "https://arxiv.org/abs/1806.07466",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2.pdf",
+   "sha256": "412997a6ea9e93b1e6df22382e19e8dee732beaa1887275faa5d9d97b9aeb47d",
+   "bytes": 373740,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/1806.07466v2",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2.pdf.txt",
+   "sha256": "7034c8932f44e1e8f28503bb36294c2aaa483f3af4553659ed69f1796d812038",
+   "bytes": 111138,
+   "kind": "derived",
+   "from": "review_sources/algorithms/1806.07466v2.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2.source",
+   "sha256": "88f76674a6d14a6d28d125eb93788a02e1b8e62289aab81518e06078f631db1a",
+   "bytes": 35945,
+   "kind": "download",
+   "url": "https://arxiv.org/src/1806.07466v2",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/canGenSets.tex",
+   "sha256": "ac07caa3447299bb806c8df5667e0ef7969ba8a5b31a5af6773c6a3779dc9eb7",
+   "bytes": 9675,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/canGenSets.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/cosetInt.tex",
+   "sha256": "7e43c33f5e6a26a6025a10505d3a57b451d48b6a91626acc6c62613e985c7f60",
+   "bytes": 14661,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/cosetInt.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/heredit.tex",
+   "sha256": "bec69aaf964f0743a7edc5fd3d4f5a731f32caf1d32c778f05d4c09d5b267953",
+   "bytes": 12925,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/heredit.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/hereditarilyFiniteObjects.tex",
+   "sha256": "854f46e7511fd73fba0d6b3e239bd85dcf1a8eeb98b05a24f69535a6dc72b86b",
+   "bytes": 5021,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/hereditarilyFiniteObjects.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/hypergraphCanonizationExp.tex",
+   "sha256": "e26cc8f3e9dd578b995650daa0fe929f454b66d8720b505593d42fb52aa88825",
+   "bytes": 14894,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/hypergraphCanonizationExp.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/intro.tex",
+   "sha256": "544751b65b058cdf1d92bd9c5c5629968a1b0735dfd4a5b8466cac6e5fa6d1d5",
+   "bytes": 10686,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/intro.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/multiCoset.tex",
+   "sha256": "02c1500a28afee53b52469ed25867b21dd88a460bca43980ff44a2a741becb21",
+   "bytes": 20840,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/multiCoset.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/objectReplacement.tex",
+   "sha256": "13213839b631abfa18ba482add1ef38b3090de9331ae5dc4269dfb849197a231",
+   "bytes": 5377,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/objectReplacement.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/openQuestions.tex",
+   "sha256": "96c664ed97f6d1eceeed8ca729aaedd8bd47916e9acc6fc62a80ef856e6c239c",
+   "bytes": 2219,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/openQuestions.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/articles/preliminaries.tex",
+   "sha256": "5e63f7e5f3a39e2c3b2d41379b2d886739631a016a59508c8f7bf479fb44d18b",
+   "bytes": 3745,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "articles/preliminaries.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/configurations/commands.tex",
+   "sha256": "73d9067a4f8cfd6aa88cb4cb7e84e3c4b4e33ed29733dad0fd9fe01762b63373",
+   "bytes": 6469,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "configurations/commands.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/configurations/header.tex",
+   "sha256": "ef545f3dbd8bb7e8bcbbe7f50becd3badf559c47cc02ba7d1e179b00f89d0ecf",
+   "bytes": 693,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "configurations/header.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/figures/bundling.tex",
+   "sha256": "5f6439ef9777ef3875fff792b44132867ec3a73d6cf2f5bd4de0504a8fead16f",
+   "bytes": 1338,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "figures/bundling.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/main.bbl",
+   "sha256": "179ee61e0a611f61e5c7b6680459b0e771f4b503ae4028e1422f663307c6c648",
+   "bytes": 6853,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "main.bbl",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1806.07466v2/main.tex",
+   "sha256": "3b2091d3d13f2eed828a7b209cf739a41411089d2114be27d2539e9ef9cf2c28",
+   "bytes": 1972,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1806.07466v2.source",
+   "member": "main.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783.metadata.html",
+   "sha256": "058679e53ee5736497cab4f8299eb3b6e288246d3ef14c14501b558dcb3d1311",
+   "bytes": 41297,
+   "kind": "download",
+   "url": "https://arxiv.org/abs/1911.04783",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4.pdf",
+   "sha256": "70e683b08424bc8ea398c6f5478f496f9a320f702e4c8e761d84165dc2273f49",
+   "bytes": 998133,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/1911.04783v4",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4.pdf.txt",
+   "sha256": "4362b333dc3eedd0aede44e0e673c5dc22eb3d8f4a049b22ac9c163b9df44fab",
+   "bytes": 168739,
+   "kind": "derived",
+   "from": "review_sources/algorithms/1911.04783v4.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4.source",
+   "sha256": "dd57639404a23921a3bcdef01c6ffa1405627cbee63630ab05dfa892495b7c7d",
+   "bytes": 84707,
+   "kind": "download",
+   "url": "https://arxiv.org/src/1911.04783v4",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4/PermAlgoDigraphsJPWW_extended.tex",
+   "sha256": "372f5522fe15d84555acb76e873a6e06d7f9e57b0571f36934ca1b3051188da4",
+   "bytes": 233411,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1911.04783v4.source",
+   "member": "PermAlgoDigraphsJPWW_extended.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4/allPrimOneTransGraph.pdf",
+   "sha256": "cc06b129463d6963e272c9b2013ab1cb23e0d3b65484d52a0e49d856a1f9ab2e",
+   "bytes": 15423,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1911.04783v4.source",
+   "member": "allPrimOneTransGraph.pdf",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4/allPrimTwoOrMoreTransGraph.pdf",
+   "sha256": "bfba83dac46fbf6238b16d6cdf30276b8d0343a82f2bf1f92daffc542c35ca5a",
+   "bytes": 15303,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1911.04783v4.source",
+   "member": "allPrimTwoOrMoreTransGraph.pdf",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4/dp.pdf",
+   "sha256": "7706c5fb9740a4770d0d45348c928646f1af30db7b753be383fccd43f5e7c8e4",
+   "bytes": 13768,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1911.04783v4.source",
+   "member": "dp.pdf",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/1911.04783v4/elsarticle.cls",
+   "sha256": "759ff163b87bde8d48ca74558107202b1a28c557926a4d62690ce3dbf44eca50",
+   "bytes": 26135,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/1911.04783v4.source",
+   "member": "elsarticle.cls",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065.metadata.html",
+   "sha256": "9bbd30e57efc4950d243477915da7c786d1380b8cb2a14a7a7f3fd658a9c5a29",
+   "bytes": 40541,
+   "kind": "download",
+   "url": "https://arxiv.org/abs/2112.05065",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065v2.pdf",
+   "sha256": "d45a686b1df5681bc62a66c6901dddd1889d94317010aa4ab4bb4c6b912da1ef",
+   "bytes": 308767,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/2112.05065v2",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065v2.pdf.txt",
+   "sha256": "8d8a0cb08531960fb729c9050f73065398b99a1218966e30d11466ce4f7d37b5",
+   "bytes": 76795,
+   "kind": "derived",
+   "from": "review_sources/algorithms/2112.05065v2.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065v2.source",
+   "sha256": "db0049e319fabcdd6787eb6ecf00ac7bca9d098e6a2ad9f72bd748cd4eb2fae0",
+   "bytes": 26057,
+   "kind": "download",
+   "url": "https://arxiv.org/src/2112.05065v2",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065v2/perfect-refiners.bbl",
+   "sha256": "cf13beacde6974a915a8529e48382d7cb156b756fa884b14edd184c9e77545d2",
+   "bytes": 3027,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/2112.05065v2.source",
+   "member": "perfect-refiners.bbl",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2112.05065v2/perfect-refiners.tex",
+   "sha256": "7fd4def7b8aee21276dac684021b1a941eacb6dda68aa0e4b5e9ae5bfd8dcb53",
+   "bytes": 95929,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/2112.05065v2.source",
+   "member": "perfect-refiners.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2209.02534v4.pdf",
+   "sha256": "f57ecbad0e6920177208d9041d030cfc67465d245da15bb58bb7dd47c455c6dc",
+   "bytes": 298242,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/2209.02534v4",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2209.02534v4.pdf.txt",
+   "sha256": "0906cd5af1b3da722e1b8d0326f5f5f60d39b89703840e34083f28017196ef7a",
+   "bytes": 83360,
+   "kind": "derived",
+   "from": "review_sources/algorithms/2209.02534v4.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/2209.02534v4.source",
+   "sha256": "910ad025a3212ad054529157f51e54d8f05415e06c1048c2cb75431a52dd34a0",
+   "bytes": 30921,
+   "kind": "download",
+   "url": "https://arxiv.org/src/2209.02534v4",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/2209.02534v4/paper.tex",
+   "sha256": "9e2e8d331ad1dbc77276d900b7486f3d2ee3e4d2f6276f5af529c5b5c1cf24b2",
+   "bytes": 100947,
+   "kind": "archive_member",
+   "archive": "review_sources/algorithms/2209.02534v4.source",
+   "member": "paper.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972.pdf",
+   "sha256": "778c8b3507620a68154bc74b29810e0de6d2c4dd7ee5d24b84c7e7ba61404b81",
+   "bytes": 10879201,
+   "kind": "download",
+   "url": "https://www2.seas.gwu.edu/~simhaweb/champalg/tsp/papers/KarpOriginal.pdf",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972.pdf.txt",
+   "sha256": "4b4c54f636bfc670ea4d941d22ccdc1730c2d2bb16327cff15fac7d4d3d6ddd2",
+   "bytes": 19,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972_page10.png",
+   "sha256": "ba9ad17bf30d0575d02b1d2e7acb544bda5d58a9bda6ef30e22551f2476d80c1",
+   "bytes": 345265,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftoppm -png -f 10 -l 10 FROM (resolution not recorded)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972_page6.png",
+   "sha256": "f1c270c1260dd86759b5c53897896b1146c70b6f6f3652ea88a6258df3e16caa",
+   "bytes": 572553,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftoppm -png -f 6 -l 6 FROM (resolution not recorded)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972_page7.png",
+   "sha256": "b77b4836bb6af22b1f831b735edf8f4dd0d4d90fff5d1846e3ee1ebcd108d64b",
+   "bytes": 332855,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftoppm -png -f 7 -l 7 FROM (resolution not recorded)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972_page8.png",
+   "sha256": "66a898e02b980436badf1b417363325127e31fe1183808eae5233165eaef6677",
+   "bytes": 505580,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftoppm -png -f 8 -l 8 FROM (resolution not recorded)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/algorithms/Karp_1972_page9.png",
+   "sha256": "b86cbec3371cc288520aa5089ac4ac292525c594a70e60335fbf9db087848c21",
+   "bytes": 246709,
+   "kind": "derived",
+   "from": "review_sources/algorithms/Karp_1972.pdf",
+   "command": "pdftoppm -png -f 9 -l 9 FROM (resolution not recorded)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/README.md",
+   "sha256": "7ed14f4ca7742de25e144e6c2e7c19ede7ea9ff292a7ff276e27fde0327dd76e",
+   "bytes": 3095,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/README.md",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/Makefile",
+   "sha256": "c2f4f27d02f250f4a7c9813505df22281b3269f735ced15efe6ad8266c66e130",
+   "bytes": 254,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/Makefile",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/README.md",
+   "sha256": "64710fd95f95061d91b526c185a3557498f3c96d5ba2d57c9fdca68c913f194d",
+   "bytes": 3135,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/README.md",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/checker.cpp",
+   "sha256": "5e6970e8d1ce51e55589464b9e93990852cabce38239edda3cb46f8ceb036815",
+   "bytes": 51808,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/checker.cpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/common.hpp",
+   "sha256": "b0cf2a4599eab5d6514e082f2b8e21d877ea16fe42544bad61cba84dbe884b78",
+   "bytes": 10544,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/common.hpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/hash_database.hpp",
+   "sha256": "a26d8b4296f2b76a2a68702632acc411bd04c1db8f52be2130a61ff7049bed57",
+   "bytes": 835,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/hash_database.hpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/mem_mapper.hpp",
+   "sha256": "e2ee3960f66d5ffb6ca5a47fed1abb49cf62e2b64c4862df5ed81adb7762738c",
+   "bytes": 951,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/mem_mapper.hpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/checker/trie.hpp",
+   "sha256": "3f19169dad4a566e8ef0fbd2d1548692b9b21f9c7bca97dbc373432487aff246",
+   "bytes": 4068,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/checker/trie.hpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/Makefile",
+   "sha256": "c7322ed85306a0bacbcf78720ca5fec93128f0e7426545ca7273d5ef362a54ee",
+   "bytes": 148,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/Makefile",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/README.md",
+   "sha256": "772d3225722c1f9a340ff3f3a8129de6157e85df61c163930f378b874887610d",
+   "bytes": 2957,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/README.md",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/algorithm_argo.h",
+   "sha256": "b0f42de173062cc73e877f1f491b3e38f425dfdc7f2611578fd3f8aaf432d8fd",
+   "bytes": 42605,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/algorithm_argo.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/algorithm_selector.h",
+   "sha256": "e257cce488f869860dec16fbcd6ddaab5c027457479b908d7817f2d7f37d67ba",
+   "bytes": 4802,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/algorithm_selector.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/array.h",
+   "sha256": "0aded502ce0f478973bf4ef5981c53ce8e7b9fdd5e9250a5c8e358df070626ce",
+   "bytes": 1240,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/array.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/assertions.h",
+   "sha256": "a674c9fd8255e025ced33d1aedb81fe8962970845689ac3512b544324cefa27d",
+   "bytes": 3681,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/assertions.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bitarray.h",
+   "sha256": "c77c98ee7ded2160ebe5feac4a1d5c0fb18fed8e59fec59d8ab7a81a224805f9",
+   "bytes": 707,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bitarray.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/README.md",
+   "sha256": "3a83aaf6b44b5c2173f816e15ed3865c9e795ecdf798774d913a5dee1fceba5c",
+   "bytes": 1264,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/README.md",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/eager_backjump.patch",
+   "sha256": "6ee7c9eee95b562198329ba12f61215b3e262905bdeaa13082e71e92d3e746b5",
+   "bytes": 87,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/eager_backjump.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/faulty_invariant_comparison.patch",
+   "sha256": "3c9960f265b8e6c5e81efe6562db7c7a1594efbebbc4144a3d901ebdebc94554",
+   "bytes": 579,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/faulty_invariant_comparison.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/incomplete_cell.patch",
+   "sha256": "999a44e9a9e5809e5ba619fb8d85f2bb708f05622eee16d6b3af28eb956a9c05",
+   "bytes": 70,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/incomplete_cell.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/incorrect_invariant.patch",
+   "sha256": "1370317d1618bb19ff71191b9dfba69f7429ac513d6874f9dfb0e90b8117d7cb",
+   "bytes": 999,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/incorrect_invariant.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/missing_vertex.patch",
+   "sha256": "73e738121e63b42ac6a711b2b6272a04fc338f8219a5009a272dc81284dc5f72",
+   "bytes": 31,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/missing_vertex.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/no_invariant_decrement.patch",
+   "sha256": "230761b6156bcaa307113faeabeee57845d7d7b2b2fc3bde2f3f971afec843c5",
+   "bytes": 57,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/no_invariant_decrement.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/no_rotate.patch",
+   "sha256": "490ad1f9205029035ebadd4624b60c581c14c489a263d7276919922e2146ee7e",
+   "bytes": 436,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/no_rotate.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/bugs/unnecessary_facts.patch",
+   "sha256": "02974032e2fa0621522872331a48c02e3e4a63fb692bff9a7bf6682d107e1502",
+   "bytes": 179,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/bugs/unnecessary_facts.patch",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/coloring.h",
+   "sha256": "4bf4bebb5fc2dc6a1811d2f6ca7f358b93e700027eeaf9734e99e2904c902690",
+   "bytes": 2823,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/coloring.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/graph.h",
+   "sha256": "ba1cc1a05c36484648aedb561df92fcd69cabb333b99247dd000271379409c13",
+   "bytes": 2704,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/graph.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/group.h",
+   "sha256": "7983e9bc62e407b716f5afe903932accf2af818d1c3762255b604f241ba27ded",
+   "bytes": 6120,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/group.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/hash.h",
+   "sha256": "a1033066fb43edb74cca26ca1087ea8314595e2cbfd573cedcb65df687816138",
+   "bytes": 1167,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/hash.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/main.cpp",
+   "sha256": "57bfe4d762da318a4d83f7e5e52ed2ec1ddf23037fff24cab4284b500ba3a1f0",
+   "bytes": 1202,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/main.cpp",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/matrix.h",
+   "sha256": "c4b8c04e72695dcc0b91396e9359242b9acfd0c2c44e55d96b73ef636a78e076",
+   "bytes": 1008,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/matrix.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/memory.h",
+   "sha256": "9618982b9cebbbc8139061740bb9aa29cb114f171c3ceb8baa4d7fcc33a2172b",
+   "bytes": 1233,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/memory.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/partition.h",
+   "sha256": "1c243ae5630e1185e7f272f7c9aa3a1f86d431db05e8b733ea864c25b7c46b0f",
+   "bytes": 1928,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/partition.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/permutation.h",
+   "sha256": "772afed18cd653e4e0e2ca183948f3b072b6494a23e3312fda88571d6e490170",
+   "bytes": 1736,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/permutation.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/priority_queue.h",
+   "sha256": "37b7498c54fe3ecea7ea0ea3e85cbb5fd5c42f2a25a1d48b1f4d439c031c576d",
+   "bytes": 1650,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/priority_queue.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/proof.h",
+   "sha256": "c5ccda7018884a239716e74ede20624b13a61650faaa09316919a45d1e9051e3",
+   "bytes": 8467,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/proof.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/tests.h",
+   "sha256": "525f1cc8c7f89842e58c7768e1ac30623e9271c9456889f5a5e09ff7dcc2d01d",
+   "bytes": 15889,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/tests.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/utility.h",
+   "sha256": "211d328cba22ed5e3c6b610672729900798ba52c30bac6e83cd15d2c6a0ae582",
+   "bytes": 2052,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/utility.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/morphi/vector.h",
+   "sha256": "4989aefdbe8f96efcaab7b0de0dc3720e5182d95e1f9b63f670e636b1857e397",
+   "bytes": 1074,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/morphi/vector.h",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/results/results.ods",
+   "sha256": "219c266fe2ae8288878df4a8824d067b7737f195ad0a04f921543ad8358db918",
+   "bytes": 656724,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/results/results.ods",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/results/results.xls",
+   "sha256": "983d7c48ae583797ade13e3542838ec24cb1a349e6281be93e05e9de0c435767",
+   "bytes": 790016,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/results/results.xls",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/results/results.xlsx",
+   "sha256": "178c3ce3de926a80a5a6d81a2a0949cbdb4fb7d363c313d2002e5e783bbd6fc7",
+   "bytes": 383753,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/results/results.xlsx",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/ColoredGraph.thy",
+   "sha256": "b2c62b43c020d0e9726db99c2ee818302a7ba0f3f0965052f551db91bd2b172c",
+   "bytes": 5907,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/ColoredGraph.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/Coloring.thy",
+   "sha256": "4d808d01d3714a479b913bedf12bcfdf010457e42001e8076e84e78292a85497",
+   "bytes": 76410,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/Coloring.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/GraphIsomorphism.thy",
+   "sha256": "eb2d9b3cbcf652415d6d043adc5c63889b8c9632fa407e5a300f4861f351c7db",
+   "bytes": 10925,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/GraphIsomorphism.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/McKayPiperno.thy",
+   "sha256": "1a37b5f30c2086ff70b05b1bc3b7241c92f65f05643d302ce4d51980912dc61f",
+   "bytes": 148537,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/McKayPiperno.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/More_List.thy",
+   "sha256": "f53d08459f045872470ff02995a01a8e5e2069148a2c55f0efe374fa93cd7d0f",
+   "bytes": 32350,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/More_List.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/More_List_Lexord.thy",
+   "sha256": "47f28b21ba0d7933d2d80b23dcaed7d961399f45e20ae1846a3eb2a30b9a7167",
+   "bytes": 14744,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/More_List_Lexord.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/Option_Lexord.thy",
+   "sha256": "a35def3520d0b4f0ca12e55c532150d57d6fe2493087e3e521914de777bb2cb7",
+   "bytes": 1341,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/Option_Lexord.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/Permutation.thy",
+   "sha256": "070abf1dd0cf5306e6f4dfc4ec549f306808eaa9c228f73a0b5720530b926992",
+   "bytes": 22321,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/Permutation.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/ProofFormat.thy",
+   "sha256": "9fbc189e53f8ab35d08eabf8bc3d1d7fb0f831c2d1dd9121b118e8eb1a805132",
+   "bytes": 35378,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/ProofFormat.thy",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/code/isocert/thy/README.md",
+   "sha256": "615cb5f37622c0069637ef0a582f26ba097d0433d682bcdf3c665ab3e93e6ffa",
+   "bytes": 794,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "member": "isocert-0b160702bc0196739915541478fdfc9bb67a35db/thy/README.md",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "sha256": "e52502c6caec30e200e525a4838ad884a196c38fbb6e320569fcb416d045ebc5",
+   "bytes": 430471,
+   "kind": "download",
+   "url": "https://arxiv.org/src/2112.14303v5",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/downloads/2112.14303v5.pdf",
+   "sha256": "c6a1ae32427931b54535733646d8c9f9cc4760e9b2f377d9ea5784b90ccd6853",
+   "bytes": 851607,
+   "kind": "download",
+   "url": "https://arxiv.org/pdf/2112.14303v5",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/downloads/isocert-0b160702.tar.gz",
+   "sha256": "4df79344a5615280aa5cba68f6d976b37a77f11768d5b4181101458d99b88df9",
+   "bytes": 1284693,
+   "kind": "download",
+   "url": "https://codeload.github.com/milanbankovic/isocert/tar.gz/0b160702bc0196739915541478fdfc9bb67a35db",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "sha256": "7f72ac194afe6f047459ffd97fbb483c32aaafd2981bb585b7556a464078ca09",
+   "bytes": 23928212,
+   "kind": "download",
+   "url": "https://codeload.github.com/leanprover-community/mathlib4/tar.gz/ed72f1faaeee9bea5805932ae309af92264cd8d1",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/LICENSE",
+   "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+   "bytes": 11357,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/LICENSE",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/Algebra/Group/End.lean",
+   "sha256": "2e8cf5ede85d47372ffa69ee899be4e0d219d0a3b1446ab63c4c7b04cdefc149",
+   "bytes": 28795,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/Algebra/Group/End.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/Algebra/Group/Opposite.lean",
+   "sha256": "3e8880edab1d4e1d88409f7636385c5e125a36e291367f8b0fb6ac763b17ae06",
+   "bytes": 11276,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/Algebra/Group/Opposite.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/Algebra/Opposites.lean",
+   "sha256": "1225fc2c4006a1bf8aa7b301a1392ef9dd26324487c63a5d7675bf4ba7bd80c1",
+   "bytes": 11813,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/Algebra/Opposites.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/Data/Finset/Max.lean",
+   "sha256": "620b0e39a5a7d623087b9e9777d85281321f99c501600048c9154d42aaf01a7d",
+   "bytes": 16493,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/Data/Finset/Max.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/GroupTheory/Coset/Basic.lean",
+   "sha256": "546ec3da1a1e98072b3e2abb03b4a6f5f5d8ded9709130fdc05a83226b02fe21",
+   "bytes": 22906,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/GroupTheory/Coset/Basic.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/GroupTheory/GroupAction/Basic.lean",
+   "sha256": "11bae24e3e70e45d94ffff5d5d2e716f79d517bb92ef723d2c388e40e81f9d7c",
+   "bytes": 14459,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/GroupTheory/GroupAction/Basic.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/GroupTheory/GroupAction/Defs.lean",
+   "sha256": "19a57e899b76628d38f973a64d66b273fc739eeb9ed638d907b043fb2b156a55",
+   "bytes": 20199,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/GroupTheory/GroupAction/Defs.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/Mathlib/GroupTheory/Schreier.lean",
+   "sha256": "982b64c2430dc888235b7e66a4d70758758c4bcd097887cc1f29fe84a2e0c187",
+   "bytes": 12402,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/Mathlib/GroupTheory/Schreier.lean",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/mathlib/mathlib4/lean-toolchain",
+   "sha256": "bc84812c94489d1e3e191baa1dc10d5eb684382d7fe9d2a5ab085e72c1c67e47",
+   "bytes": 29,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/mathlib-ed72f1fa.tar.gz",
+   "member": "mathlib4-ed72f1faaeee9bea5805932ae309af92264cd8d1/lean-toolchain",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/00README.XXX",
+   "sha256": "33fd7b05a660a0ac5e8a4fc73afbab3411c8e2a1002b80a46764f82ffdc292eb",
+   "bytes": 8,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "00README.XXX",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/LMCS-logo.mf",
+   "sha256": "dace1b0988cbdcefc4c8925fe9f391557936cc6a1cb2e657705b60016a5fbf20",
+   "bytes": 1533,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "LMCS-logo.mf",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/LMCS-logo.tfm",
+   "sha256": "82f00d6f590c7abceb1434f437ab1a253b5ff949c4a18200ad70618ed33ad2ac",
+   "bytes": 264,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "LMCS-logo.tfm",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/autprune.tikz",
+   "sha256": "15588756aa472d087a92f610353721d9c3d2e489b4db298b0efc9326c4274b93",
+   "bytes": 1361,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "autprune.tikz",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/invariant.tikz",
+   "sha256": "1187c8ab19cf02f30a25bddb8b5d2678774c5f8526f2f24a306667ff1d5e1d58",
+   "bytes": 2607,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "invariant.tikz",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/lmcs.cls",
+   "sha256": "69bf77fe1166ebc257e35b49fb25f9976d7efc40df5bdd53a47201e964ee01fa",
+   "bytes": 28244,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "lmcs.cls",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/morphi_nauty.png",
+   "sha256": "345fa1476f9d8c69e296d610f208883d237b437397323f18722e808c7d69cb68",
+   "bytes": 43845,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "morphi_nauty.png",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/paper-pdf.txt",
+   "sha256": "7f35fa588dd28400b1a54d7dc7b9c9be154409482de476ab86a0557f74186e19",
+   "bytes": 143440,
+   "kind": "derived",
+   "from": "review_sources/formalisation/downloads/2112.14303v5.pdf",
+   "command": "pdftotext -layout FROM PATH",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/plot_new.png",
+   "sha256": "83cca30c3155de7b7a62d29228e6508ec17d4827a50787b15500b5fb83c61719",
+   "bytes": 333957,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "plot_new.png",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/rules.bbl",
+   "sha256": "eedd0eac51726d1bb203293b84d92a984b770564e054a78467af4b9910a63d9a",
+   "bytes": 11529,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "rules.bbl",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/rules.bib",
+   "sha256": "f5c63adab642a18f6f94b9e9a254f61fbe27353e3e87e0f16660f31696faecf6",
+   "bytes": 17518,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "rules.bib",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/rules.tex",
+   "sha256": "53e42a88d5e8a091b5195446a250a9ba1f12baf0aebd631fde569807b357baf7",
+   "bytes": 145490,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "rules.tex",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/formalisation/papers/isocert-2112.14303v5/tree.tikz",
+   "sha256": "7e0f6cf2d9a80ae61c26df344e1d4104d20d3f689d38877f9b846c78bbac8aaa",
+   "bytes": 3807,
+   "kind": "archive_member",
+   "archive": "review_sources/formalisation/downloads/2112.14303v5-source.tar",
+   "member": "tree.tikz",
+   "hash_stable": true
+  },
+  {
+   "path": "review_sources/hardware/amd_ryzen_9_9950x.html",
+   "sha256": "2f248d59983c9c12069b5742d809919121703d30bb0fd9e7ec35fc99b5a697ba",
+   "bytes": 204642,
+   "kind": "download",
+   "url": "https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x.html",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/amd_ryzen_9_9950x.txt",
+   "sha256": "7a404a1e628d4ae5fadaabf831ba4143717dcc3675ce6c079accf5b92914bf0b",
+   "bytes": 10352,
+   "kind": "derived",
+   "from": "review_sources/hardware/amd_ryzen_9_9950x.html",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/amd_zen5_epyc_architecture_landing.html",
+   "sha256": "9fd3b50198ce797048857210b22f09bf5b4e8c7b9f9bf4e2faa160c38b171eba",
+   "bytes": 2575,
+   "kind": "download",
+   "url": "https://www.amd.com/content/dam/amd/en/documents/epyc-business-docs/white-papers/5th-gen-amd-epyc-processor-architecture-white-paper.pdf",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/amd_zen5_guide_landing.html",
+   "sha256": "246a3401def199195138c24f3a5ba088859513fe2b90d6cce1e10cd5355883dd",
+   "bytes": 2575,
+   "kind": "download",
+   "url": "https://docs.amd.com/v/u/en-US/58455_1.00",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/kingston_KVR56U46BD8-32.pdf",
+   "sha256": "e604e815bb1e7d5bc746bfa41b66d6aee15ddb7215c65e1bf52375dc5b0dfd4c",
+   "bytes": 959031,
+   "kind": "download",
+   "url": "https://www.kingston.com/datasheets/KVR56U46BD8-32.pdf",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/kingston_KVR56U46BD8-32.txt",
+   "sha256": "9749bc4e919efedf82822c8f45842381f7d1f152cea37e477550051cc01ff6e5",
+   "bytes": 2964,
+   "kind": "derived",
+   "from": "review_sources/hardware/kingston_KVR56U46BD8-32.pdf",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_compute_capabilities.html",
+   "sha256": "ccd78d3cd520cb7b7a715a69ea2039096c28e6321e9a1ecd63a307ff62438cf8",
+   "bytes": 25141,
+   "kind": "download",
+   "url": "https://developer.nvidia.com/cuda/gpus",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_compute_capabilities.txt",
+   "sha256": "e35663f4f75bb910971307a1482be8f13721e46b6bd5e1cba2d7fe0540500d30",
+   "bytes": 2145,
+   "kind": "derived",
+   "from": "review_sources/hardware/nvidia_compute_capabilities.html",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_cuda_best_practices.html",
+   "sha256": "56dff2de4f38ac898884b14822d0aa999bf8c676606a75310a72507a65c0806e",
+   "bytes": 433259,
+   "kind": "download",
+   "url": "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_cuda_best_practices.txt",
+   "sha256": "d7b930c146a0a342524bd4c37e100f37e46bbdc18e278c861c1ece3fb22dfee7",
+   "bytes": 203865,
+   "kind": "derived",
+   "from": "review_sources/hardware/nvidia_cuda_best_practices.html",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_rtx_5080.html",
+   "sha256": "522bd318b45c73505f4bc509dd55b55a6a40913f4f0870f4ff1b1b0284298463",
+   "bytes": 648708,
+   "kind": "download",
+   "url": "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_rtx_5080.txt",
+   "sha256": "dab57425dfc72245dfd51b7f21d7db8980587c65dfb3626cc63598cd7be13bf1",
+   "bytes": 36305,
+   "kind": "derived",
+   "from": "review_sources/hardware/nvidia_rtx_5080.html",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_rtx_blackwell_architecture.pdf",
+   "sha256": "906ff2a409d7a7e4cbc56f5d3a179d574120d19aaba99520670e1a0c064595fa",
+   "bytes": 8283392,
+   "kind": "download",
+   "url": "https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/nvidia_rtx_blackwell_architecture.txt",
+   "sha256": "e5f156584da4047c573cc60878c0ca081739dfc44644733488865ec9aa5c055a",
+   "bytes": 118286,
+   "kind": "derived",
+   "from": "review_sources/hardware/nvidia_rtx_blackwell_architecture.pdf",
+   "command": "text extraction of FROM (pdftotext -layout for PDF; HTML-to-text otherwise)",
+   "hash_stable": false
+  },
+  {
+   "path": "review_sources/hardware/pcisig_generations_2025.pdf",
+   "sha256": "45340b920a44039657851e5b358f5070baf633bd58c2048cc4c30cd28f9993ae",
+   "bytes": 2500521,
+   "kind": "download",
+   "url": "https://pcisig.com/sites/default/files/2026-01/PCI-SIG%20PCIe%207.0%20Webinar_Rev5_FINAL.pdf",
+   "hash_stable": false
+  }
+ ]
+}
