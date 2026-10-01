@@ -16,6 +16,14 @@ static canon_group *make(uint32_t n, const uint32_t *gens, size_t count, uint64_
     return g;
 }
 
+/* spec 9.1 membership through the ops (S3: contains reports allocation failure) */
+static bool in(const canon_group *g, const uint32_t *p)
+{
+    bool r = false;
+    CHECK(g->ops->contains(g, p, &r) == CANON_COMPLETE);
+    return r;
+}
+
 static void drop(canon_group *g)
 {
     canon_group_release(g); /* public release; the handle came from canon_group_alloc */
@@ -84,10 +92,15 @@ int main(void)
         canon_group *g = make(3, c3, 1, 100);
         CHECK(g->ops->order(g) == 3);
         const uint32_t id[3] = {0, 1, 2}, r2[3] = {2, 0, 1}, tr[3] = {1, 0, 2};
-        CHECK(g->ops->contains(g, id));
-        CHECK(g->ops->contains(g, c3));
-        CHECK(g->ops->contains(g, r2));
-        CHECK(!g->ops->contains(g, tr));
+        CHECK(in(g, id));
+        CHECK(in(g, c3));
+        CHECK(in(g, r2));
+        CHECK(!in(g, tr));
+        /* S3 review item 8: the explicit backend admits a descriptor iff |G| <= max_group_order */
+        canon_capacity cap = {0, 3, 0, 0};
+        CHECK(g->ops->admits(g, &cap) == CANON_COMPLETE);
+        cap.max_group_order = 2;
+        CHECK(g->ops->admits(g, &cap) == CANON_CAPACITY_LIMIT);
         /* tuple_min, hand computed: L=(1): images g[1] are 1, 2, 0, so M=(0), t=[2,0,1];
          * G_M trivial, orbits {0},{1},{2}. */
         uint32_t t[3], orb[3];
@@ -174,7 +187,7 @@ int main(void)
     {
         canon_group *g = make(0, NULL, 0, 1);
         CHECK(g->ops->order(g) == 1);
-        CHECK(g->ops->contains(g, NULL));
+        CHECK(in(g, NULL));
         uint32_t dummy = 7;
         CHECK(g->ops->tuple_min(g, NULL, 0, &dummy, &dummy) == CANON_COMPLETE);
         CHECK(dummy == 7);
@@ -192,8 +205,8 @@ int main(void)
         canon_group *g = make(3, all, 6, 6);
         CHECK(g->ops->order(g) == 6);
         for (int i = 0; i < 6; ++i) {
-            CHECK(s3->ops->contains(s3, all + 3 * i));
-            CHECK(g->ops->contains(g, all + 3 * i));
+            CHECK(in(s3, all + 3 * i));
+            CHECK(in(g, all + 3 * i));
         }
         drop(g);
         drop(s3);

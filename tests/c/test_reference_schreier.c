@@ -21,7 +21,9 @@ static void agree(const t1_sym *s, uint32_t order, const uint32_t *gens, uint32_
     CHECK(r.order == order && c.order == order);
     uint32_t scratch[4];
     for (uint32_t e = 0; e < s->count; ++e) {
-        CHECK(canon_ref_contains(&r, s->elem[e], scratch) == canon_bsgs_contains(&c, s->elem[e]));
+        bool in_chain = false;
+        CHECK(canon_bsgs_contains(&c, s->elem[e], &in_chain) == CANON_COMPLETE);
+        CHECK(canon_ref_contains(&r, s->elem[e], scratch) == in_chain);
     }
     canon_ref_free(&r);
     canon_bsgs_free(&c);

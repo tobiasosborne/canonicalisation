@@ -120,8 +120,8 @@ static uint64_t explicit_order(const canon_group *group)
     return e->order;
 }
 
-/* spec 9.1: exact membership, here by binary search in the sorted table. */
-static bool explicit_contains(const canon_group *group, const uint32_t *p)
+/* spec 9.1: exact membership, here by binary search in the sorted table (no allocation). */
+static bool table_contains(const canon_group *group, const uint32_t *p)
 {
     const explicit_group *e = group->impl;
     size_t lo = 0, hi = (size_t)e->order;
@@ -138,6 +138,18 @@ static bool explicit_contains(const canon_group *group, const uint32_t *p)
         }
     }
     return false;
+}
+
+static canon_status explicit_contains(const canon_group *group, const uint32_t *p, bool *out)
+{
+    *out = table_contains(group, p);
+    return CANON_COMPLETE;
+}
+
+/* spec 11.1: the explicit table is bounded by the descriptor's max_group_order. */
+static canon_status explicit_admits(const canon_group *group, const canon_capacity *cap)
+{
+    return explicit_order(group) <= cap->max_group_order ? CANON_COMPLETE : CANON_CAPACITY_LIMIT;
 }
 
 /* Union-find over the domain stored in `parent`, invariant parent[x] <= x, so every root is
@@ -230,12 +242,7 @@ static canon_status explicit_tuple_min(const canon_group *group, const uint32_t 
 }
 
 static const canon_group_ops explicit_ops = {explicit_destroy, explicit_order, explicit_contains,
-                                             explicit_tuple_min};
-
-bool canon_group_is_explicit(const canon_group *group)
-{
-    return group != NULL && group->ops == &explicit_ops;
-}
+                                             explicit_tuple_min, explicit_admits};
 
 canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
                                          size_t generator_count, uint64_t max_order,

@@ -4,6 +4,9 @@
  * (src/bsgs/explicit.h); slice S3 replaces the backend by a verified stabiliser chain behind the
  * same operations.  This header deliberately contains no backend details.
  *
+ * Slice S3 changed `contains` to report allocation failure and added `admits` (review items 5
+ * and 8).
+ *
  * Convention (spec section 3): permutations are dense image arrays p[v] = v^p of length
  * `degree`; lists act on the right, L^g = (g[L[0]], g[L[1]], ...).
  */
@@ -23,8 +26,10 @@ typedef struct canon_group_ops {
     void (*destroy)(void *impl);
     /* spec 9.2: exact group order.  S1 admits orders that fit uint64 only (capacity bound). */
     uint64_t (*order)(const canon_group *group);
-    /* spec 9.1: exact membership of the permutation p (length `degree`). */
-    bool (*contains)(const canon_group *group, const uint32_t *p);
+    /* spec 9.1: exact membership of the permutation p (a bijection of length `degree`) in
+     * *out.  Returns CANON_COMPLETE, or CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT when the
+     * backend's per-call scratch cannot be allocated (*out = false); slice S3 review item 5. */
+    canon_status (*contains)(const canon_group *group, const uint32_t *p, bool *out);
     /* spec 7.1 (G stage) and 7.2 (leaf map): t_out receives an element t of G minimising L^t
      * numerically lexicographically among all elements of G; when several do (L not a full
      * list), the least such t as an image array.  If orbit_id_out is not NULL it receives, for
@@ -36,6 +41,11 @@ typedef struct canon_group_ops {
      * CANON_COMPLETE, or CANON_INVALID_INPUT for an out-of-range list entry. */
     canon_status (*tuple_min)(const canon_group *group, const uint32_t *L, uint32_t len,
                               uint32_t *t_out, uint32_t *orbit_id_out);
+    /* spec 11.1: whether a problem with the resolved capacity descriptor `cap` may use this
+     * group (CANON_COMPLETE) or not (CANON_CAPACITY_LIMIT).  Each backend states its own
+     * limit (slice S3 review item 8): the explicit backend admits order <= max_group_order;
+     * the chain backend admits every group it could build. */
+    canon_status (*admits)(const canon_group *group, const canon_capacity *cap);
 } canon_group_ops;
 
 /* The opaque public handle (spec section 17).  Create it only with canon_group_alloc, which

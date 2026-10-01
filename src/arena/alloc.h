@@ -12,7 +12,9 @@
 #define CANON_SRC_ARENA_ALLOC_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "arena/checked.h"
 #include "canon/canon.h"
@@ -32,6 +34,39 @@ static inline void *canon_alloc_array(size_t count, size_t size, canon_status *s
         *status = CANON_RESOURCE_LIMIT;
     }
     return block;
+}
+
+/* Grow-only array of uint32-indexed elements (slice S3 review item 6): make *cap > count by
+ * repeated saturating doubling from at least min_cap (canon_u32_grow), allocate the new block
+ * through canon_alloc_array, copy the first `count` elements and free the old block.  Nothing
+ * happens when count < *cap.  CANON_CAPACITY_LIMIT when count == UINT32_MAX (no uint32 index
+ * is left) or the byte size does not fit, CANON_RESOURCE_LIMIT when allocation fails; on
+ * failure *data and *cap are unchanged (spec 17).  elem_bytes may be 0 (rows of degree 0). */
+static inline canon_status canon_grow_array(void **data, uint32_t *cap, uint32_t count,
+                                            uint32_t min_cap, size_t elem_bytes)
+{
+    if (count < *cap) {
+        return CANON_COMPLETE;
+    }
+    if (count == UINT32_MAX) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: ids are uint32 */
+    }
+    uint32_t new_cap = *cap;
+    while (new_cap <= count) {
+        new_cap = canon_u32_grow(new_cap, min_cap); /* strictly grows below UINT32_MAX */
+    }
+    canon_status st = CANON_COMPLETE;
+    void *grown = canon_alloc_array(new_cap, elem_bytes > 0 ? elem_bytes : 1u, &st);
+    if (grown == NULL) {
+        return st;
+    }
+    if (count > 0 && elem_bytes > 0) {
+        memcpy(grown, *data, (size_t)count * elem_bytes); /* fits: the old block held it */
+    }
+    free(*data);
+    *data = grown;
+    *cap = new_cap;
+    return CANON_COMPLETE;
 }
 
 #endif /* CANON_SRC_ARENA_ALLOC_H */
