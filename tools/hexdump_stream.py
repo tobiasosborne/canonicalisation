@@ -6,8 +6,8 @@ Usage:  hexdump_stream.py HEX            (spaces allowed)
         hexdump_stream.py --raw FILE     (FILE holds raw bytes)
 
 Coverage: tags 01-05 and 09 are parsed and validated strictly.  Tags 06, 07, 08 and 0a
-are also parsed: Perm(p) per section 4.1, Group(H) per section 9.4 (structure only, no
-group-theoretic validation), Perm for 08, relation records for 0a (section 4.1).
+are also parsed: Perm(p) per section 4.1, Group(H) per section 9.4 (structure only: blocks
+increasing, ordered and disjoint; no group-theoretic validation), Perm for 08, relation records for 0a (section 4.1).
 Checks: header, q>=1, atoms < n, child references < parent index, sets/multisets
 strictly increasing, positive multiplicities, shortest Nat, every record reachable from
 the root, root = last record, no trailing bytes.  This is a syntax checker: it does not
@@ -79,12 +79,16 @@ def read_group(r, n):
     mode = r.take(1)[0]
     k = r.u32()
     if mode == 1:      # symmetric product of orbits (section 9.4 rule 1)
-        blocks, prev = [], -1
+        blocks, prev, seen = [], -1, set()
         for _ in range(k):
             size = r.u32()
             pts = [r.atom(n) for _ in range(size)]
             if size < 2 or pts != sorted(set(pts)) or pts[0] <= prev:
                 raise StreamError("bad orbit block (size>=2, increasing, ordered by least point)")
+            if seen.intersection(pts):
+                # the blocks are the H-orbits (section 9.4), hence disjoint
+                raise StreamError("orbit blocks overlap")
+            seen.update(pts)
             prev = pts[0]
             blocks.append(pts)
         return ("symmetric-product", blocks)

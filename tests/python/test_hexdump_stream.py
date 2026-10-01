@@ -77,6 +77,15 @@ class ExtendedTags(unittest.TestCase):
         hs.parse_stream(stream(3, 1, "07" + c3, 0))
         hs.parse_stream(stream(2, 1, "08" + "01" "00000000" + perm, 0))
 
+    def test_overlapping_blocks_rejected(self):
+        # section 9.4 rule 1: the blocks are the H-orbits, hence disjoint; {0,1} and {1,2}
+        # are ordered by least point but overlap
+        with self.assertRaises(hs.StreamError):
+            hs.parse_stream(stream(3, 1, "07" "01" "00000002" "00000002" "00000000" "00000001"
+                                   "00000002" "00000001" "00000002", 0))
+        hs.parse_stream(stream(4, 1, "07" "01" "00000002" "00000002" "00000000" "00000001"
+                               "00000002" "00000002" "00000003", 0))
+
     def test_perm_rejections(self):
         with self.assertRaises(hs.StreamError):  # fixed pair
             hs.parse_stream(stream(2, 1, "06" "00000001" "00000000" "00000000", 0))
