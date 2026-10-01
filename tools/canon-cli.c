@@ -37,8 +37,9 @@
  * "source,target,labelhex,multiplicity" separated by ';' (labelhex may be empty; the
  * multiplicity is passed to the library as given, so 0 yields INVALID_INPUT).  `--stream` is
  * lowercase or uppercase hex without spaces (odd length or a non-hex character is a usage
- * error).  `validate` prints the two fields "CASE \t STATUS" (not a FORMAT.md record) and
- * takes only --stream and --id.
+ * error, each with its own message); a stream object without --stream, or a stream target
+ * without --target-stream, is a usage error.  `validate` prints the two fields "CASE \t STATUS"
+ * (not a FORMAT.md record) and takes only --stream and --id.
  * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Exit
  * status: 0 on COMPLETE, 3 on any other status, 2 on a usage error.  Uses only the public
  * header. */
@@ -306,18 +307,21 @@ typedef struct subcommand {
     const char *name;
     canon_objective objective;
     canon_profile profile;
-    int kind;    /* 0 subset, 1 graph, 2 stream (S5), -1 chosen by --kind or the options */
-    bool target; /* takes a target object */
+    int kind;      /* 0 subset, 1 graph, 2 stream (S5), -1 chosen by --kind or the options */
+    bool target;   /* takes a target object */
+    bool validate; /* S5: canon_stream_validate, options --stream and --id only */
 } subcommand;
 
 static const subcommand SUBCOMMANDS[] = {
-    {"p1-subset", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false},
-    {"p1-graph", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 1, false},
-    {"p1-stream", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 2, false},
-    {"min", CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE, -1, false},
-    {"transporter", CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE, -1, true},
-    {"stabiliser", CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, -1, false},
-    {"transporter-coset", CANON_OBJECTIVE_TRANSPORTER_COSET, CANON_PROFILE_NO_TREE, -1, true},
+    {"p1-subset", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false, false},
+    {"p1-graph", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 1, false, false},
+    {"p1-stream", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 2, false, false},
+    {"validate", 0, 0, 2, false, true},
+    {"min", CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE, -1, false, false},
+    {"transporter", CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE, -1, true, false},
+    {"stabiliser", CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, -1, false, false},
+    {"transporter-coset", CANON_OBJECTIVE_TRANSPORTER_COSET, CANON_PROFILE_NO_TREE, -1, true,
+     false},
 };
 
 /* Parsed command line. */
@@ -328,6 +332,7 @@ typedef struct options {
     const char *target_atoms, *target_colours, *target_arcs; /* the target */
     const char *stream, *target_stream;                      /* S5: CDAG-2 hex */
     int kind;                                                /* 0 subset, 1 graph, 2 stream */
+    bool stream_given, target_stream_given;                  /* S5 review item 1 */
     uint64_t max_nodes;
     canon_backend backend;
     canon_order order;
@@ -364,6 +369,9 @@ static int parse_options(int argc, char **argv, options *o)
             return usage("option without a value");
         }
         const char *opt = argv[i], *val = argv[i + 1];
+        if (o->cmd->validate && strcmp(opt, "--stream") != 0 && strcmp(opt, "--id") != 0) {
+            return usage("validate takes only --stream and --id");
+        }
         const bool takes_subset = s4 || o->cmd->kind == 0, takes_graph = s4 || o->cmd->kind == 1;
         const bool takes_stream = s4 || o->cmd->kind == 2;
         if (strcmp(opt, "--n") == 0) {
@@ -381,10 +389,10 @@ static int parse_options(int argc, char **argv, options *o)
             graph_opt = true;
         } else if (takes_stream && strcmp(opt, "--stream") == 0) {
             o->stream = val;
-            stream_opt = true;
+            o->stream_given = stream_opt = true;
         } else if (o->cmd->target && strcmp(opt, "--target-stream") == 0) {
             o->target_stream = val;
-            stream_opt = true;
+            o->target_stream_given = stream_opt = true;
         } else if (o->cmd->target && strcmp(opt, "--target-atoms") == 0) {
             o->target_atoms = val;
             subset_opt = true;
@@ -449,6 +457,13 @@ static int parse_options(int argc, char **argv, options *o)
     if (kind < 0) {
         kind = stream_opt ? 2 : (graph_opt ? 1 : 0);
     }
+    /* S5 review item 1: a stream object (and a stream target) must be given explicitly */
+    if (kind == 2 && !o->stream_given) {
+        return usage("--stream HEX is required for a stream object");
+    }
+    if (kind == 2 && o->cmd->target && !o->target_stream_given) {
+        return usage("--target-stream HEX is required for a stream target");
+    }
     if ((kind != 0 && subset_opt) || (kind != 1 && graph_opt) || (kind != 2 && stream_opt)) {
         return usage("subset options (--atoms, --target-atoms), graph options (--colours, "
                      "--arcs, --target-colours, --target-arcs) and stream options (--stream, "
@@ -458,20 +473,27 @@ static int parse_options(int argc, char **argv, options *o)
     return 0;
 }
 
-/* Decode the hex string `hex` (no spaces) into a new buffer *out of *len bytes.  Returns 0, 2
- * on a usage error (message printed) or 3 on allocation failure. */
-static int parse_stream_hex(const char *hex, uint8_t **out, size_t *len)
+/* Decode the hex string `hex` given to option `opt` (no spaces) into a new buffer *out of
+ * *len bytes.  Returns 0, 2 on a usage error (an odd number of digits and a non-hex character
+ * are told apart; S5 review item 4) or 3 on allocation failure. */
+static int parse_stream_hex(const char *opt, const char *hex, uint8_t **out, size_t *len)
 {
     const size_t chars = strlen(hex);
-    *out = malloc(chars / 2 + 1);
+    *out = NULL;
     *len = chars / 2;
+    if (chars % 2 != 0) {
+        fprintf(stderr, "canon-cli: %s has an odd number of hex digits\n", opt);
+        return usage("hex streams are whole bytes");
+    }
+    *out = malloc(chars / 2 + 1);
     if (*out == NULL) {
         return 3;
     }
     if (!parse_hex(hex, chars, *out)) {
         free(*out);
         *out = NULL;
-        return usage("--stream expects an even number of hex digits");
+        fprintf(stderr, "canon-cli: %s contains a character that is not a hex digit\n", opt);
+        return usage("hex streams use 0-9, a-f, A-F");
     }
     return 0;
 }
@@ -481,14 +503,14 @@ static int parse_stream_hex(const char *hex, uint8_t **out, size_t *len)
  * failure. */
 static int build_object(canon_context *ctx, uint32_t n, int kind, const char *atoms_arg,
                         const char *colours_arg, const char *arcs_arg, const char *stream_arg,
-                        canon_status *st, canon_object **out)
+                        const char *opt_name, canon_status *st, canon_object **out)
 {
     *out = NULL;
     if (kind == 2) {
         /* spec 17, 4.1, 4.2: canon_object_create imports and normalises the stream */
         uint8_t *bytes = NULL;
         size_t len = 0;
-        int prc = parse_stream_hex(stream_arg, &bytes, &len);
+        int prc = parse_stream_hex(opt_name, stream_arg, &bytes, &len);
         if (prc == 0) {
             *st = canon_object_create(ctx, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n,
                                       bytes, len, out);
@@ -560,32 +582,13 @@ static int print_result(const char *id, canon_objective objective, const canon_r
 }
 
 /* canon-cli validate --stream HEX [--id CASE] (slice S5): spec 4.2 canonical-form check
- * through canon_stream_validate; prints "CASE \t STATUS". */
-static int validate_main(int argc, char **argv)
+ * through canon_stream_validate; prints "CASE \t STATUS".  The options were parsed by
+ * parse_options (one --id rule; S5 review item 9). */
+static int run_validate(const options *o)
 {
-    const char *id = "validate", *hex = NULL;
-    for (int i = 2; i < argc; i += 2) {
-        if (i + 1 >= argc) {
-            return usage("option without a value");
-        }
-        if (strcmp(argv[i], "--stream") == 0) {
-            hex = argv[i + 1];
-        } else if (strcmp(argv[i], "--id") == 0) {
-            id = argv[i + 1];
-            if (*id == '\0' || *id == '#' || strpbrk(id, "\t\n\r") != NULL) {
-                return usage("--id must be nonempty, not start with '#', and have no tabs or "
-                             "newlines");
-            }
-        } else {
-            return usage("validate takes only --stream and --id");
-        }
-    }
-    if (hex == NULL) {
-        return usage("validate needs --stream HEX");
-    }
     uint8_t *bytes = NULL;
     size_t len = 0;
-    int prc = parse_stream_hex(hex, &bytes, &len);
+    int prc = parse_stream_hex("--stream", o->stream, &bytes, &len);
     if (prc != 0) {
         return prc;
     }
@@ -596,7 +599,7 @@ static int validate_main(int argc, char **argv)
     }
     canon_context_release(ctx);
     free(bytes);
-    printf("%s\t%s\n", id, status_name(st));
+    printf("%s\t%s\n", o->id, status_name(st));
     if (fflush(stdout) != 0 || ferror(stdout)) {
         return 3;
     }
@@ -605,13 +608,13 @@ static int validate_main(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-    if (argc >= 2 && strcmp(argv[1], "validate") == 0) {
-        return validate_main(argc, argv);
-    }
     options o;
     int prc = parse_options(argc, argv, &o);
     if (prc != 0) {
         return prc;
+    }
+    if (o.cmd->validate) {
+        return run_validate(&o);
     }
     const canon_objective objective = o.cmd->objective;
     uint64_t n64 = 0;
@@ -658,11 +661,12 @@ int main(int argc, char **argv)
     }
     int rc = 0;
     if (st == CANON_COMPLETE) {
-        rc = build_object(ctx, n, o.kind, o.atoms, o.colours, o.arcs, o.stream, &st, &object);
+        rc = build_object(ctx, n, o.kind, o.atoms, o.colours, o.arcs, o.stream, "--stream", &st,
+                          &object);
     }
     if (rc == 0 && st == CANON_COMPLETE && o.cmd->target) {
         rc = build_object(ctx, n, o.kind, o.target_atoms, o.target_colours, o.target_arcs,
-                          o.target_stream, &st, &target);
+                          o.target_stream, "--target-stream", &st, &target);
     }
     if (rc == 0 && st == CANON_COMPLETE) {
         st = canon_problem_create_with_options(ctx, group, object, target, objective,
