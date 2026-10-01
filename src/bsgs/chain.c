@@ -259,6 +259,13 @@ canon_status canon_bsgs_transporter(const canon_bsgs *c, uint32_t level, uint32_
     return CANON_COMPLETE;
 }
 
+void canon_bsgs_transporter_scratch(const canon_bsgs *c, uint32_t level, uint32_t b,
+                                    uint32_t *out, uint32_t *tmp)
+{
+    const canon_bsgs_level *L = &c->levels[level];
+    (void)transporter_into(c, L, L->orbit_pos[b], out, tmp);
+}
+
 /* g <- g t_x^-1 for the point x at orbit position pos.  t_x^-1 = s_(k-1)^-1 ... s_0^-1 and
  * the upward walk meets s_(k-1) first, so each stored inverse is applied on the RIGHT in walk
  * order: g'[v] = s^-1[g[v]].  Returns the number of dense products. */
@@ -698,6 +705,25 @@ canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint3
         }
     }
     free(flat);
+    return st;
+}
+
+canon_status canon_bsgs_build_verified(canon_bsgs *out, uint32_t n, const uint32_t *gens,
+                                       size_t count)
+{
+    canon_status st = canon_bsgs_build(out, n, gens, count, NULL, 0);
+    if (st != CANON_COMPLETE) {
+        return st; /* canon_bsgs_build left *out empty */
+    }
+    /* spec 9.1: the verifier is independent of the constructor (src/bsgs/verify.c). */
+    canon_bsgs_reason reason = CANON_BSGS_UNCHECKED;
+    st = canon_bsgs_verify(out, gens, (uint32_t)count, &reason);
+    if (st == CANON_COMPLETE && reason != CANON_BSGS_VALID) {
+        st = CANON_INTERNAL_ERROR;
+    }
+    if (st != CANON_COMPLETE) {
+        canon_bsgs_free(out);
+    }
     return st;
 }
 

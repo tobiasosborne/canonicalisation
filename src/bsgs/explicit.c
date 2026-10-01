@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
 #include "perm/perm.h"
 #include "util/sort.h"
 
@@ -241,8 +242,110 @@ static canon_status explicit_tuple_min(const canon_group *group, const uint32_t 
     return CANON_COMPLETE;
 }
 
-static const canon_group_ops explicit_ops = {explicit_destroy, explicit_order, explicit_contains,
-                                             explicit_tuple_min, explicit_admits};
+/* ---- spec 8.1 coset enumeration over the table (slice S4: the oracle for the chain's
+ * enumerator, src/coset/enumerate.c) ----
+ *
+ * The same reference traversal, written independently of the chain code: a subgroup H is the
+ * list of its rows in table order (so the first row with a property is the least element with
+ * it), "a = smallest atom moved by H" is found by scanning the rows, the orbit a^H is the set
+ * of images row[a], t_b is the first row with row[a] = b, and H_a is the sublist of rows fixing
+ * a.  Visits are counted by canon_coset_visit_enter, the rule the chain enumerator uses. */
+
+typedef struct ex_enum {
+    const explicit_group *e;
+    uint32_t n;
+    canon_coset_visitor *v;
+} ex_enum;
+
+static uint32_t ex_least_moved(const ex_enum *x, const size_t *rows, size_t count)
+{
+    for (uint32_t a = 0; a < x->n; ++a) {
+        for (size_t i = 0; i < count; ++i) {
+            if (row_of(x->e, x->n, rows[i])[a] != a) {
+                return a;
+            }
+        }
+    }
+    return x->n;
+}
+
+static canon_status ex_visit(const ex_enum *x, const size_t *rows, size_t count,
+                             const uint32_t *r)
+{
+    canon_status st = canon_coset_visit_enter(x->v);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    const uint32_t n = x->n;
+    if (count == 1) {
+        x->v->leaves += 1; /* spec 8.1: H = {id}: consume(r) */
+        return x->v->consume(x->v->user, r, &x->v->stopped);
+    }
+    /* spec 8.1: "a = smallest atom moved by H" (H has a nonidentity row, so a < n) */
+    const uint32_t a = ex_least_moved(x, rows, count);
+    size_t child_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        child_count += row_of(x->e, n, rows[i])[a] == a;
+    }
+    size_t *child = canon_alloc_array(child_count, sizeof *child, &st);
+    uint32_t *child_r = canon_alloc_array(n, sizeof *child_r, &st);
+    uint8_t *in_orbit = canon_alloc_array(n, sizeof *in_orbit, &st);
+    if (child != NULL && child_r != NULL && in_orbit != NULL) {
+        memset(in_orbit, 0, n);
+        for (size_t i = 0, k = 0; i < count; ++i) {
+            const uint32_t *h = row_of(x->e, n, rows[i]);
+            in_orbit[h[a]] = 1; /* a^H */
+            if (h[a] == a) {
+                child[k++] = rows[i]; /* H_a, still in table order */
+            }
+        }
+        /* spec 8.1: "for b in sorted(a^H)" */
+        for (uint32_t b = 0; b < n && st == CANON_COMPLETE && !x->v->stopped; ++b) {
+            if (!in_orbit[b]) {
+                continue;
+            }
+            /* "t_b = least image-array element of H with a^t_b=b": the first such row */
+            const uint32_t *t_b = NULL;
+            for (size_t i = 0; i < count && t_b == NULL; ++i) {
+                const uint32_t *h = row_of(x->e, n, rows[i]);
+                t_b = h[a] == b ? h : NULL;
+            }
+            canon_perm_compose(t_b, r, child_r, n); /* t_b r: t_b acts first (spec 3) */
+            st = ex_visit(x, child, child_count, child_r); /* visit(H_a, t_b r) */
+        }
+    }
+    free(child);
+    free(child_r);
+    free(in_orbit);
+    return st;
+}
+
+static canon_status explicit_enumerate(const canon_group *group, canon_coset_visitor *visitor)
+{
+    const explicit_group *e = group->impl;
+    const uint32_t n = group->degree;
+    canon_status st = CANON_COMPLETE;
+    size_t *rows = canon_alloc_array((size_t)e->order, sizeof *rows, &st);
+    uint32_t *id = canon_alloc_array(n, sizeof *id, &st);
+    if (rows != NULL && id != NULL) {
+        for (size_t i = 0; i < (size_t)e->order; ++i) {
+            rows[i] = i;
+        }
+        for (uint32_t v = 0; v < n; ++v) {
+            id[v] = v;
+        }
+        ex_enum x = {e, n, visitor};
+        visitor->stopped = false;
+        st = ex_visit(&x, rows, (size_t)e->order, id); /* spec 8.1: start visit(G, id) */
+    }
+    free(rows);
+    free(id);
+    return st;
+}
+
+static const canon_group_ops explicit_ops = {explicit_destroy,   explicit_order,
+                                             explicit_contains,  explicit_tuple_min,
+                                             explicit_admits,    explicit_enumerate};
 
 canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
                                          size_t generator_count, uint64_t max_order,
