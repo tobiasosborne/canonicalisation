@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 
-#include "arena/checked.h"
+#include "arena/alloc.h"
 #include "encoding/graph_stream.h"
 #include "encoding/subset_stream.h"
 
@@ -53,18 +53,13 @@ static canon_status reserve_subset(canon_root_image *img, uint32_t n)
     if (img->has_storage && n <= img->cap) {
         return CANON_COMPLETE;
     }
-    size_t atom_bytes = 0, bit_bytes = 0;
-    size_t words = canon_bitset_words(n) > 0 ? canon_bitset_words(n) : 1u;
-    if (!canon_size_mul(n > 0 ? (size_t)n : 1u, sizeof(uint32_t), &atom_bytes) ||
-        !canon_size_mul(words, sizeof(uint64_t), &bit_bytes)) {
-        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
-    }
-    uint32_t *atoms = malloc(atom_bytes);
-    uint64_t *bits = malloc(bit_bytes);
+    canon_status st = CANON_COMPLETE;
+    uint32_t *atoms = canon_alloc_array(n, sizeof *atoms, &st);
+    uint64_t *bits = canon_alloc_array(canon_bitset_words(n), sizeof *bits, &st);
     if (atoms == NULL || bits == NULL) {
         free(atoms);
         free(bits);
-        return CANON_RESOURCE_LIMIT;
+        return st;
     }
     canon_root_image_free(img);
     img->root.kind = CANON_ROOT_SUBSET;
@@ -108,6 +103,18 @@ canon_status canon_root_act_into(const canon_root *x, const uint32_t *g, canon_r
     img->root.kind = x->kind;
     img->root.n = x->n;
     return CANON_COMPLETE;
+}
+
+void canon_root_image_clear(canon_root_image *img)
+{
+    if (img->has_storage && img->root.kind == CANON_ROOT_GRAPH) {
+        canon_graph_image_clear(&img->root.u.graph); /* drop the borrowed tables */
+    }
+    img->root.n = 0;
+    if (img->has_storage && img->root.kind == CANON_ROOT_SUBSET) {
+        img->root.u.subset.n = 0; /* owns its arrays; nothing borrowed */
+        img->root.u.subset.k = 0;
+    }
 }
 
 canon_status canon_root_stream_write(const canon_root *x, canon_buf *out)

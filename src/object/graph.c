@@ -4,23 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
 #include "arena/checked.h"
+#include "encoding/graph_stream.h"
 #include "util/sort.h"
-
-/* ---- allocation helpers (spec 11.1: sizes checked before allocation) ---- */
-
-/* *out = malloc(max(count, 1) * size), checked.  CAPACITY_LIMIT if the product overflows,
- * RESOURCE_LIMIT if malloc fails. */
-static canon_status alloc_array(size_t count, size_t size, void **out)
-{
-    size_t bytes = 0;
-    *out = NULL;
-    if (!canon_size_mul(count > 0 ? count : 1u, size, &bytes)) {
-        return CANON_CAPACITY_LIMIT;
-    }
-    *out = malloc(bytes);
-    return *out != NULL ? CANON_COMPLETE : CANON_RESOURCE_LIMIT;
-}
 
 void canon_graph_init_empty(canon_graph *g)
 {
@@ -36,8 +23,8 @@ static void table_free(canon_byte_table *t)
 
 void canon_graph_free(canon_graph *g)
 {
-    if (!g->borrowed_tables) {
-        table_free(&g->colours);
+    if (g->imported) {
+        table_free(&g->colours); /* image storage only borrows its tables */
         table_free(&g->labels);
     }
     free(g->colour_id);
@@ -87,9 +74,9 @@ static canon_status intern(str_ref *refs, size_t count, canon_byte_table *table,
     if (count == 0) {
         return CANON_COMPLETE;
     }
-    str_ref *tmp = NULL;
-    canon_status st = alloc_array(count, sizeof *tmp, (void **)&tmp);
-    if (st != CANON_COMPLETE) {
+    canon_status st = CANON_COMPLETE;
+    str_ref *tmp = canon_alloc_array(count, sizeof *tmp, &st);
+    if (tmp == NULL) {
         return st;
     }
     canon_stable_sort(refs, count, sizeof *refs, tmp, str_ref_cmp, NULL);
@@ -107,11 +94,11 @@ static canon_status intern(str_ref *refs, size_t count, canon_byte_table *table,
     if ((uint64_t)distinct > UINT32_MAX) {
         return CANON_CAPACITY_LIMIT; /* ids are uint32 */
     }
-    st = alloc_array(distinct + 1u, sizeof *table->offset, (void **)&table->offset);
-    if (st == CANON_COMPLETE && pool_bytes > 0) {
-        st = alloc_array(pool_bytes, 1u, (void **)&table->pool);
+    table->offset = canon_alloc_array(distinct + 1u, sizeof *table->offset, &st);
+    if (table->offset != NULL && pool_bytes > 0) {
+        table->pool = canon_alloc_array(pool_bytes, 1u, &st);
     }
-    if (st != CANON_COMPLETE) {
+    if (table->offset == NULL || (pool_bytes > 0 && table->pool == NULL)) {
         table_free(table);
         return st;
     }
@@ -157,7 +144,7 @@ static int arc_cmp(const void *a, const void *b, void *ctx)
 
 /* CSR by source and CSC by target over g->arcs (spec 10: CSR/CSC traversal visits only
  * relevant incidences).  Arrays must hold n + 1 and e entries. */
-static void build_index(canon_graph *g)
+static void fill_index(canon_graph *g)
 {
     const uint32_t n = g->n;
     memset(g->out_start, 0, ((size_t)n + 1u) * sizeof *g->out_start);
@@ -181,58 +168,69 @@ static void build_index(canon_graph *g)
     g->in_start[0] = 0;
 }
 
+canon_status canon_graph_build_index(canon_graph *g)
+{
+    canon_status st = CANON_COMPLETE;
+    uint32_t *out_start = canon_alloc_array((size_t)g->n + 1u, sizeof *out_start, &st);
+    uint32_t *in_start = canon_alloc_array((size_t)g->n + 1u, sizeof *in_start, &st);
+    uint32_t *in_arc = canon_alloc_array(g->e, sizeof *in_arc, &st);
+    if (out_start == NULL || in_start == NULL || in_arc == NULL) {
+        free(out_start);
+        free(in_start);
+        free(in_arc);
+        return st; /* spec 17: the old index is kept */
+    }
+    free(g->out_start);
+    free(g->in_start);
+    free(g->in_arc);
+    g->out_start = out_start;
+    g->in_start = in_start;
+    g->in_arc = in_arc;
+    fill_index(g);
+    g->indexed = true;
+    return CANON_COMPLETE;
+}
+
 canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *colours,
                               const size_t *colour_lengths, const canon_arc *arcs,
                               size_t arc_count)
 {
     canon_graph_init_empty(g);
-    /* Validation first (spec 4.1: "out-of-domain atom IDs and malformed fields are invalid";
-     * "input zero multiplicities are invalid"), then the capacity checks (spec 4.1: "Lengths
-     * and counts must fit U32; overflow is a capacity error"). */
-    if ((colours == NULL) != (colour_lengths == NULL) || (arc_count > 0 && arcs == NULL)) {
+    /* One pass over the colours and one over the arcs, recording both kinds of failure; the
+     * invalid ones win (spec 4.1: "out-of-domain atom IDs and malformed fields are invalid";
+     * "input zero multiplicities are invalid"), then the capacity ones (spec 4.1: "Lengths and
+     * counts must fit U32; overflow is a capacity error"). */
+    bool invalid = (colours == NULL) != (colour_lengths == NULL) || (arc_count > 0 && arcs == NULL);
+    bool capacity = false;
+    for (uint32_t v = 0; !invalid && colours != NULL && v < n; ++v) {
+        invalid = colours[v] == NULL && colour_lengths[v] > 0;
+        /* spec 4.1: B(vertex_colour) length fits U32 */
+        capacity = capacity || (uint64_t)colour_lengths[v] > UINT32_MAX;
+    }
+    for (size_t i = 0; !invalid && i < arc_count; ++i) {
+        invalid = arcs[i].source >= n || arcs[i].target >= n || arcs[i].multiplicity == 0 ||
+                  (arcs[i].label == NULL && arcs[i].label_length > 0);
+        /* spec 4.1: B(label) length fits U32 */
+        capacity = capacity || (uint64_t)arcs[i].label_length > UINT32_MAX;
+    }
+    if (invalid) {
         return CANON_INVALID_INPUT;
     }
-    for (uint32_t v = 0; colours != NULL && v < n; ++v) {
-        if (colours[v] == NULL && colour_lengths[v] > 0) {
-            return CANON_INVALID_INPUT;
-        }
-    }
-    for (size_t i = 0; i < arc_count; ++i) {
-        if (arcs[i].source >= n || arcs[i].target >= n || arcs[i].multiplicity == 0 ||
-            (arcs[i].label == NULL && arcs[i].label_length > 0)) {
-            return CANON_INVALID_INPUT;
-        }
-    }
-    for (uint32_t v = 0; colours != NULL && v < n; ++v) {
-        if ((uint64_t)colour_lengths[v] > UINT32_MAX) {
-            return CANON_CAPACITY_LIMIT; /* spec 4.1: B(vertex_colour) length fits U32 */
-        }
-    }
-    for (size_t i = 0; i < arc_count; ++i) {
-        if ((uint64_t)arcs[i].label_length > UINT32_MAX) {
-            return CANON_CAPACITY_LIMIT; /* spec 4.1: B(label) length fits U32 */
-        }
+    if (capacity) {
+        return CANON_CAPACITY_LIMIT;
     }
 
     g->n = n;
-    str_ref *refs = NULL;
-    uint32_t *label_ids = NULL;
-    canon_graph_arc *work = NULL, *tmp = NULL;
+    g->imported = true; /* owns the tables built below (freed by canon_graph_free) */
+    canon_status st = CANON_COMPLETE;
     size_t ref_count = arc_count > (size_t)n ? arc_count : (size_t)n;
-    canon_status st = alloc_array(ref_count, sizeof *refs, (void **)&refs);
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(arc_count, sizeof *label_ids, (void **)&label_ids);
-    }
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(arc_count, sizeof *work, (void **)&work);
-    }
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(arc_count, sizeof *tmp, (void **)&tmp);
-    }
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(n, sizeof *g->colour_id, (void **)&g->colour_id);
-    }
-    if (st != CANON_COMPLETE) {
+    str_ref *refs = canon_alloc_array(ref_count, sizeof *refs, &st);
+    uint32_t *label_ids = canon_alloc_array(arc_count, sizeof *label_ids, &st);
+    canon_graph_arc *work = canon_alloc_array(arc_count, sizeof *work, &st);
+    canon_graph_arc *tmp = canon_alloc_array(arc_count, sizeof *tmp, &st);
+    g->colour_id = canon_alloc_array(n, sizeof *g->colour_id, &st);
+    if (refs == NULL || label_ids == NULL || work == NULL || tmp == NULL ||
+        g->colour_id == NULL) {
         goto fail;
     }
 
@@ -271,11 +269,10 @@ canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *
     for (size_t i = 0; i < arc_count; ++i) {
         /* spec 11.1: "Built-in graph counts cannot exceed the total positive input
          * multiplicity; compute that bound exactly during import." */
-        if (work[i].multiplicity > UINT64_MAX - total) {
+        if (!canon_u64_add(total, work[i].multiplicity, &total)) {
             st = CANON_CAPACITY_LIMIT; /* count-bit limit 64 (detailed plan 2.1) */
             goto fail;
         }
-        total += work[i].multiplicity;
         if (e > 0 && arc_cmp(&work[e - 1], &work[i], NULL) == 0) {
             /* exact addition; cannot overflow because the total did not */
             work[e - 1].multiplicity += work[i].multiplicity;
@@ -297,17 +294,14 @@ canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *
             g->arcs = shrunk; /* a failed shrink keeps the larger block */
         }
     }
-    st = alloc_array((size_t)n + 1u, sizeof *g->out_start, (void **)&g->out_start);
+    /* spec 11.1: the exact output length, measured once (every image has the same length). */
+    st = canon_graph_stream_measure(g, &g->stream_size);
     if (st == CANON_COMPLETE) {
-        st = alloc_array((size_t)n + 1u, sizeof *g->in_start, (void **)&g->in_start);
-    }
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(e, sizeof *g->in_arc, (void **)&g->in_arc);
+        st = canon_graph_build_index(g); /* spec 10: CSR/CSC for the O stage */
     }
     if (st != CANON_COMPLETE) {
         goto fail;
     }
-    build_index(g);
     free(refs);
     free(label_ids);
     free(tmp);
@@ -356,13 +350,10 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
             return CANON_INVALID_INPUT; /* spec 4.1: "wrappers for simple graphs reject loops" */
         }
     }
-    edge_pair *pairs = NULL, *tmp = NULL;
-    canon_arc *arcs = NULL;
-    canon_status st = alloc_array(edge_count, sizeof *pairs, (void **)&pairs);
-    if (st == CANON_COMPLETE) {
-        st = alloc_array(edge_count, sizeof *tmp, (void **)&tmp);
-    }
-    if (st != CANON_COMPLETE) {
+    canon_status st = CANON_COMPLETE;
+    edge_pair *pairs = canon_alloc_array(edge_count, sizeof *pairs, &st);
+    edge_pair *tmp = canon_alloc_array(edge_count, sizeof *tmp, &st);
+    if (pairs == NULL || tmp == NULL) {
         free(pairs);
         free(tmp);
         return st;
@@ -387,8 +378,8 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
         free(pairs);
         return CANON_CAPACITY_LIMIT;
     }
-    st = alloc_array(arc_count, sizeof *arcs, (void **)&arcs);
-    if (st != CANON_COMPLETE) {
+    canon_arc *arcs = canon_alloc_array(arc_count, sizeof *arcs, &st);
+    if (arcs == NULL) {
         free(pairs);
         return st;
     }
@@ -405,54 +396,31 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
 
 /* ---- action (spec 2.1) ---- */
 
-/* Grow image storage to hold n vertices and e arcs (grow-only). */
+/* Grow image storage to hold n vertices and e arcs (grow-only; no index is kept). */
 static canon_status reserve_image(canon_graph *d, uint32_t n, uint32_t e)
 {
+    canon_status st = CANON_COMPLETE;
     if (d->colour_id == NULL || n > d->cap_n) {
-        uint32_t *cid = NULL, *os = NULL, *is = NULL;
-        canon_status st = alloc_array(n, sizeof *cid, (void **)&cid);
-        if (st == CANON_COMPLETE) {
-            st = alloc_array((size_t)n + 1u, sizeof *os, (void **)&os);
-        }
-        if (st == CANON_COMPLETE) {
-            st = alloc_array((size_t)n + 1u, sizeof *is, (void **)&is);
-        }
-        if (st != CANON_COMPLETE) {
-            free(cid);
-            free(os);
-            free(is);
+        uint32_t *cid = canon_alloc_array(n, sizeof *cid, &st);
+        if (cid == NULL) {
             return st;
         }
         free(d->colour_id);
-        free(d->out_start);
-        free(d->in_start);
         d->colour_id = cid;
-        d->out_start = os;
-        d->in_start = is;
         d->cap_n = n;
     }
     if (d->arcs == NULL || e > d->cap_e) {
-        canon_graph_arc *arcs = NULL, *tmp = NULL;
-        uint32_t *in_arc = NULL;
-        canon_status st = alloc_array(e, sizeof *arcs, (void **)&arcs);
-        if (st == CANON_COMPLETE) {
-            st = alloc_array(e, sizeof *tmp, (void **)&tmp);
-        }
-        if (st == CANON_COMPLETE) {
-            st = alloc_array(e, sizeof *in_arc, (void **)&in_arc);
-        }
-        if (st != CANON_COMPLETE) {
+        canon_graph_arc *arcs = canon_alloc_array(e, sizeof *arcs, &st);
+        canon_graph_arc *tmp = canon_alloc_array(e, sizeof *tmp, &st);
+        if (arcs == NULL || tmp == NULL) {
             free(arcs);
             free(tmp);
-            free(in_arc);
             return st;
         }
         free(d->arcs);
         free(d->arcs_tmp);
-        free(d->in_arc);
         d->arcs = arcs;
         d->arcs_tmp = tmp;
-        d->in_arc = in_arc;
         d->cap_e = e;
     }
     return CANON_COMPLETE;
@@ -460,10 +428,10 @@ static canon_status reserve_image(canon_graph *d, uint32_t n, uint32_t e)
 
 canon_status canon_graph_act_into(const canon_graph *g, const uint32_t *p, canon_graph *dest)
 {
-    if (!dest->borrowed_tables) {
-        /* dest may have owned tables only if it was imported; image storage never does. */
-        table_free(&dest->colours);
-        table_free(&dest->labels);
+    /* Precondition (graph.h): dest is image storage.  An imported graph owns its tables and is
+     * immutable, so it is refused rather than overwritten. */
+    if (dest->imported || dest == g) {
+        return CANON_INVALID_INPUT;
     }
     canon_status st = reserve_image(dest, g->n, g->e);
     if (st != CANON_COMPLETE) {
@@ -475,8 +443,9 @@ canon_status canon_graph_act_into(const canon_graph *g, const uint32_t *p, canon
      * renamed": the image uses the same tables. */
     dest->colours = g->colours;
     dest->labels = g->labels;
-    dest->borrowed_tables = true;
     dest->total_multiplicity = g->total_multiplicity;
+    dest->stream_size = g->stream_size; /* spec 11.1: invariant under the action */
+    dest->indexed = false;              /* no CSR/CSC: the leaf path does not read it */
     /* spec 2.1: atom a maps to p[a], so vertex p[v] of the image carries v's colour. */
     for (uint32_t v = 0; v < g->n; ++v) {
         dest->colour_id[p[v]] = g->colour_id[v];
@@ -491,8 +460,22 @@ canon_status canon_graph_act_into(const canon_graph *g, const uint32_t *p, canon
     }
     /* spec 4.1: re-sort by (source, target, B(label)). */
     canon_stable_sort(dest->arcs, g->e, sizeof *dest->arcs, dest->arcs_tmp, arc_cmp, NULL);
-    build_index(dest);
     return CANON_COMPLETE;
+}
+
+void canon_graph_image_clear(canon_graph *g)
+{
+    if (g->imported) {
+        return;
+    }
+    /* Forget the borrowed tables; the storage arrays stay for reuse. */
+    memset(&g->colours, 0, sizeof g->colours);
+    memset(&g->labels, 0, sizeof g->labels);
+    g->n = 0;
+    g->e = 0;
+    g->total_multiplicity = 0;
+    g->stream_size = 0;
+    g->indexed = false;
 }
 
 /* ---- equality (spec 4.2: extensional) ---- */

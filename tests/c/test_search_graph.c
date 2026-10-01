@@ -7,10 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bsgs/group.h"
 #include "canon/canon.h"
 #include "check.h"
 #include "encoding/graph_stream.h"
 #include "object/graph.h"
+#include "object/object.h"
+#include "search/p1_tree.h"
 
 static const char *TRACE_74 =
     "10 00000000 20 00000002 00000001 00000001 21 00000002 00000001 00000001 "
@@ -248,7 +251,13 @@ static void test_invalid(canon_context *ctx)
           x == NULL);
     CHECK(canon_object_create_graph(ctx, 2, colours, lengths, range, 1, &x) ==
           CANON_INVALID_INPUT);
-    CHECK(canon_object_create_graph(ctx, 2, NULL, NULL, NULL, 0, &x) == CANON_INVALID_INPUT);
+    /* Review item 5: both colour arrays NULL means every colour is empty, for any degree; one
+     * without the other is invalid. */
+    CHECK(canon_object_create_graph(ctx, 2, colours, NULL, NULL, 0, &x) == CANON_INVALID_INPUT);
+    CHECK(canon_object_create_graph(ctx, 2, NULL, lengths, NULL, 0, &x) == CANON_INVALID_INPUT);
+    CHECK(canon_object_create_graph(ctx, 2, NULL, NULL, NULL, 0, &x) == CANON_COMPLETE);
+    canon_object_release(x);
+    x = NULL;
     CHECK(canon_object_create_graph(ctx, 2, colours, lengths, NULL, 1, &x) ==
           CANON_INVALID_INPUT);
     CHECK(canon_object_create_graph(NULL, 0, NULL, NULL, NULL, 0, &x) == CANON_INVALID_INPUT);
@@ -350,6 +359,89 @@ static void test_simple_and_reuse(canon_context *ctx, canon_workspace *ws)
     }
 }
 
+/* Review item 1: spec 7.2 compares the trace first, so a leaf whose trace exceeds the best one
+ * is not materialised.  A directed 2-cycle plus a directed 3-cycle under Sym(5): every vertex
+ * has in- and out-degree 1, the root does not split, and individualising a 2-cycle vertex or a
+ * 3-cycle vertex gives different traces.  The unpruned tree has 12 leaves; only 6 have a trace
+ * <= the best so far in visiting order.  Review item 4: after the run the image no longer
+ * points into the object. */
+static void test_trace_first(canon_context *ctx)
+{
+    const uint32_t sym5[10] = {1, 0, 2, 3, 4, 1, 2, 3, 4, 0};
+    const canon_arc arcs[5] = {{0, 1, NULL, 0, 1}, {1, 0, NULL, 0, 1}, {2, 3, NULL, 0, 1},
+                               {3, 4, NULL, 0, 1}, {4, 2, NULL, 0, 1}};
+    canon_group *g = NULL;
+    CHECK(canon_group_create(ctx, 5, sym5, 2, &g) == CANON_COMPLETE);
+    canon_root x;
+    memset(&x, 0, sizeof x);
+    x.kind = CANON_ROOT_GRAPH;
+    x.n = 5;
+    CHECK(canon_graph_init(&x.u.graph, 5, NULL, NULL, arcs, 5) == CANON_COMPLETE);
+    canon_p1_search s;
+    canon_p1_search_init(&s);
+    CHECK(canon_p1_search_run(&s, g, &x, 1000) == CANON_COMPLETE);
+    CHECK(s.leaves == 12);
+    CHECK(s.images == 6 && s.images < s.leaves);
+    /* the witness maps x to the returned bytes */
+    graph_case c = {5, sym5, 2, NULL, NULL, arcs, 5};
+    CHECK(image_bytes_match(&c, s.best_t, s.best_bytes.data, s.best_bytes.len));
+    /* spec 17 / review item 4: no borrowed pointer survives the run */
+    CHECK(s.image.root.kind == CANON_ROOT_GRAPH);
+    CHECK(s.image.root.u.graph.colours.offset == NULL && s.image.root.u.graph.labels.pool == NULL);
+    CHECK(s.image.root.u.graph.labels.offset == NULL && s.image.root.u.graph.n == 0);
+    canon_root_free(&x);
+    /* the same state then serves a subset with a smaller degree */
+    canon_root sub;
+    memset(&sub, 0, sizeof sub);
+    sub.kind = CANON_ROOT_SUBSET;
+    sub.n = 5;
+    const uint32_t atoms[2] = {0, 3};
+    CHECK(canon_subset_init(&sub.u.subset, 5, atoms, 2) == CANON_COMPLETE);
+    CHECK(canon_p1_search_run(&s, g, &sub, 1000) == CANON_COMPLETE);
+    canon_root_free(&sub);
+    canon_p1_search_free(&s);
+    canon_group_release(g);
+}
+
+/* Review item 4 through the public API: solve a labelled, coloured graph, release the problem,
+ * object and result, then reuse the workspace for another graph (smaller degree, other
+ * tables); under ASan any use of the released tables would be reported.  The answer must equal
+ * a fresh workspace's. */
+static void test_release_then_reuse(canon_context *ctx)
+{
+    const uint32_t sym3[6] = {1, 0, 2, 1, 2, 0}, swap[2] = {1, 0};
+    const uint8_t *lab = (const uint8_t *)"lab", *col = (const uint8_t *)"colour";
+    const uint8_t *colours[3] = {col, NULL, col};
+    const size_t lengths[3] = {6, 0, 6};
+    const canon_arc arcs[3] = {{0, 1, lab, 3, 2}, {2, 1, NULL, 0, 1}, {1, 1, lab, 3, 1}};
+    graph_case first = {3, sym3, 2, colours, lengths, arcs, 3};
+    const canon_arc arc10[1] = {{1, 0, lab, 3, 5}};
+    graph_case second = {2, swap, 1, NULL, NULL, arc10, 1};
+    canon_workspace *ws = NULL, *fresh = NULL;
+    canon_result *r = NULL, *r2 = NULL;
+    CHECK(canon_workspace_create(ctx, &ws) == CANON_COMPLETE);
+    CHECK(canon_workspace_create(ctx, &fresh) == CANON_COMPLETE);
+    CHECK(solve_graph(ctx, ws, &first, NULL, &r) == CANON_COMPLETE); /* releases x and p */
+    canon_result_release(r);
+    r = NULL;
+    CHECK(solve_graph(ctx, ws, &second, NULL, &r) == CANON_COMPLETE);
+    CHECK(solve_graph(ctx, fresh, &second, NULL, &r2) == CANON_COMPLETE);
+    CHECK(same_result(r, r2));
+    canon_result_release(r);
+    canon_result_release(r2);
+    /* and an abandoned run (node quota) also leaves nothing borrowed: a labelled directed
+     * 3-cycle under Sym(3) does not split at the root, so it needs more than one node */
+    const canon_arc cycle[3] = {{0, 1, lab, 3, 1}, {1, 2, lab, 3, 1}, {2, 0, lab, 3, 1}};
+    graph_case third = {3, sym3, 2, NULL, NULL, cycle, 3};
+    canon_capacity cap = {0, 0, 1, 0};
+    CHECK(solve_graph(ctx, ws, &third, &cap, &r) == CANON_CAPACITY_LIMIT);
+    canon_result_release(r);
+    CHECK(solve_graph(ctx, ws, &second, NULL, &r) == CANON_COMPLETE);
+    canon_result_release(r);
+    canon_workspace_release(fresh);
+    canon_workspace_release(ws);
+}
+
 int main(void)
 {
     canon_context *ctx = NULL;
@@ -362,6 +454,8 @@ int main(void)
     test_fixed_and_equivariant(ctx, ws);
     test_invalid(ctx);
     test_simple_and_reuse(ctx, ws);
+    test_trace_first(ctx);
+    test_release_then_reuse(ctx);
     canon_workspace_release(ws);
     canon_context_release(ctx);
     return check_finish("test_search_graph");

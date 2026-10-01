@@ -177,10 +177,11 @@ typedef struct canon_arc {
 
 /* spec 17 builder (copies data), spec 4.1 graph semantics (slice S2): a coloured directed
  * multigraph with `degree` vertices; vertex v has colour colours[v] of colour_lengths[v] bytes
- * (both arrays may be NULL when degree == 0; a NULL colours[v] with length 0 is the empty
- * colour), and `arc_count` arcs (`arcs` may be NULL when arc_count == 0).  Duplicate
- * (source, target, label) arcs are combined by exact addition; loops are allowed.  Status, in
- * this order: CANON_INVALID_INPUT for NULL ctx/out or a NULL array that is required;
+ * (colours and colour_lengths both NULL means every colour is empty, for any degree; a NULL
+ * colours[v] with length 0 is the empty colour), and `arc_count` arcs (`arcs` may be NULL when
+ * arc_count == 0).  Duplicate (source, target, label) arcs are combined by exact addition;
+ * loops are allowed.  Status, in this order: CANON_INVALID_INPUT for NULL ctx/out, exactly one
+ * of colours/colour_lengths NULL, or NULL arcs with arc_count > 0;
  * CANON_CAPACITY_LIMIT for degree above the context's max_n; CANON_INVALID_INPUT for a vertex
  * >= degree, a zero multiplicity, or a NULL colour/label pointer with a nonzero length;
  * CANON_CAPACITY_LIMIT for a colour or label longer than 2^32 - 1 bytes (spec 4.1 U32

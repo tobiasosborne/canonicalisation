@@ -3,19 +3,22 @@
 
 #include <string.h>
 
-/* true iff g has an arc s -> t (any label); arcs are sorted by (source, target, label). */
+/* true iff g has an arc s -> t (any label).  The arcs are sorted by (source, target, label)
+ * (spec 4.1), so a binary search over the arc array finds it without the CSR index; this works
+ * for imported graphs and for images alike. */
 static int has_arc(const canon_graph *g, uint32_t s, uint32_t t)
 {
-    uint32_t lo = g->out_start[s], hi = g->out_start[s + 1u];
+    uint32_t lo = 0, hi = g->e;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2u;
-        if (g->arcs[mid].target < t) {
+        const canon_graph_arc *a = &g->arcs[mid];
+        if (a->source < s || (a->source == s && a->target < t)) {
             lo = mid + 1u;
         } else {
             hi = mid;
         }
     }
-    return lo < g->out_start[s + 1u] && g->arcs[lo].target == t;
+    return lo < g->e && g->arcs[lo].source == s && g->arcs[lo].target == t;
 }
 
 /* true iff the table is empty or holds only the empty string. */

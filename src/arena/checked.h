@@ -37,4 +37,25 @@ static inline bool canon_size_mul3(size_t a, size_t b, size_t c, size_t *out)
     return canon_size_mul(a, b, &ab) && canon_size_mul(ab, c, out);
 }
 
+/* *out = a + b in uint64_t; false (and *out untouched) on overflow.  Used for exact counts and
+ * multiplicities (spec 11.1; detailed plan 2.1: count-bit limit 64) and stream lengths. */
+static inline bool canon_u64_add(uint64_t a, uint64_t b, uint64_t *out)
+{
+    if (a > UINT64_MAX - b) {
+        return false;
+    }
+    *out = a + b;
+    return true;
+}
+
+/* *out = a * b in uint64_t; false (and *out untouched) on overflow. */
+static inline bool canon_u64_mul(uint64_t a, uint64_t b, uint64_t *out)
+{
+    if (b != 0 && a > UINT64_MAX / b) {
+        return false;
+    }
+    *out = a * b;
+    return true;
+}
+
 #endif /* CANON_SRC_ARENA_CHECKED_H */

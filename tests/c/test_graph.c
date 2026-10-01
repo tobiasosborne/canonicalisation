@@ -260,6 +260,9 @@ static void test_insertion_order_and_action(void)
         CHECK(canon_graph_init(&want, n, mcol, mlen, mapped, count) == CANON_COMPLETE);
         CHECK(canon_graph_act_into(&a, p, &img) == CANON_COMPLETE);
         CHECK(canon_graph_equal(&img, &want));
+        /* An image carries no CSR/CSC (review item 2); building it on demand is consistent. */
+        CHECK(!img.indexed && !img.imported && a.indexed && a.imported);
+        CHECK(canon_graph_build_index(&img) == CANON_COMPLETE && img.indexed);
         check_index(&img);
         CHECK(img.total_multiplicity == a.total_multiplicity);
         /* spec 3: (x^p)^q = x^(pq), with (pq)[v] = q[p[v]]. */
@@ -273,6 +276,10 @@ static void test_insertion_order_and_action(void)
         CHECK(canon_graph_stream_size(&a, &size_a) == CANON_COMPLETE);
         CHECK(canon_graph_stream_size(&img2, &size_img) == CANON_COMPLETE);
         CHECK(size_a == size_img && size_a == s1.len);
+        /* The cached length (review item 3) equals a fresh measurement of the image. */
+        uint64_t measured = 0;
+        CHECK(canon_graph_stream_measure(&img2, &measured) == CANON_COMPLETE &&
+              measured == size_a);
         for (uint32_t v = 0; v < n; ++v) {
             q[v] = v;
         }
@@ -336,6 +343,32 @@ static void test_simple_wrapper(void)
     canon_graph_free(&g);
 }
 
+/* Review items 4 and 9: an imported graph is never used as image storage, and clearing an
+ * image drops its borrowed tables. */
+static void test_image_storage(void)
+{
+    const canon_arc arcs[2] = {{0, 1, str("a"), 1, 1}, {1, 1, NULL, 0, 2}};
+    const uint32_t swap[2] = {1, 0};
+    canon_graph a, b, img;
+    CHECK(canon_graph_init(&a, 2, NULL, NULL, arcs, 2) == CANON_COMPLETE);
+    CHECK(canon_graph_init(&b, 2, NULL, NULL, arcs, 1) == CANON_COMPLETE);
+    CHECK(canon_graph_act_into(&a, swap, &b) == CANON_INVALID_INPUT);
+    CHECK(b.imported && b.e == 1 && b.labels.count == 1); /* untouched */
+    canon_graph_init_empty(&img);
+    CHECK(canon_graph_act_into(&a, swap, &img) == CANON_COMPLETE);
+    CHECK(img.labels.pool == a.labels.pool && img.e == 2); /* borrowed, not copied */
+    CHECK(canon_graph_act_into(&img, swap, &img) == CANON_INVALID_INPUT); /* dest == g */
+    canon_graph_image_clear(&img);
+    CHECK(img.colours.offset == NULL && img.labels.offset == NULL && img.labels.pool == NULL);
+    CHECK(img.n == 0 && img.e == 0 && img.cap_e >= 2);
+    canon_graph_free(&a); /* the image no longer refers to a */
+    CHECK(canon_graph_act_into(&b, swap, &img) == CANON_COMPLETE && img.e == 1);
+    canon_graph_image_clear(&b); /* no-op on an imported graph */
+    CHECK(b.labels.count == 1);
+    canon_graph_free(&img);
+    canon_graph_free(&b);
+}
+
 int main(void)
 {
     test_combine_and_loops();
@@ -344,5 +377,6 @@ int main(void)
     test_insertion_order_and_action();
     test_equality();
     test_simple_wrapper();
+    test_image_storage();
     return check_finish("test_graph");
 }

@@ -43,15 +43,25 @@ typedef struct canon_graph_arc {
     uint64_t multiplicity;   /* > 0 (spec 4.1) */
 } canon_graph_arc;
 
+/* Two kinds of canon_graph share this type:
+ *   - an IMPORTED graph (canon_graph_init, canon_graph_init_simple): owns its colour and label
+ *     tables, has its CSR/CSC index built (indexed = true) and is immutable afterwards;
+ *   - IMAGE storage (canon_graph_init_empty, then canon_graph_act_into): borrows the tables of
+ *     the graph it was last produced from, has NO index (indexed = false; out_start, in_start
+ *     and in_arc are absent unless canon_graph_build_index is called), and is valid only while
+ *     that source graph is alive (canon_graph_image_clear drops the borrowed pointers). */
 typedef struct canon_graph {
     uint32_t n;                 /* vertices = atoms of the domain (spec 2.1) */
     uint32_t e;                 /* distinct (source, target, label) arcs */
     canon_byte_table colours;   /* distinct vertex colours, sorted */
     canon_byte_table labels;    /* distinct arc labels, sorted; labels.count = L */
-    bool borrowed_tables;       /* true for an image: the tables belong to the source graph */
+    bool imported;              /* owns the tables (see above); false for image storage */
+    bool indexed;               /* out_start, in_start, in_arc are valid */
     uint32_t *colour_id;        /* n entries */
     canon_graph_arc *arcs;      /* e entries sorted by (source, target, label) */
     uint64_t total_multiplicity; /* spec 11.1: exact sum of all multiplicities */
+    uint64_t stream_size;       /* spec 11.1: exact CDAG-2 stream length, measured at import;
+                                   the same for every image (the action only renumbers) */
     uint32_t *out_start;        /* n + 1: arcs with source v are arcs[out_start[v] .. +1) */
     uint32_t *in_start;         /* n + 1: arcs with target v are in_arc[in_start[v] .. +1) */
     uint32_t *in_arc;           /* e: arc indices grouped by target, increasing within a group */
@@ -69,8 +79,10 @@ void canon_graph_init_empty(canon_graph *g);
  * label with a nonzero length is CANON_INVALID_INPUT, as is a vertex >= n or a zero
  * multiplicity (spec 4.1: "input zero multiplicities are invalid").  A byte string longer than
  * U32, more than 2^32 - 1 distinct arcs, or a combined or total multiplicity above uint64 is
- * CANON_CAPACITY_LIMIT (spec 4.1, 11.1).  Allocation failure is CANON_RESOURCE_LIMIT.  On
- * failure *g is empty and canon_graph_free(g) is still valid. */
+ * CANON_CAPACITY_LIMIT (spec 4.1, 11.1), as is a stream length above uint64.  All invalid
+ * conditions take precedence over the capacity ones.  Allocation failure is
+ * CANON_RESOURCE_LIMIT.  On success the graph is imported and indexed, with its exact stream
+ * length cached; on failure *g is empty and canon_graph_free(g) is still valid. */
 canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *colours,
                               const size_t *colour_lengths, const canon_arc *arcs,
                               size_t arc_count);
@@ -83,8 +95,18 @@ canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *
 canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t (*edges)[2],
                                      size_t edge_count);
 
-/* Release storage (tables only when owned).  Valid on an empty, failed or image graph. */
+/* Release storage (tables only when imported).  Valid on an empty, failed or image graph. */
 void canon_graph_free(canon_graph *g);
+
+/* spec 10: build the CSR (by source) and CSC (by target) index over g's arcs, replacing any
+ * previous index.  Called by import; image storage has no index unless this is called (tests).
+ * CANON_CAPACITY_LIMIT / CANON_RESOURCE_LIMIT on allocation failure (the old index is then
+ * kept, and indexed keeps its value). */
+canon_status canon_graph_build_index(canon_graph *g);
+
+/* Drop an image's borrowed table pointers and mark it empty (n = e = 0), keeping its storage
+ * for reuse.  After this the image refers to no other graph.  No-op on an imported graph. */
+void canon_graph_image_clear(canon_graph *g);
 
 /* spec 7.1: "on a top-level graph [the initial key] is B(vertex_colour[a])".  The colour table
  * is sorted by B order, so the colour id is the key's rank: increasing id = increasing key. */
@@ -103,10 +125,13 @@ static inline const uint8_t *canon_byte_table_get(const canon_byte_table *t, uin
 
 /* spec 2.1 action ATOM-TRANSPORT-1 on a graph: colour'[p[v]] = colour[v] and each arc
  * (s, t, l, m) becomes (p[s], p[t], l, m), re-sorted by (source, target, B(label)); colours and
- * labels are fixed byte strings and are never renamed, so the image BORROWS g's tables.  `dest`
- * is reusable image storage (canon_graph_init_empty once, then any number of calls; arrays grow
- * only) and must not be g; p must be a permutation of {0..n-1}.  dest is valid only while g is
- * alive.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on growth failure. */
+ * labels are fixed byte strings and are never renamed, so the image BORROWS g's tables, total
+ * multiplicity and stream length.  The image gets no CSR/CSC index (nothing on the leaf path
+ * reads it).  Precondition: `dest` is image storage (canon_graph_init_empty once, then any
+ * number of calls; arrays grow only), never an imported graph and never g; an imported dest is
+ * refused with CANON_INVALID_INPUT and left untouched.  p must be a permutation of {0..n-1}.
+ * dest is valid only while g is alive.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on growth
+ * failure. */
 canon_status canon_graph_act_into(const canon_graph *g, const uint32_t *p, canon_graph *dest);
 
 /* Extensional equality on the normalised representation (spec 4.2): same n, same colour bytes
