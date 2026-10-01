@@ -1,5 +1,5 @@
-"""End-to-end test of the slice S1 to S4 C paths (docs/slices/S1.md section 5, S2.md section 4,
-S4.md section 4).
+"""End-to-end test of the slice S1 to S5 C paths (docs/slices/S1.md section 5, S2.md section 4,
+S4.md section 4, S5.md section 4).
 
 Drives tools/canon-cli (located through the CANON_CLI environment variable, else
 build/make/canon-cli) and compares its refs/compare/FORMAT.md records with the finite Python
@@ -34,6 +34,21 @@ TRANSPORTER_COSET and the deterministic witness against brute force over explici
 the T1 subsets, the G1 digraphs and 30 random groups on n <= 6 points, plus SIMPLE-UPPER-1 on
 random simple graphs; the witness of the "any" mode is pinned to the spec 8.1 traversal order,
 which enumerate_81 below models from the spec text.
+
+Slice S5: tier D1 (class NestedObjects) feeds random nested objects of schema EXT-DAG-1 (tags
+01-06: atoms, literals over a two-letter alphabet, tuples, sets, multisets, permutations;
+n <= 4, depth <= 3, deliberate sharing, duplicate storage and unreachable records) to
+`canon-cli p1-stream` as non-canonical CDAG-2 streams, under every subgroup of Sym(n), and
+compares trace, bytes and witness with an oracle written here: a normaliser and encoder for
+tags 01-06 (spec 4.2, extending the idea of review_checks.dag_bytes, which covers tags 1-4), the
+ATOM-TRANSPORT-1 action (spec 2.1, a permutation leaf p becomes g^-1 p g) and the P1 tree of a
+root with the empty initial key (spec 7.1), which returns every leaf (trace, t); a root that is
+a set of atoms is a subset (review_checks.p1).  The answer is the least (trace, bytes) over the
+leaves, with the least t attaining it.  Every canonical output must pass `canon-cli validate`
+(canon_stream_validate) and tools/hexdump_stream.py; a raw stream validates iff it equals its
+own normal form.  The enumeration objectives run on some D1 objects against brute force.  The
+malformed streams of tools/hexdump_stream.py's rule list are refused by the tool and by the
+CLI alike.
 
 Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
 makes them fail.
@@ -791,6 +806,430 @@ class EnumerationObjectives(CliTestCase):
                      ["p1-subset", "--n", "2", "--kind", "subset"],        # S4 options only
                      ["p1-graph", "--n", "2", "--target-arcs", ""],
                      ["transporter-coset", "--n", "1", "--id", "#c"]):
+            with self.subTest(args):
+                proc = cli(args)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+
+
+
+# ---- Slice S5: nested objects, tier D1 (docs/slices/S5.md section 4) ----
+#
+# Records are (tag, value): 1 atom id; 2 literal bytes; 3 tuple of child indices; 4 set (tuple
+# of child indices); 5 multiset (tuple of (child index, count)); 6 permutation (image array).
+
+
+def children(tag, value):
+    if tag in (3, 4):
+        return list(value)
+    if tag == 5:
+        return [c for c, _ in value]
+    return []
+
+
+def raw_stream(n, records, root):
+    """The CDAG-2 stream of the records as given (spec 4.1 grammar, not normalised): set and
+    multiset references must be strictly increasing, so they are sorted and merged here."""
+    body = b""
+    for tag, value in records:
+        if tag == 1:
+            body += b"\x01" + rc.u32(value)
+        elif tag == 2:
+            body += b"\x02" + rc.blob(value)
+        elif tag == 3:
+            body += b"\x03" + rc.u32(len(value)) + b"".join(rc.u32(c) for c in value)
+        elif tag == 4:
+            refs = sorted(set(value))
+            body += b"\x04" + rc.u32(len(refs)) + b"".join(rc.u32(c) for c in refs)
+        elif tag == 5:
+            counts = {}
+            for c, m in value:
+                counts[c] = counts.get(c, 0) + m
+            body += b"\x05" + rc.u32(len(counts)) + b"".join(
+                rc.u32(c) + rc.nat(counts[c]) for c in sorted(counts))
+        else:
+            body += b"\x06" + rc.perm_bytes(value)
+    return rc.header(n) + rc.u32(len(records)) + body + rc.u32(root)
+
+
+def normal_form(n, records, root):
+    """spec 4.2 for tags 01..06: discard unreachable records, intern bottom-up by exact
+    (tag, value, normalised children) (sets deduplicate, multisets add counts), number by
+    height then by record bytes with the assigned child indices.  Returns (stream, nodes, root
+    index), nodes as (tag, value) with child values in final indices."""
+    reach, todo = set(), [root]
+    while todo:
+        i = todo.pop()
+        if i not in reach:
+            reach.add(i)
+            todo.extend(children(*records[i]))
+    intern, nodes, heights, ident = {}, [], [], {}
+    for i in sorted(reach):
+        tag, value = records[i]
+        if tag == 3:
+            value = tuple(ident[c] for c in value)
+        elif tag == 4:
+            value = tuple(sorted({ident[c] for c in value}))
+        elif tag == 5:
+            counts = {}
+            for c, m in value:
+                counts[ident[c]] = counts.get(ident[c], 0) + m
+            value = tuple(sorted(counts.items()))
+        key = (tag, value)
+        if key not in intern:
+            intern[key] = len(nodes)
+            nodes.append(key)
+            heights.append(1 + max((heights[c] for c in children(tag, value)), default=-1))
+        ident[i] = intern[key]
+    rank, emitted = {}, []
+
+    def record(j):
+        tag, value = nodes[j]
+        if tag == 1:
+            return b"\x01" + rc.u32(value)
+        if tag == 2:
+            return b"\x02" + rc.blob(value)
+        if tag == 6:
+            return b"\x06" + rc.perm_bytes(value)
+        if tag == 5:
+            pairs = sorted((rank[c], m) for c, m in value)
+            return b"\x05" + rc.u32(len(pairs)) + b"".join(rc.u32(c) + rc.nat(m) for c, m in pairs)
+        refs = [rank[c] for c in value]
+        if tag == 4:
+            refs.sort()
+        return bytes([tag]) + rc.u32(len(refs)) + b"".join(rc.u32(c) for c in refs)
+
+    final_nodes = []
+    for height in sorted(set(heights)):
+        layer = sorted((record(j), j) for j in range(len(nodes)) if heights[j] == height)
+        for code, j in layer:
+            rank[j] = len(emitted)
+            emitted.append(code)
+            final_nodes.append(j)
+    out_nodes = []
+    for j in final_nodes:
+        tag, value = nodes[j]
+        if tag in (3, 4):
+            value = tuple(rank[c] for c in value)
+        elif tag == 5:
+            value = tuple((rank[c], m) for c, m in value)
+        out_nodes.append((tag, value))
+    top = rank[ident[root]]
+    stream = rc.header(n) + rc.u32(len(emitted)) + b"".join(emitted) + rc.u32(top)
+    return stream, out_nodes, top
+
+
+def act_dag(records, g):
+    """spec 2.1 ATOM-TRANSPORT-1: atom a -> g[a]; literals fixed; children kept; a permutation
+    p becomes g^-1 p g, i.e. q[g[v]] = g[p[v]]."""
+    out = []
+    for tag, value in records:
+        if tag == 1:
+            out.append((1, g[value]))
+        elif tag == 6:
+            q = [0] * len(g)
+            for v, w in enumerate(value):
+                q[g[v]] = g[w]
+            out.append((6, tuple(q)))
+        else:
+            out.append((tag, value))
+    return out
+
+
+def dag_bytes(n, records, root, g=None):
+    if g is not None:
+        records = act_dag(records, g)
+    return normal_form(n, records, root)[0]
+
+
+def as_subset(n, records, root):
+    """spec 7.1: "the top-level subset (a set consisting only of atom nodes) ... Empty sets
+    qualify": its atoms, or None for every other root."""
+    _, nodes, top = normal_form(n, records, root)
+    tag, value = nodes[top]
+    if tag == 4 and all(nodes[c][0] == 1 for c in value):
+        return frozenset(nodes[c][1] for c in value)
+    return None
+
+
+def p1_leaves(n, group):
+    """spec 7.1 P1 tree of a root with the empty initial key ("on every other root it is the
+    empty key"; O stage: "for every other root, sig(v) is the empty vector"), every leaf as
+    (trace, t_L) with t_L the least element of L^G (spec 7.2).  The structure follows
+    review_checks.p1."""
+    leaves = []
+
+    def split(partition, signature):
+        output = []
+        for cell in partition:
+            buckets = {}
+            for a in cell:
+                buckets.setdefault(signature[a], []).append(a)
+            output.extend(tuple(buckets[k]) for k in sorted(buckets))
+        return tuple(output)
+
+    def stage(tag, partition):
+        return bytes([tag]) + rc.u32(len(partition)) + b"".join(rc.u32(len(c)) for c in partition)
+
+    def visit(partition, depth, trace):
+        trace += b"\x10" + rc.u32(depth)
+        while True:
+            old = len(partition)
+            trace += stage(0x20, partition)  # empty signatures: the split is the identity
+            fixed = tuple(c[0] for c in partition if len(c) == 1)
+            orbits = rc.normalized_orbits(group, fixed)
+            partition = split(partition, {a: i for i, cell in enumerate(orbits) for a in cell})
+            trace += stage(0x21, partition)
+            if len(partition) == old:
+                break
+        if all(len(c) == 1 for c in partition):
+            values = tuple(c[0] for c in partition)
+            leaves.append((trace + b"\x00", min(group, key=lambda g: rc.act_list(values, g))))
+            return
+        _, index = min((len(c), i) for i, c in enumerate(partition) if len(c) > 1)
+        cell = partition[index]
+        for a in cell:
+            visit(partition[:index] + ((a,), tuple(b for b in cell if b != a))
+                  + partition[index + 1:], depth + 1, trace)
+
+    visit((tuple(range(n)),) if n else (), 0, b"")
+    return leaves
+
+
+def p1_dag(n, group, records, root, leaves):
+    """The P1 answer for a nested root (trace, bytes, witness): a subset root goes through
+    review_checks.p1; otherwise the least (trace, bytes of x^t) over the empty-key leaves, with
+    the least t attaining it (spec 7.2, 7.4 preamble)."""
+    subset = as_subset(n, records, root)
+    if subset is not None:
+        return rc.p1(n, group, "subset", subset)
+    return min((trace, dag_bytes(n, records, root, t), t) for trace, t in leaves)
+
+
+def random_dag(n, rng):
+    """A random value of depth <= 3 over tags 01..06 with deliberate sharing (an existing record
+    reused), duplicate storage (an equal leaf stored again) and unreachable records; returns
+    (records, root)."""
+    records, depth_of = [], []
+
+    def add(tag, value, depth):
+        records.append((tag, value))
+        depth_of.append(depth)
+        return len(records) - 1
+
+    def leaf():
+        kind = rng.choice(("atom", "lit", "perm") if n else ("lit", "lit", "perm"))
+        if kind == "atom":
+            return add(1, rng.randrange(n), 0)
+        if kind == "lit":
+            return add(2, bytes(rng.choice(b"ab") for _ in range(rng.randint(0, 2))), 0)
+        p = list(range(n))
+        rng.shuffle(p)
+        return add(6, tuple(p), 0)
+
+    def build(depth, top=False):
+        shareable = [i for i, d in enumerate(depth_of) if d < depth or (d == 0 and depth == 0)]
+        if not top and shareable and rng.random() < 0.3:
+            return rng.choice(shareable)  # sharing
+        if depth == 0 or rng.random() < (0.05 if top else 0.3):
+            return leaf()
+        tag = rng.choice((3, 4, 5))
+        kids = [build(depth - 1) for _ in range(rng.choice((0, 1, 2, 2, 3, 3)))]
+        d = 1 + max((depth_of[c] for c in kids), default=-1)
+        if tag == 5:
+            return add(5, tuple((c, rng.randint(1, 3)) for c in kids), max(d, 0))
+        return add(tag, tuple(kids), max(d, 0))
+
+    if rng.random() < 0.3:
+        add(2, b"junk", 0)  # unreachable, before the root
+    root = build(3, True)
+    if rng.random() < 0.3:
+        add(2, b"after", 0)  # unreachable, after the root (the root is not last)
+    return records, root
+
+
+def run_stream(cmd, n, gens, stream, extra=(), case_id="d", target=None):
+    args = [cmd, "--n", str(n), "--gens", gens_arg(n, gens), "--id", case_id]
+    args += ["--stream", stream.hex()] if cmd == "p1-stream" else [
+        "--kind", "stream", "--stream", stream.hex()]
+    if target is not None:
+        args += ["--target-stream", target.hex()]
+    proc = cli(args + list(extra))
+    lines = proc.stdout.splitlines()
+    fields = lines[0].split("\t") if len(lines) == 1 else None
+    return proc.returncode, fields, proc
+
+
+def validate_cli(stream):
+    proc = cli(["validate", "--stream", stream.hex(), "--id", "v"]) if not BACKEND else \
+        subprocess.run([str(CLI), "validate", "--stream", stream.hex(), "--id", "v"],
+                       capture_output=True, text=True, check=False)
+    return proc.stdout.strip().split("\t")[-1] if proc.stdout else None
+
+
+# tools/hexdump_stream.py's rule list as malformed streams: (hex, refused on import).  Import
+# accepts unreachable records, a root before the last record and unsorted or repeated arcs
+# (spec 4.2; docs/slices/S5.md 3.5), which only the validator refuses.
+H2 = "434e0200010001" + "00000002"
+MALFORMED = [
+    ("434e03000100010000000000000001", True),                                 # magic/version
+    ("434e0200020001" "00000000" "00000001" "0400000000" "00000000", True),   # schema
+    (H2 + "00000000" "00000000", True),                                       # q = 0
+    (H2 + "00000001" "0100000002" "00000000", True),                          # atom range
+    (H2 + "00000001" "ff00000000" "00000000", True),                          # unknown tag
+    (H2 + "00000002" "0100000000" "0300000001" "00000001" "00000001", True),  # child >= index
+    (H2 + "00000002" "0100000000" "0100000001" "00000001", False),           # unreachable
+    (H2 + "00000002" "0100000000" "0100000001" "00000000", False),           # root not last
+    (H2 + "00000003" "0100000000" "0100000001" "04000000020000000100000000" "00000002", True),
+    (H2 + "00000002" "0100000000" "05" "00000001" "00000000" "00000001" "00" "00000001", True),
+    (H2 + "00000002" "0100000000" "05" "00000001" "00000000" "00000000" "00000001", True),
+    (H2 + "00000003" "0100000000" "0100000001" "05" "00000002" "00000001" "0000000101"
+     "00000000" "0000000101" "00000002", True),                                # multiset order
+    (H2 + "00000001" "06" "00000001" "00000000" "00000000" "00000000", True),  # fixed pair
+    (H2 + "00000001" "06" "00000002" "00000001" "00000000" "00000000" "00000001" "00000000",
+     True),                                                                    # source order
+    ("434e0200010001" "00000003" "00000001" "06" "00000002" "00000000" "00000001" "00000001"
+     "00000002" "00000000", True),                                             # not a bijection
+    (H2 + "00000001" "07" "02" "00000000" "00000000", True),                   # Group mode
+    (H2 + "00000001" "07" "01" "00000001" "00000001" "00000000" "00000000", True),  # block
+    (H2 + "00000001" "09" "00000000" "00000000" "00000001" "00000000" "00000001" "00000000"
+     "00000000" "00000000", True),                                             # arc count 0
+    (H2 + "00000001" "09" "00000000" "00000000" "00000002" "00000000" "00000001" "00000000"
+     "0000000101" "00000000" "00000001" "00000000" "0000000101" "00000000", False),  # dup arcs
+    (H2 + "00000001" "0400000000" "00000001", True),                           # root range
+    (H2 + "00000001" "0400000000" "00000000" "00", True),                      # trailing byte
+    (H2 + "00000001" "0400000000", True),                                      # truncated
+]
+
+
+class NestedObjects(CliTestCase):
+    """S5 tier D1 and the decoder rule list (docs/slices/S5.md section 4)."""
+
+    def test_oracle_matches_review_checks(self):
+        # the empty-key tree is the empty subset's tree (spec 7.1): the oracle's least leaf
+        # for the empty subset must be review_checks.p1's answer
+        for n in range(5):
+            for group in rc.subgroups(tuple(permutations(range(n))), n):
+                leaves = p1_leaves(n, group)
+                best = min((trace, rc.subset_bytes(n, frozenset()), t) for trace, t in leaves)
+                self.assertEqual(best, rc.p1(n, group, "subset", frozenset()))
+        # review_checks.dag_bytes on its tag 1..4 cases
+        self.assertEqual(dag_bytes(0, [(2, b""), (2, b""), (3, (1, 0))], 2),
+                         rc.dag_bytes(0, [(2, b""), (2, b""), (3, (1, 0))], 2))
+        self.assertEqual(dag_bytes(2, [(1, 1), (1, 0), (2, b"unused"), (4, (0, 1, 0))], 3),
+                         rc.subset_bytes(2, {0, 1}))
+        deep = [(2, b"x")] + [(3, (i - 1, i - 1)) for i in range(1, 61)]
+        self.assertEqual(dag_bytes(0, deep, 60), rc.dag_bytes(0, deep, 60))
+
+    def test_golden_dag(self):
+        case = next(c for c in GOLDEN["p1_cases"] if c["object"]["kind"] == "dag")
+        shared = raw_stream(0, [(2, b""), (3, (0, 0))], 1)
+        duplicated = raw_stream(0, [(2, b""), (2, b""), (3, (1, 0)), (2, b"z")], 2)
+        for stream in (shared, duplicated):
+            code, fields, proc = run_stream("p1-stream", 0, [], stream, case_id=case["id"])
+            self.assertEqual(code, 0, proc.stderr)
+            self.assertEqual(fields, [case["id"], "0001", "COMPLETE", case["expected_trace_hex"],
+                                      case["expected_stream_hex"],
+                                      witness_field(0, case["expected_witness"]), "-"])
+
+    def test_d1_random_dags(self):
+        cases = subsets = canonical_inputs = objectives = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                leaves = p1_leaves(n, group)
+                for k in range(10 if n < 4 else 6):
+                    rng = random.Random(5005 + 1000 * n + 37 * gi + k)
+                    records, root = random_dag(n, rng)
+                    stream = raw_stream(n, records, root)
+                    canonical = dag_bytes(n, records, root)
+                    trace, data, witness = p1_dag(n, group, records, root, leaves)
+                    subsets += as_subset(n, records, root) is not None
+                    cid = f"d1-n{n}-g{gi}-r{k}"
+                    with self.subTest(cid):
+                        code, fields, proc = run_stream("p1-stream", n, gens, stream, case_id=cid)
+                        self.assertEqual(code, 0, proc.stderr)
+                        self.assertEqual(fields, [cid, "0001", "COMPLETE", trace.hex(), data.hex(),
+                                                  witness_field(n, witness), "-"])
+                        # metamorphic (spec 5): the full element list as generators
+                        if k == 0:
+                            code, f2, _ = run_stream("p1-stream", n, sorted(group), stream,
+                                                     case_id=cid)
+                            self.assertEqual(f2, fields)
+                        # the canonical output validates and parses; the raw input validates
+                        # iff it is already its own normal form (spec 4.2)
+                        self.assertEqual(validate_cli(data), "COMPLETE")
+                        hs.parse_stream(data)
+                        canonical_inputs += stream == canonical
+                        self.assertEqual(validate_cli(stream),
+                                         "COMPLETE" if stream == canonical else "INVALID_INPUT")
+                        if k % 3 == 0:
+                            objectives += self.check_objectives(n, group, gens, records, root,
+                                                                stream, cid, rng)
+                    cases += 1
+        self.assertEqual(cases, 10 * 10 + 30 * 6)
+        self.assertTrue(0 < subsets < cases)
+        self.assertTrue(0 < canonical_inputs < cases)
+        self.assertGreater(objectives, 0)
+
+    def check_objectives(self, n, group, gens, records, root, stream, cid, rng):
+        """LEX_MIN_IMAGE, STABILISER and TRANSPORTER_COSET on a nested object (spec 8.2)
+        against brute force over the explicit group."""
+        enc = {g: dag_bytes(n, records, root, g) for g in group}
+        x = dag_bytes(n, records, root)
+        least = min(enc.values())
+        code, f, _ = run_stream("min", n, gens, stream, ("--witness", "deterministic"), cid)
+        self.assertEqual(f[2:], ["COMPLETE", "", least.hex(),
+                                 witness_field(n, min(g for g in group if enc[g] == least)), "-"])
+        stab = frozenset(g for g in group if enc[g] == x)
+        code, f, _ = run_stream("stabiliser", n, gens, stream, (), cid)
+        self.assertEqual(f[6], rc.group_bytes(stab).hex())
+        h = rng.choice(sorted(group))
+        target = raw_stream(n, act_dag(records, h), root)
+        code, f, _ = run_stream("transporter-coset", n, gens, stream, ("--witness", "deterministic"),
+                                cid, target)
+        solutions = sorted(g for g in group if enc[g] == enc[h])
+        coset = {rc.mul(a, solutions[0]) for a in stab}
+        self.assertEqual(coset, set(solutions))
+        self.assertEqual(f[5:], [witness_field(n, solutions[0]),
+                                 (rc.group_bytes(stab) + rc.perm_bytes(min(coset))).hex()])
+        return 3
+
+    def test_malformed_streams(self):
+        for hexs, import_refuses in MALFORMED:
+            data = bytes.fromhex(hexs)
+            with self.subTest(hexs):
+                with self.assertRaises(hs.StreamError):
+                    hs.parse_stream(data)
+                self.assertIn(validate_cli(data), ("INVALID_INPUT", "UNSUPPORTED_ACTION"))
+                n = int.from_bytes(data[7:11], "big") if len(data) >= 11 else 0
+                code, fields, _ = run_stream("p1-stream", n, [], data)
+                self.assertEqual(code != 0, import_refuses)
+                if import_refuses:
+                    self.assertIn(fields[2], ("INVALID_INPUT", "UNSUPPORTED_ACTION"))
+                    self.assertEqual(fields[3:], ["", "", "-", "-"])
+
+    def test_statuses_and_usage(self):
+        # spec 4.1: relations and nested graphs are recognised but unsupported in S5
+        rel = H2 + "00000001" "0a00000000" "00000000"
+        nested = ("434e0200010001" "00000001" "00000002" "09" "00000000" "00000000"
+                  "03" "00000001" "00000000" "00000001")
+        for hexs in (rel, nested):
+            code, f, _ = run_stream("p1-stream", int(hexs[14:22], 16), [], bytes.fromhex(hexs))
+            self.assertEqual((code, f[2]), (3, "UNSUPPORTED_ACTION"))
+        # the header's n must equal --n
+        code, f, _ = run_stream("p1-stream", 3, [], bytes.fromhex(H2 + "00000001" "0400000000"
+                                                                       "00000000"))
+        self.assertEqual((code, f[2]), (3, "INVALID_INPUT"))
+        for args in (["p1-stream", "--n", "1", "--stream", "434"],          # odd hex
+                     ["p1-stream", "--n", "1", "--stream", "zz"],           # not hex
+                     ["p1-stream", "--n", "1", "--atoms", "0"],             # subset option
+                     ["p1-subset", "--n", "1", "--stream", "00"],           # stream option
+                     ["min", "--n", "1", "--stream", "00", "--atoms", "0"],  # kinds mixed
+                     ["min", "--n", "1", "--kind", "graph", "--stream", "00"],
+                     ["validate"],                                          # no stream
+                     ["validate", "--stream", "00", "--n", "1"],            # no other option
+                     ["validate", "--stream", "00", "--id", "#c"]):
             with self.subTest(args):
                 proc = cli(args)
                 self.assertEqual((proc.returncode, proc.stdout), (2, ""))
