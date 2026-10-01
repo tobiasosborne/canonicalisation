@@ -1,12 +1,14 @@
-/* Slice S1/S2 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity
- * descriptor, retain/release handles, groups, subset and graph objects (S2), problems,
- * workspaces, solve, results and result_encode.  Entry points of later slices remain in
+/* Slice S1/S2/S3 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity
+ * descriptor, group backend selection (S3), retain/release handles, groups and their order
+ * (S3), subset and graph objects (S2), problems, workspaces, solve, results and
+ * result_encode.  Entry points of later slices remain in
  * src/api/stubs.c. */
 #include <stdlib.h>
 #include <string.h>
 
 #include "arena/checked.h"
 #include "arena/refcount.h"
+#include "bsgs/chain_backend.h"
 #include "bsgs/explicit.h"
 #include "bsgs/group.h"
 #include "canon/canon.h"
@@ -26,6 +28,7 @@
 
 struct canon_context {
     canon_capacity defaults; /* every field nonzero */
+    canon_backend backend;   /* S3: group backend for canon_group_create */
 };
 
 /* An object is a root (src/object/object.h): a top-level subset (S1) or a top-level coloured
@@ -108,6 +111,7 @@ canon_status canon_context_create(const canon_capacity *defaults, canon_context 
         return CANON_RESOURCE_LIMIT;
     }
     ctx->defaults = resolve_capacity(defaults, &builtin);
+    ctx->backend = CANON_BACKEND_CHAIN; /* S3 brief 2.5: the chain is the default */
     *out = ctx;
     return CANON_COMPLETE;
 }
@@ -115,6 +119,15 @@ canon_status canon_context_create(const canon_capacity *defaults, canon_context 
 void canon_context_release(canon_context *ctx)
 {
     free(ctx);
+}
+
+canon_status canon_context_set_group_backend(canon_context *ctx, canon_backend backend)
+{
+    if (ctx == NULL || (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT)) {
+        return CANON_INVALID_INPUT;
+    }
+    ctx->backend = backend;
+    return CANON_COMPLETE;
 }
 
 /* ---- retain/release (spec 17).  Group retain/release live in src/bsgs/group.c. ---- */
@@ -209,9 +222,22 @@ canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint3
     if (degree > ctx->defaults.max_n) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: degree limit of the descriptor */
     }
-    /* spec 17: input builders copy data; the backend keeps only its own element table. */
-    return canon_group_explicit_create(degree, generators, generator_count,
-                                       ctx->defaults.max_group_order, out);
+    /* spec 17: input builders copy data; each backend keeps only its own representation. */
+    if (ctx->backend == CANON_BACKEND_EXPLICIT) {
+        return canon_group_explicit_create(degree, generators, generator_count,
+                                           ctx->defaults.max_group_order, out);
+    }
+    /* S3 brief 2.5: the chain is limited only by its uint64 order, not by max_group_order. */
+    return canon_group_chain_create(degree, generators, generator_count, out);
+}
+
+canon_status canon_group_order(const canon_group *group, uint64_t *out)
+{
+    if (group == NULL || out == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *out = group->ops->order(group); /* spec 9.2: exact; fits uint64 for every handle */
+    return CANON_COMPLETE;
 }
 
 /* Allocate an object handle of the given kind with one reference; the root's storage is
@@ -342,7 +368,8 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
     if (object->root.n > cap.max_n) {
         return CANON_CAPACITY_LIMIT;
     }
-    if (group->ops->order(group) > cap.max_group_order) {
+    /* S3 brief 2.5: max_group_order bounds the explicit backend's element table only. */
+    if (canon_group_is_explicit(group) && group->ops->order(group) > cap.max_group_order) {
         return CANON_CAPACITY_LIMIT;
     }
     /* spec 11.1: data-dependent output size uses an exact input-derived bound.  The stream

@@ -232,6 +232,11 @@ static canon_status explicit_tuple_min(const canon_group *group, const uint32_t 
 static const canon_group_ops explicit_ops = {explicit_destroy, explicit_order, explicit_contains,
                                              explicit_tuple_min};
 
+bool canon_group_is_explicit(const canon_group *group)
+{
+    return group != NULL && group->ops == &explicit_ops;
+}
+
 canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
                                          size_t generator_count, uint64_t max_order,
                                          canon_group **out)

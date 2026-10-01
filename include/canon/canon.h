@@ -5,9 +5,10 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 and S2 (docs/slices/S1.md, S2.md).  Implemented: the version
- * functions, the context and capacity descriptor, retain/release for every handle below, groups
- * (explicit enumeration backend), subset objects, coloured directed multigraph objects and the
+ * Status of this header: slices S1, S2 and S3 (docs/slices/S1.md, S2.md, S3.md).  Implemented:
+ * the version functions, the context and capacity descriptor, retain/release for every handle
+ * below, groups (S3: a verified stabiliser chain by default; the S1 explicit enumeration
+ * backend stays selectable), canon_group_order, subset objects, coloured directed multigraph objects and the
  * simple undirected graph wrapper (S2), problems for CANONICAL_IMAGE under profile P1 with
  * encoding CDAG-2 and order CDAG-BYTE-1, workspaces, canon_solve, the result accessors and
  * canon_result_encode.  Every other entry point is a stub returning CANON_UNSUPPORTED_ACTION
@@ -114,7 +115,8 @@ const char *canon_version_string(void);
 /* spec 11.1: problem-time capacity descriptor.  Zero means "use the context default". */
 typedef struct canon_capacity {
     uint32_t max_n;            /* degree admitted */
-    uint64_t max_group_order;  /* S1 explicit backend: largest |G| that may be enumerated */
+    uint64_t max_group_order;  /* explicit backend only (S3): largest |G| that may be
+                                  enumerated; ignored by the default chain backend */
     uint64_t max_search_nodes; /* spec 11.1 logical work quota: NODE tokens in the reference
                                   traversal */
     uint64_t max_output_bytes; /* canonical stream bytes */
@@ -127,6 +129,20 @@ typedef struct canon_capacity {
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
 void canon_context_release(canon_context *ctx);
+
+/* Group backend used by canon_group_create (slice S3; PROVISIONAL until M4).
+ * CANON_BACKEND_CHAIN (the default): a deterministic Schreier-Sims stabiliser chain checked by
+ * an independent verifier (spec 9.1); any group whose order fits uint64 is admitted.
+ * CANON_BACKEND_EXPLICIT: the S1 sorted element table, bounded by max_group_order; kept as a
+ * test oracle.  Both give identical results for every operation. */
+typedef enum canon_backend {
+    CANON_BACKEND_CHAIN = 0,
+    CANON_BACKEND_EXPLICIT = 1
+} canon_backend;
+
+/* Select the backend for groups created from this context afterwards (existing groups are
+ * unaffected).  CANON_INVALID_INPUT for a NULL context or an unknown backend value. */
+canon_status canon_context_set_group_backend(canon_context *ctx, canon_backend backend);
 
 /* ---- Retain/release (spec 17: opaque handles; releasing a failed or partial handle is always
  * valid; release of NULL is a no-op; retain of NULL is a no-op).
@@ -152,12 +168,22 @@ void canon_result_release(canon_result *result);
 
 /* spec section 17, 9: build an immutable group from `generator_count` generators, each
  * `degree` uint32 images (flat array, p[v] = v^p).  Identity and repeated generators are
- * allowed; zero generators give the trivial group.  S1 builds the explicit-enumeration backend
- * and returns CANON_CAPACITY_LIMIT when degree exceeds the context's max_n or the closure would
- * exceed the context's max_group_order (checked before each growth of the element table, never
- * after); CANON_INVALID_INPUT when a generator is not a bijection of {0..degree-1}. */
+ * allowed; zero generators give the trivial group.  CANON_CAPACITY_LIMIT when degree exceeds
+ * the context's max_n; CANON_INVALID_INPUT when a generator is not a bijection of
+ * {0..degree-1}.  With the context's backend (canon_context_set_group_backend):
+ * CANON_BACKEND_CHAIN (default, S3) builds a verified stabiliser chain (spec 9.1) and returns
+ * CANON_CAPACITY_LIMIT only when |G| exceeds 2^64 - 1 (the order is exact in uint64 in this
+ * release; slice S4's multi-limb orders lift this), or CANON_INTERNAL_ERROR if the independent
+ * verifier rejected the constructed chain; CANON_BACKEND_EXPLICIT (S1) enumerates the group
+ * and returns CANON_CAPACITY_LIMIT when the closure would exceed the context's max_group_order
+ * (checked before each growth of the element table, never after). */
 canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint32_t *generators,
                                 size_t generator_count, canon_group **out);
+
+/* spec 9.2: the exact order |G| in *out.  Capacity: every group handle has an order that fits
+ * uint64 (canon_group_create refuses larger groups with CANON_CAPACITY_LIMIT).
+ * CANON_INVALID_INPUT for NULL arguments. */
+canon_status canon_group_order(const canon_group *group, uint64_t *out);
 
 /* spec 17 input builder (copies data): a subset of atoms of {0..degree-1}; duplicates permitted
  * and deduplicated (spec 4.2: sets deduplicate equal children); degree above the context's
@@ -215,7 +241,8 @@ canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_
  * CANON_UNSUPPORTED_ACTION for an objective other than CANONICAL_IMAGE (0x0001), a profile
  * other than P1, an encoding other than CDAG-2 or an order other than CDAG-BYTE-1;
  * CANON_INVALID_INPUT for a degree mismatch between group and object; CANON_CAPACITY_LIMIT
- * when the degree exceeds max_n, the group order exceeds max_group_order, or the exact
+ * when the degree exceeds max_n, the group was built by the explicit backend and its order
+ * exceeds max_group_order (S3: the chain backend has no such limit), or the exact
  * canonical stream length exceeds max_output_bytes (spec 11.1).  That length is a function of
  * the input alone: for a subset it is determined by its size; for a graph by n, the colour
  * multiset, the arc count, the label bytes and the multiplicities, none of which the action

@@ -35,7 +35,8 @@ add_library(canon STATIC
   src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c
   src/encoding/graph_stream.c src/encoding/simple_upper.c
   src/object/subset.c src/object/graph.c src/object/object.c
-  src/bsgs/group.c src/bsgs/explicit.c src/partition/partition.c
+  src/bsgs/group.c src/bsgs/explicit.c src/bsgs/provenance.c src/bsgs/chain.c
+  src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c src/partition/partition.c
   src/util/sort.c src/refine/p1.c src/search/p1_tree.c)
 target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
@@ -75,6 +76,11 @@ if(Python3_Interpreter_FOUND)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
   set_tests_properties(test_e2e PROPERTIES
     ENVIRONMENT "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1")
+  # Slice S3: the same end-to-end test with the explicit group backend (the test oracle).
+  add_test(NAME test_e2e_explicit
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
+  set_tests_properties(test_e2e_explicit PROPERTIES
+    ENVIRONMENT "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1;CANON_BACKEND=explicit")
 else()
   message(WARNING "python3 not found: test_e2e is not registered")
 endif()
