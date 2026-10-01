@@ -22,15 +22,16 @@
 /* Reusable mutable search state (one active owner, spec 17).  Buffers persist across solves and
  * grow on demand; nothing here is ever aliased by a result. */
 typedef struct canon_p1_search {
-    uint32_t n;               /* degree the arrays are sized for; UINT32_MAX = none yet */
-    bool ready;               /* arrays allocated for n */
-    canon_partition part;     /* current partition */
-    canon_p1_scratch scratch; /* refinement scratch */
-    uint32_t *snaps;          /* snapshot stack: snap_cap snapshots of snap_words words */
-    size_t snap_words;
-    size_t snap_cap;
-    uint32_t *leaf_t;      /* n: t_L at the current leaf */
-    uint32_t *leaf_atoms;  /* n: sorted image x^t_L */
+    uint32_t n;               /* degree of the current solve, n <= cap */
+    uint32_t cap;             /* degree the per-point arrays are allocated for (only grows) */
+    bool ready;               /* arrays allocated for cap */
+    canon_partition part;     /* current partition (allocated for cap) */
+    canon_p1_scratch scratch; /* refinement scratch, cap entries each */
+    uint32_t *snaps;          /* snapshot stack: depth d at snaps + d * snap_words */
+    size_t snap_words;        /* words per snapshot at the current degree n */
+    size_t snap_alloc;        /* words allocated in snaps (only grows) */
+    uint32_t *leaf_t;      /* cap: t_L at the current leaf */
+    uint32_t *leaf_atoms;  /* cap: sorted image x^t_L */
     uint64_t *leaf_bits;   /* bitset scratch for the image */
     canon_buf trace;       /* trace of the current root-to-node path */
     canon_buf leaf_bytes;  /* CDAG-2 bytes of the current leaf image */

@@ -84,6 +84,7 @@ int main(void)
         memcpy(lab_before, p.lab, sizeof lab_before);
         memcpy(start_before, p.start, sizeof start_before);
         canon_partition_save(&p, snap);
+        CHECK(memcmp(canon_partition_snapshot_lab(snap, 6), lab_before, sizeof lab_before) == 0);
         /* spec 7.1: cell C replaced in place by [{a}, C minus {a}]. */
         canon_partition_individualise(&p, 2, 5);
         invariants(&p);
@@ -103,6 +104,15 @@ int main(void)
     }
     canon_partition_reset(&p);
     CHECK(p.cells == 1);
+    invariants(&p);
+    /* Capacity: a smaller degree reuses the arrays; degree 0 and back. */
+    canon_partition_set_degree(&p, 3);
+    CHECK(p.n == 3 && p.cap == 6 && p.cells == 1 && canon_partition_cell_size(&p, 0) == 3);
+    invariants(&p);
+    canon_partition_set_degree(&p, 0);
+    CHECK(p.n == 0 && p.cells == 0);
+    canon_partition_set_degree(&p, 6);
+    CHECK(p.n == 6 && p.cells == 1);
     invariants(&p);
     canon_partition_free(&p);
 

@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "perm/perm.h"
+#include "util/sort.h"
 
 typedef struct explicit_group {
     uint64_t order;  /* number of rows */
@@ -86,46 +87,31 @@ static canon_status set_grow(row_set *s, const uint32_t *table, uint32_t degree)
     return CANON_COMPLETE;
 }
 
-/* ---- sorting the closed table (stable bottom-up merge sort of row indices) ---- */
+/* ---- sorting the closed table (stable merge sort of row indices, src/util/sort.h) ---- */
 
-static int row_less(const uint32_t *table, uint32_t degree, size_t a, size_t b)
-{
-    return canon_perm_lex_compare(table + a * (size_t)degree, table + b * (size_t)degree,
-                                  degree) < 0;
-}
+typedef struct row_order {
+    const uint32_t *table;
+    uint32_t degree;
+} row_order;
 
-static void sort_rows(const uint32_t *table, uint32_t degree, size_t *idx, size_t *tmp, size_t n)
+/* spec 7.2: image arrays compare numerically lexicographically. */
+static int row_cmp(const void *a, const void *b, void *ctx)
 {
-    /* n <= SIZE_MAX / 16 (checked by the caller), so 2 * width and lo + 2 * width cannot wrap. */
-    for (size_t width = 1; width < n; width *= 2) {
-        for (size_t lo = 0; lo < n; lo += 2 * width) {
-            size_t mid = lo + width < n ? lo + width : n;
-            size_t hi = mid + width < n ? mid + width : n;
-            size_t i = lo, j = mid, k = lo;
-            while (i < mid && j < hi) {
-                tmp[k++] = row_less(table, degree, idx[j], idx[i]) ? idx[j++] : idx[i++];
-            }
-            while (i < mid) {
-                tmp[k++] = idx[i++];
-            }
-            while (j < hi) {
-                tmp[k++] = idx[j++];
-            }
-        }
-        memcpy(idx, tmp, n * sizeof *idx);
-    }
+    const row_order *o = ctx;
+    size_t ia = *(const size_t *)a, ib = *(const size_t *)b;
+    return canon_perm_lex_compare(o->table + ia * (size_t)o->degree,
+                                  o->table + ib * (size_t)o->degree, o->degree);
 }
 
 /* ---- operations ---- */
 
-static void explicit_destroy(canon_group *group)
+static void explicit_destroy(void *impl)
 {
-    explicit_group *e = group->impl;
+    explicit_group *e = impl;
     if (e != NULL) {
         free(e->table);
         free(e);
     }
-    free(group);
 }
 
 static uint64_t explicit_order(const canon_group *group)
@@ -258,13 +244,20 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
         return CANON_CAPACITY_LIMIT; /* spec 11.1: products checked */
     }
     /* spec 4.1, 9.1: generators must be bijections of the domain.  On degree 0 every
-     * generator is the empty permutation and is not read (generators may be NULL). */
-    for (size_t i = 0; i < generator_count && degree > 0; ++i) {
-        int ok = canon_perm_validate(generators + i * (size_t)degree, degree);
-        if (ok < 0) {
+     * generator is the empty permutation and is not read (generators may be NULL).  One
+     * scratch bitmap serves every generator. */
+    if (degree > 0 && generator_count > 0) {
+        size_t words = ((size_t)degree + 63u) / 64u; /* <= 2^26: the product cannot wrap */
+        uint64_t *bitmap = malloc(words * sizeof *bitmap);
+        if (bitmap == NULL) {
             return CANON_RESOURCE_LIMIT;
         }
-        if (ok == 0) {
+        bool valid = true;
+        for (size_t i = 0; i < generator_count && valid; ++i) {
+            valid = canon_perm_validate_scratch(generators + i * (size_t)degree, degree, bitmap);
+        }
+        free(bitmap);
+        if (!valid) {
             return CANON_INVALID_INPUT;
         }
     }
@@ -357,7 +350,8 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
         for (size_t i = 0; i < count; ++i) {
             idx[i] = i;
         }
-        sort_rows(table, degree, idx, scratch, count);
+        row_order order = {table, degree};
+        canon_stable_sort(idx, count, sizeof *idx, scratch, row_cmp, &order);
         for (size_t i = 0; i < count && degree > 0; ++i) {
             memcpy(sorted + i * row_words, table + idx[i] * row_words, row_words * sizeof *sorted);
         }
@@ -368,20 +362,18 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
     }
 
     explicit_group *e = malloc(sizeof *e);
-    canon_group *g = malloc(sizeof *g);
-    if (e == NULL || g == NULL) {
-        free(e);
-        free(g);
+    if (e == NULL) {
         st = CANON_RESOURCE_LIMIT;
         goto fail;
     }
     e->order = (uint64_t)count;
     e->table = table;
-    g->ops = &explicit_ops;
-    g->degree = degree;
-    g->refs = 1;
-    g->impl = e;
-    *out = g;
+    /* spec 17: the handle and its reference count come from canon_group_alloc. */
+    st = canon_group_alloc(&explicit_ops, degree, e, out);
+    if (st != CANON_COMPLETE) {
+        explicit_destroy(e); /* frees table too */
+        return st;
+    }
     return CANON_COMPLETE;
 
 fail:

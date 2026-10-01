@@ -1,4 +1,5 @@
 /* Unit tests for the explicit group backend (src/bsgs/explicit.c; spec sections 7.1, 7.2, 9). */
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,9 +18,7 @@ static canon_group *make(uint32_t n, const uint32_t *gens, size_t count, uint64_
 
 static void drop(canon_group *g)
 {
-    if (g != NULL) {
-        g->ops->destroy(g);
-    }
+    canon_group_release(g); /* public release; the handle came from canon_group_alloc */
 }
 
 static int eq(const uint32_t *a, const uint32_t *b, uint32_t n)
@@ -156,6 +155,19 @@ int main(void)
         CHECK(orb[0] == 0 && orb[1] == 1 && orb[2] == 2 && orb[3] == 3);
         CHECK(g->ops->tuple_min(g, NULL, 0, t, orb) == CANON_COMPLETE);
         CHECK(orb[0] == 0 && orb[1] == 0 && orb[2] == 1 && orb[3] == 1);
+        drop(g);
+    }
+    /* canon_group_alloc establishes one reference; share/unshare pair through const. */
+    {
+        const uint32_t gen[2] = {1, 0};
+        canon_group *g = make(2, gen, 1, 10);
+        CHECK(atomic_load(&g->refs->count) == 1);
+        CHECK(g->refs == &g->refs_storage && g->block == (void *)g);
+        const canon_group *shared = g;
+        canon_group_share(shared);
+        CHECK(atomic_load(&g->refs->count) == 2);
+        canon_group_unshare(shared);
+        CHECK(atomic_load(&g->refs->count) == 1);
         drop(g);
     }
     /* Degree 0: the trivial group, one element. */

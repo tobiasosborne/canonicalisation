@@ -61,6 +61,14 @@ int main(void)
     CHECK(canon_perm_validate(range, 3) == 0);
     const uint32_t big[1] = {UINT32_MAX};
     CHECK(canon_perm_validate(big, 1) == 0);
+    /* The scratch variant reuses one bitmap across permutations (cleared on entry). */
+    uint64_t bitmap[1] = {~(uint64_t)0};
+    CHECK(canon_perm_validate_scratch(p, 3, bitmap));
+    CHECK(canon_perm_validate_scratch(q, 3, bitmap));
+    CHECK(!canon_perm_validate_scratch(dup, 3, bitmap));
+    CHECK(!canon_perm_validate_scratch(range, 3, bitmap));
+    CHECK(canon_perm_validate_scratch(p, 3, bitmap));
+    CHECK(canon_perm_validate_scratch(NULL, 0, bitmap));
 
     /* Random: compose(p, p^-1) = id, compose(p^-1, p) = id,
      * (pq)^-1 = q^-1 p^-1 (inversion reverses factors, spec section 3). */

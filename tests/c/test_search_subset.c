@@ -276,6 +276,40 @@ int main(void)
             check_golden(ctx, ws, &cases[round == 0 ? i : 3 - i]);
         }
     }
+    /* Grow-only workspace capacity: a shared workspace across degrees 4, 1, 3, 0, 2, 4 gives
+     * exactly the results of a fresh workspace per solve. */
+    {
+        const uint32_t degrees[6] = {4, 1, 3, 0, 2, 4};
+        for (int i = 0; i < 6; ++i) {
+            uint32_t n = degrees[i];
+            uint32_t gens[2 * 4];
+            for (uint32_t v = 0; v < n; ++v) {
+                gens[v] = (v + 1) % n;     /* n-cycle */
+                gens[n + v] = v < 2 && n >= 2 ? 1 - v : v; /* (0 1) */
+            }
+            const uint32_t atoms[2] = {0, 1};
+            golden_case c = {n, gens, 2, atoms, n >= 2 ? 2u : n, NULL, NULL, NULL};
+            canon_workspace *fresh = NULL;
+            canon_result *r1 = NULL, *r2 = NULL;
+            CHECK(canon_workspace_create(ctx, &fresh) == CANON_COMPLETE);
+            CHECK(solve_case(ctx, ws, &c, NULL, &r1) == CANON_COMPLETE);
+            CHECK(solve_case(ctx, fresh, &c, NULL, &r2) == CANON_COMPLETE);
+            size_t l1 = 0, l2 = 0, b1 = 0, b2 = 0;
+            const uint8_t *t1 = canon_result_trace(r1, &l1), *t2 = canon_result_trace(r2, &l2);
+            const uint8_t *y1 = canon_result_bytes(r1, &b1), *y2 = canon_result_bytes(r2, &b2);
+            uint32_t d1 = 0, d2 = 0;
+            const uint32_t *w1 = canon_result_witness(r1, &d1), *w2 = canon_result_witness(r2, &d2);
+            CHECK(t1 != NULL && t2 != NULL && l1 == l2 && memcmp(t1, t2, l1) == 0);
+            CHECK(y1 != NULL && y2 != NULL && b1 == b2 && memcmp(y1, y2, b1) == 0);
+            CHECK(w1 != NULL && w2 != NULL && d1 == n && d2 == n);
+            if (w1 != NULL && w2 != NULL && n > 0) {
+                CHECK(memcmp(w1, w2, n * sizeof *w1) == 0);
+            }
+            canon_result_release(r1);
+            canon_result_release(r2);
+            canon_workspace_release(fresh);
+        }
+    }
     /* Duplicate atoms are deduplicated (spec 4.2). */
     {
         const uint32_t dup[3] = {0, 0, 0};
