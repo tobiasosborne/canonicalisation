@@ -266,7 +266,8 @@ canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degre
  * must equal `degree` (else CANON_INVALID_INPUT).  CANON_UNSUPPORTED_ACTION for an encoding
  * version byte other than 02, a header schema/action other than 1/1, the relations record 0a,
  * or a graph record below the root (later slices).  CANON_CAPACITY_LIMIT for degree above the
- * context's max_n, a count above uint64 (count-bit limit 64), or a normal form with more
+ * context's max_n, a count above uint64 (count-bit limit 64), a subgroup or coset leaf whose
+ * group order exceeds uint64 (as for canon_group_create), or a normal form with more
  * records, references or literal bytes than the context's max_nodes, max_refs,
  * max_literal_bytes.  Order: NULL arguments (INVALID_INPUT), schema/action arguments, degree,
  * then the stream in order (the first violation decides), then the normal form.  A root that

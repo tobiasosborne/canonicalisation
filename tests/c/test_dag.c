@@ -648,6 +648,20 @@ static void test_acyclicity(void)
     canon_dag_reset(&d, 1);
     d.root = 0;
     CHECK(canon_dag_normalise(&d, &norm, &S, false) == CANON_INVALID_INPUT); /* q = 0 */
+    /* module contracts: separate output arenas; the action takes a normalised arena */
+    (void)literal(&d, "y");
+    uint32_t a2 = atom(&d, 0);
+    d.root = 0;
+    CHECK(canon_dag_normalise(&d, &d, &S, false) == CANON_INVALID_INPUT);
+    CHECK(canon_dag_normalise(&d, &S.nodes, &S, false) == CANON_INVALID_INPUT);
+    CHECK(canon_dag_normalise(&d, &S.raw, &S, false) == CANON_INVALID_INPUT);
+    const uint32_t id1[1] = {0};
+    CHECK(canon_dag_act(&d, id1, &norm, &S) == CANON_INVALID_INPUT); /* root not last */
+    d.root = a2;
+    CHECK(canon_dag_normalise(&d, &norm, &S, false) == CANON_COMPLETE);
+    CHECK(canon_dag_act(&norm, id1, &norm, &S) == CANON_INVALID_INPUT);
+    CHECK(canon_dag_act(&norm, id1, &S.raw, &S) == CANON_INVALID_INPUT);
+    CHECK(canon_dag_act(&norm, id1, &d, &S) == CANON_COMPLETE && canon_dag_equal(&norm, &d));
     canon_buf_free(&out);
     canon_dag_free(&d);
     canon_dag_free(&norm);
