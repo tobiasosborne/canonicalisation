@@ -1,19 +1,24 @@
-/* canon-cli: command-line driver for the canon library (slices S1 to S4,
- * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6).
+/* canon-cli: command-line driver for the canon library (slices S1 to S5,
+ * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6, S5.md 1).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
  *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."] [--arcs "s,t,labelhex,m;..."]
- *       CANONICAL_IMAGE (0001) under profile P1;
+ *   canon-cli p1-stream --n N --gens "..." --stream HEX
+ *       CANONICAL_IMAGE (0001) under profile P1 (p1-stream, slice S5: the object is imported
+ *       from a CDAG-2 stream of degree N by canon_object_create; it need not be canonical);
  *   canon-cli min [--order cdag|simple-upper] OBJECT
  *       LEX_MIN_IMAGE (0002) under profile NO_TREE, order CDAG-BYTE-1 (default) or
  *       SIMPLE-UPPER-1;
  *   canon-cli transporter OBJECT TARGET        TRANSPORTER_ONE (0003);
  *   canon-cli stabiliser OBJECT                STABILISER (0004);
  *   canon-cli transporter-coset OBJECT TARGET  TRANSPORTER_COSET (0006);
- * where for the S4 subcommands OBJECT is [--kind subset|graph] with --atoms (subset) or
- * --colours/--arcs (graph), and TARGET is --target-atoms (subset) or --target-colours/
- * --target-arcs (graph), each defaulting to the empty subset or the arc-free, uncoloured graph.
- * The kind defaults to graph when any graph option is given, else subset.  Every subcommand
+ *   canon-cli validate --stream HEX            canon_stream_validate (slice S5);
+ * where for the S4 subcommands OBJECT is [--kind subset|graph|stream] with --atoms (subset),
+ * --colours/--arcs (graph) or --stream (S5), and TARGET is --target-atoms (subset),
+ * --target-colours/--target-arcs (graph) or --target-stream (S5), each defaulting to the empty
+ * subset, the arc-free, uncoloured graph or the empty stream (which is INVALID_INPUT).  The
+ * kind defaults to stream when a stream option is given, else to graph when a graph option is
+ * given, else subset.  Every subcommand
  * also accepts [--max-nodes K] [--id CASE] [--backend chain|explicit] (slice S3: the group
  * backend, default chain; the explicit backend is the test oracle) and
  * [--witness any|deterministic] (slice S4: the spec 3 deterministic witness).
@@ -30,7 +35,10 @@
  * makes every vertex colour empty; otherwise it lists exactly N hex strings separated by ';'
  * (a hex string may be empty).  `--arcs` (default: no arcs) lists arcs
  * "source,target,labelhex,multiplicity" separated by ';' (labelhex may be empty; the
- * multiplicity is passed to the library as given, so 0 yields INVALID_INPUT).
+ * multiplicity is passed to the library as given, so 0 yields INVALID_INPUT).  `--stream` is
+ * lowercase or uppercase hex without spaces (odd length or a non-hex character is a usage
+ * error).  `validate` prints the two fields "CASE \t STATUS" (not a FORMAT.md record) and
+ * takes only --stream and --id.
  * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Exit
  * status: 0 on COMPLETE, 3 on any other status, 2 on a usage error.  Uses only the public
  * header. */
@@ -49,13 +57,16 @@ static int usage(const char *msg)
             "usage: canon-cli p1-subset --n N [--gens \"a0,a1,...;b0,...\"] [--atoms \"x,y,...\"]\n"
             "       canon-cli p1-graph --n N [--gens \"...\"] [--colours \"hex;hex;...\"]\n"
             "                 [--arcs \"s,t,labelhex,m;...\"]\n"
+            "       canon-cli p1-stream --n N [--gens \"...\"] --stream HEX\n"
+            "       canon-cli validate --stream HEX [--id CASE]\n"
             "       canon-cli min [--order cdag|simple-upper] OBJECT\n"
             "       canon-cli transporter OBJECT TARGET\n"
             "       canon-cli stabiliser OBJECT\n"
             "       canon-cli transporter-coset OBJECT TARGET\n"
-            "       OBJECT: --n N [--gens ...] [--kind subset|graph] [--atoms ...]\n"
-            "               [--colours ...] [--arcs ...]\n"
+            "       OBJECT: --n N [--gens ...] [--kind subset|graph|stream] [--atoms ...]\n"
+            "               [--colours ...] [--arcs ...] [--stream HEX]\n"
             "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
+            "               [--target-stream HEX]\n"
             "       all: [--max-nodes K] [--id CASE] [--backend chain|explicit]\n"
             "            [--witness any|deterministic]\n",
             msg);
@@ -295,13 +306,14 @@ typedef struct subcommand {
     const char *name;
     canon_objective objective;
     canon_profile profile;
-    int kind;        /* 0 subset, 1 graph, -1 chosen by --kind or the options given */
+    int kind;        /* 0 subset, 1 graph, 2 stream (S5), -1 chosen by --kind or the options */
     bool target;     /* takes a target object */
 } subcommand;
 
 static const subcommand SUBCOMMANDS[] = {
     {"p1-subset", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false},
     {"p1-graph", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 1, false},
+    {"p1-stream", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 2, false},
     {"min", CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE, -1, false},
     {"transporter", CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE, -1, true},
     {"stabiliser", CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, -1, false},
@@ -314,7 +326,8 @@ typedef struct options {
     const char *n_arg, *gens, *id;
     const char *atoms, *colours, *arcs;                      /* the object */
     const char *target_atoms, *target_colours, *target_arcs; /* the target */
-    bool graph;                                              /* object kind */
+    const char *stream, *target_stream;                      /* S5: CDAG-2 hex */
+    int kind;                                                /* 0 subset, 1 graph, 2 stream */
     uint64_t max_nodes;
     canon_backend backend;
     canon_order order;
@@ -333,24 +346,26 @@ static int parse_options(int argc, char **argv, options *o)
         }
     }
     if (o->cmd == NULL) {
-        return usage("expected a subcommand: p1-subset, p1-graph, min, transporter, "
-                     "stabiliser or transporter-coset");
+        return usage("expected a subcommand: p1-subset, p1-graph, p1-stream, validate, min, "
+                     "transporter, stabiliser or transporter-coset");
     }
     const bool s4 = o->cmd->kind < 0;
     o->gens = o->atoms = o->colours = o->arcs = "";
     o->target_atoms = o->target_colours = o->target_arcs = "";
+    o->stream = o->target_stream = "";
     o->id = argv[1];
     o->backend = CANON_BACKEND_CHAIN;
     o->order = CANON_ORDER_CDAG_BYTE_1;
     o->witness = CANON_WITNESS_ANY;
     int kind = o->cmd->kind; /* -1 until --kind or a kind-specific option decides */
-    bool subset_opt = false, graph_opt = false;
+    bool subset_opt = false, graph_opt = false, stream_opt = false;
     for (int i = 2; i < argc; i += 2) {
         if (i + 1 >= argc) {
             return usage("option without a value");
         }
         const char *opt = argv[i], *val = argv[i + 1];
-        const bool takes_subset = o->cmd->kind != 1, takes_graph = o->cmd->kind != 0;
+        const bool takes_subset = s4 || o->cmd->kind == 0, takes_graph = s4 || o->cmd->kind == 1;
+        const bool takes_stream = s4 || o->cmd->kind == 2;
         if (strcmp(opt, "--n") == 0) {
             o->n_arg = val;
         } else if (strcmp(opt, "--gens") == 0) {
@@ -364,6 +379,12 @@ static int parse_options(int argc, char **argv, options *o)
         } else if (takes_graph && strcmp(opt, "--arcs") == 0) {
             o->arcs = val;
             graph_opt = true;
+        } else if (takes_stream && strcmp(opt, "--stream") == 0) {
+            o->stream = val;
+            stream_opt = true;
+        } else if (o->cmd->target && strcmp(opt, "--target-stream") == 0) {
+            o->target_stream = val;
+            stream_opt = true;
         } else if (o->cmd->target && strcmp(opt, "--target-atoms") == 0) {
             o->target_atoms = val;
             subset_opt = true;
@@ -374,10 +395,15 @@ static int parse_options(int argc, char **argv, options *o)
             o->target_arcs = val;
             graph_opt = true;
         } else if (s4 && strcmp(opt, "--kind") == 0) {
-            if (strcmp(val, "subset") != 0 && strcmp(val, "graph") != 0) {
-                return usage("--kind expects subset or graph");
+            if (strcmp(val, "subset") == 0) {
+                kind = 0;
+            } else if (strcmp(val, "graph") == 0) {
+                kind = 1;
+            } else if (strcmp(val, "stream") == 0) {
+                kind = 2;
+            } else {
+                return usage("--kind expects subset, graph or stream");
             }
-            kind = strcmp(val, "graph") == 0;
         } else if (o->cmd->objective == CANON_OBJECTIVE_LEX_MIN_IMAGE &&
                    strcmp(opt, "--order") == 0) {
             if (strcmp(val, "cdag") == 0) {
@@ -421,24 +447,56 @@ static int parse_options(int argc, char **argv, options *o)
         }
     }
     if (kind < 0) {
-        kind = graph_opt ? 1 : 0;
+        kind = stream_opt ? 2 : (graph_opt ? 1 : 0);
     }
-    if ((kind == 1 && subset_opt) || (kind == 0 && graph_opt)) {
-        return usage("subset options (--atoms, --target-atoms) and graph options (--colours, "
-                     "--arcs, --target-colours, --target-arcs) do not mix");
+    if ((kind != 0 && subset_opt) || (kind != 1 && graph_opt) || (kind != 2 && stream_opt)) {
+        return usage("subset options (--atoms, --target-atoms), graph options (--colours, "
+                     "--arcs, --target-colours, --target-arcs) and stream options (--stream, "
+                     "--target-stream) do not mix");
     }
-    o->graph = kind == 1;
+    o->kind = kind;
     return 0;
 }
 
-/* Build a subset or graph object of degree n from the CLI strings.  Returns 0 with *st the
- * library status (and *out on success), 2 on a usage error, 3 on allocation failure. */
-static int build_object(canon_context *ctx, uint32_t n, bool graph, const char *atoms_arg,
-                        const char *colours_arg, const char *arcs_arg, canon_status *st,
-                        canon_object **out)
+/* Decode the hex string `hex` (no spaces) into a new buffer *out of *len bytes.  Returns 0, 2
+ * on a usage error (message printed) or 3 on allocation failure. */
+static int parse_stream_hex(const char *hex, uint8_t **out, size_t *len)
+{
+    const size_t chars = strlen(hex);
+    *out = malloc(chars / 2 + 1);
+    *len = chars / 2;
+    if (*out == NULL) {
+        return 3;
+    }
+    if (!parse_hex(hex, chars, *out)) {
+        free(*out);
+        *out = NULL;
+        return usage("--stream expects an even number of hex digits");
+    }
+    return 0;
+}
+
+/* Build a subset, graph or (S5) stream object of degree n from the CLI strings.  Returns 0
+ * with *st the library status (and *out on success), 2 on a usage error, 3 on allocation
+ * failure. */
+static int build_object(canon_context *ctx, uint32_t n, int kind, const char *atoms_arg,
+                        const char *colours_arg, const char *arcs_arg, const char *stream_arg,
+                        canon_status *st, canon_object **out)
 {
     *out = NULL;
-    if (graph) {
+    if (kind == 2) {
+        /* spec 17, 4.1, 4.2: canon_object_create imports and normalises the stream */
+        uint8_t *bytes = NULL;
+        size_t len = 0;
+        int prc = parse_stream_hex(stream_arg, &bytes, &len);
+        if (prc == 0) {
+            *st = canon_object_create(ctx, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n,
+                                      bytes, len, out);
+        }
+        free(bytes);
+        return prc;
+    }
+    if (kind == 1) {
         graph_input gin;
         int prc = parse_graph(n, colours_arg, arcs_arg, &gin);
         if (prc == 0) {
@@ -501,8 +559,55 @@ static int print_result(const char *id, canon_objective objective, const canon_r
     return enc == CANON_COMPLETE ? 0 : 3;
 }
 
+/* canon-cli validate --stream HEX [--id CASE] (slice S5): spec 4.2 canonical-form check
+ * through canon_stream_validate; prints "CASE \t STATUS". */
+static int validate_main(int argc, char **argv)
+{
+    const char *id = "validate", *hex = NULL;
+    for (int i = 2; i < argc; i += 2) {
+        if (i + 1 >= argc) {
+            return usage("option without a value");
+        }
+        if (strcmp(argv[i], "--stream") == 0) {
+            hex = argv[i + 1];
+        } else if (strcmp(argv[i], "--id") == 0) {
+            id = argv[i + 1];
+            if (*id == '\0' || *id == '#' || strpbrk(id, "\t\n\r") != NULL) {
+                return usage("--id must be nonempty, not start with '#', and have no tabs or "
+                             "newlines");
+            }
+        } else {
+            return usage("validate takes only --stream and --id");
+        }
+    }
+    if (hex == NULL) {
+        return usage("validate needs --stream HEX");
+    }
+    uint8_t *bytes = NULL;
+    size_t len = 0;
+    int prc = parse_stream_hex(hex, &bytes, &len);
+    if (prc != 0) {
+        return prc;
+    }
+    canon_context *ctx = NULL;
+    canon_status st = canon_context_create(NULL, &ctx);
+    if (st == CANON_COMPLETE) {
+        st = canon_stream_validate(ctx, bytes, len);
+    }
+    canon_context_release(ctx);
+    free(bytes);
+    printf("%s\t%s\n", id, status_name(st));
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        return 3;
+    }
+    return st == CANON_COMPLETE ? 0 : 3;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && strcmp(argv[1], "validate") == 0) {
+        return validate_main(argc, argv);
+    }
     options o;
     int prc = parse_options(argc, argv, &o);
     if (prc != 0) {
@@ -553,11 +658,11 @@ int main(int argc, char **argv)
     }
     int rc = 0;
     if (st == CANON_COMPLETE) {
-        rc = build_object(ctx, n, o.graph, o.atoms, o.colours, o.arcs, &st, &object);
+        rc = build_object(ctx, n, o.kind, o.atoms, o.colours, o.arcs, o.stream, &st, &object);
     }
     if (rc == 0 && st == CANON_COMPLETE && o.cmd->target) {
-        rc = build_object(ctx, n, o.graph, o.target_atoms, o.target_colours, o.target_arcs, &st,
-                          &target);
+        rc = build_object(ctx, n, o.kind, o.target_atoms, o.target_colours, o.target_arcs,
+                          o.target_stream, &st, &target);
     }
     if (rc == 0 && st == CANON_COMPLETE) {
         st = canon_problem_create_with_options(ctx, group, object, target, objective,
