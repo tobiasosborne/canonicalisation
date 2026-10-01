@@ -7,7 +7,6 @@
 #include <stdlib.h>
 
 #include "arena/alloc.h"
-#include "bsgs/verify.h"
 #include "perm/perm.h"
 
 static void chain_destroy(void *impl)
@@ -48,8 +47,14 @@ static canon_status chain_tuple_min(const canon_group *group, const uint32_t *L,
     return canon_bsgs_tuple_min(group->impl, L, len, t_out, orbit_id_out, NULL);
 }
 
-static const canon_group_ops chain_ops = {chain_destroy, chain_order, chain_contains,
-                                          chain_tuple_min, chain_admits};
+/* spec 8.1: the coset enumerator over the verified chain (src/coset/enumerate.c). */
+static canon_status chain_enumerate(const canon_group *group, canon_coset_visitor *visitor)
+{
+    return canon_coset_enumerate(group->impl, visitor);
+}
+
+static const canon_group_ops chain_ops = {chain_destroy,   chain_order,  chain_contains,
+                                          chain_tuple_min, chain_admits, chain_enumerate};
 
 const canon_bsgs *canon_group_chain_of(const canon_group *group)
 {
@@ -88,16 +93,9 @@ canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generator
     }
     /* Degree 0: every generator is the empty permutation and is not read. */
     const size_t count = degree > 0 ? generator_count : 0;
-    st = canon_bsgs_build(c, degree, generators, count, NULL, 0);
-    if (st == CANON_COMPLETE) {
-        /* spec 9.1: "exact verification is mandatory"; the verifier is independent of the
-         * constructor (src/bsgs/verify.c). */
-        canon_bsgs_reason reason = CANON_BSGS_UNCHECKED;
-        st = canon_bsgs_verify(c, generators, (uint32_t)count, &reason);
-        if (st == CANON_COMPLETE && reason != CANON_BSGS_VALID) {
-            st = CANON_INTERNAL_ERROR;
-        }
-    }
+    /* spec 9.1: "exact verification is mandatory"; the verifier is independent of the
+     * constructor (src/bsgs/verify.c). */
+    st = canon_bsgs_build_verified(c, degree, generators, count);
     if (st == CANON_COMPLETE) {
         /* spec 17: the handle and its reference count come from canon_group_alloc. */
         st = canon_group_alloc(&chain_ops, degree, c, out);

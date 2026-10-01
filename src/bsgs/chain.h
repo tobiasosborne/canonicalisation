@@ -105,6 +105,12 @@ void canon_bsgs_level_recompute(canon_bsgs *c, uint32_t level);
 canon_status canon_bsgs_transporter(const canon_bsgs *c, uint32_t level, uint32_t b,
                                     uint32_t *out);
 
+/* As canon_bsgs_transporter, with caller scratch and no allocation (slice S4: the coset
+ * descent and the enumerator call it once per step).  Precondition: level < depth and b is in
+ * the orbit of that level; out and tmp have n entries each and do not alias. */
+void canon_bsgs_transporter_scratch(const canon_bsgs *c, uint32_t level, uint32_t b,
+                                    uint32_t *out, uint32_t *tmp);
+
 /* spec 9.2 "Membership sifts g by repeatedly mapping the base image back with the
  * corresponding transversal inverse": in place, from level `from` downwards, g <- g t_b^-1
  * where b = g[base point] (then g fixes the base point).  *stop receives the level at which b
@@ -130,6 +136,15 @@ uint64_t canon_bsgs_suffix_order(const canon_bsgs *c, uint32_t level);
  * canon_bsgs_build. */
 canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint32_t *prefix,
                                uint32_t prefix_len, bool verify, canon_bsgs *out);
+
+/* spec 9.1 "exact verification is mandatory": canon_bsgs_build with no prefix, then
+ * canon_bsgs_verify against `gens` (CANON_INTERNAL_ERROR if the verifier rejects the chain).
+ * Used for every chain that is an answer or certifies one (the group's own chain, the
+ * stabiliser of slice S4, the subgroups K of the spec 9.4 rule 2 sequence); transient chains
+ * of a descent are built by canon_bsgs_rebase without verification (S3 review item 2).  On
+ * failure *out is freed and left empty. */
+canon_status canon_bsgs_build_verified(canon_bsgs *out, uint32_t n, const uint32_t *gens,
+                                       size_t count);
 
 /* spec 7.1 ordering of the orbits of K_level (the pointwise stabiliser of b_0..b_{level-1}):
  * orbit_id[v] = rank of the orbit of v, orbits ranked by their least point. */

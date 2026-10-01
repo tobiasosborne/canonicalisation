@@ -5,7 +5,7 @@
  * same operations.  This header deliberately contains no backend details.
  *
  * Slice S3 changed `contains` to report allocation failure and added `admits` (review items 5
- * and 8).
+ * and 8).  Slice S4 adds `enumerate` (spec 8.1).
  *
  * Convention (spec section 3): permutations are dense image arrays p[v] = v^p of length
  * `degree`; lists act on the right, L^g = (g[L[0]], g[L[1]], ...).
@@ -19,6 +19,7 @@
 
 #include "arena/refcount.h"
 #include "canon/canon.h"
+#include "coset/coset.h"
 
 typedef struct canon_group_ops {
     /* Free the backend state `impl` (called once, when the last reference is released; the
@@ -46,6 +47,14 @@ typedef struct canon_group_ops {
      * limit (slice S3 review item 8): the explicit backend admits order <= max_group_order;
      * the chain backend admits every group it could build. */
     canon_status (*admits)(const canon_group *group, const canon_capacity *cap);
+    /* spec 8.1: the disjoint coset enumerator over the whole group, visit(G, id), with zero
+     * pruning, calling visitor->consume once for every element of G in the fixed reference
+     * order and counting visits against visitor->quota through canon_coset_visit_enter
+     * (src/coset/coset.h).  Slice S4: the chain backend runs src/coset/enumerate.c; the
+     * explicit backend runs the same traversal over its element table, as the test oracle.
+     * Both visit the same nodes in the same order, so they consume the same sequence and
+     * reach CAPACITY_LIMIT at the same point. */
+    canon_status (*enumerate)(const canon_group *group, canon_coset_visitor *visitor);
 } canon_group_ops;
 
 /* The opaque public handle (spec section 17).  Create it only with canon_group_alloc, which
