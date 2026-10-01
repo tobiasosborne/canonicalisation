@@ -544,7 +544,7 @@ int main(int argc, char **argv)
     canon_problem *problem = NULL;
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
-    canon_capacity cap = {0, 0, o.max_nodes, 0};
+    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0};
     const canon_context_options copts = {o.backend};
     const canon_problem_options popts = {o.witness};
     canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);

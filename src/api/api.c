@@ -1,8 +1,9 @@
-/* Slice S1-S4 public entry points (spec sections 3, 3.2, 8, 11.1, 17): context, capacity
- * descriptor and options (S3: the group backend), retain/release handles, groups and their order
- * (S3), subset and graph objects (S2), problems with targets and options (S4), workspaces,
- * solve for the canonical image and (S4) the enumeration objectives, results, result_encode
- * and result_verify_witness (S4).  Entry points of later slices remain in src/api/stubs.c. */
+/* Slice S1-S5 public entry points (spec sections 3, 3.2, 4.1, 4.2, 8, 11.1, 17): context,
+ * capacity descriptor and options (S3: the group backend), retain/release handles, groups and
+ * their order (S3), subset and graph objects (S2), objects imported from CDAG-2 streams and
+ * the stream validator (S5), problems with targets and options (S4), workspaces, solve for the
+ * canonical image and (S4) the enumeration objectives, results, result_encode and
+ * result_verify_witness (S4).  Entry points of later slices remain in src/api/stubs.c. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@
 #include "canon/canon.h"
 #include "object/graph.h"
 #include "object/object.h"
+#include "encoding/cdag_decode.h"
 #include "encoding/group_stream.h"
 #include "encoding/simple_upper.h"
 #include "object/subset.h"
@@ -26,6 +28,10 @@
 #define DEFAULT_MAX_GROUP_ORDER ((uint64_t)1 << 16)
 #define DEFAULT_MAX_SEARCH_NODES ((uint64_t)1 << 20)
 #define DEFAULT_MAX_OUTPUT_BYTES ((uint64_t)1 << 26)
+/* docs/slices/S5.md 2 (detailed plan 2.1): limits of a normal form */
+#define DEFAULT_MAX_NODES ((uint64_t)1 << 20)
+#define DEFAULT_MAX_REFS ((uint64_t)1 << 22)
+#define DEFAULT_MAX_LITERAL_BYTES ((uint64_t)1 << 26)
 
 /* Largest chunk handed to a sink in one call (spec 17: ordered borrowed chunks). */
 #define SINK_CHUNK ((size_t)1 << 16)
@@ -35,8 +41,8 @@ struct canon_context {
     canon_backend backend;   /* S3: group backend for canon_group_create, fixed at creation */
 };
 
-/* An object is a root (src/object/object.h): a top-level subset (S1) or a top-level coloured
- * directed multigraph (S2); nested DAGs arrive in S5.  Like
+/* An object is a root (src/object/object.h): a top-level subset (S1), a top-level coloured
+ * directed multigraph (S2) or (S5) any other EXT-DAG-1 root imported from a stream.  Like
  * canon_group, an object is immutable and shareable, so its reference count is reached through
  * a pointer (src/arena/refcount.h): retain/release work through a const handle without a
  * cast.  `block` is the allocation, used only to free it. */
@@ -109,6 +115,15 @@ static canon_capacity resolve_capacity(const canon_capacity *given, const canon_
         if (given->max_output_bytes != 0) {
             c.max_output_bytes = given->max_output_bytes;
         }
+        if (given->max_nodes != 0) {
+            c.max_nodes = given->max_nodes;
+        }
+        if (given->max_refs != 0) {
+            c.max_refs = given->max_refs;
+        }
+        if (given->max_literal_bytes != 0) {
+            c.max_literal_bytes = given->max_literal_bytes;
+        }
     }
     return c;
 }
@@ -133,8 +148,10 @@ canon_status canon_context_create_with_options(const canon_capacity *defaults,
     if (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT) {
         return CANON_INVALID_INPUT;
     }
-    const canon_capacity builtin = {DEFAULT_MAX_N, DEFAULT_MAX_GROUP_ORDER,
-                                    DEFAULT_MAX_SEARCH_NODES, DEFAULT_MAX_OUTPUT_BYTES};
+    const canon_capacity builtin = {DEFAULT_MAX_N,           DEFAULT_MAX_GROUP_ORDER,
+                                    DEFAULT_MAX_SEARCH_NODES, DEFAULT_MAX_OUTPUT_BYTES,
+                                    DEFAULT_MAX_NODES,       DEFAULT_MAX_REFS,
+                                    DEFAULT_MAX_LITERAL_BYTES};
     canon_context *ctx = malloc(sizeof *ctx);
     if (ctx == NULL) {
         return CANON_RESOURCE_LIMIT;
@@ -369,6 +386,55 @@ canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degre
                          out);
 }
 
+/* The limits of a normal form under a resolved capacity descriptor (spec 11.1). */
+static canon_dag_limits dag_limits(const canon_capacity *cap)
+{
+    canon_dag_limits lim = {cap->max_n, cap->max_nodes, cap->max_refs, cap->max_literal_bytes};
+    return lim;
+}
+
+canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_action action,
+                                 uint32_t degree, const uint8_t *stream, size_t stream_length,
+                                 canon_object **out)
+{
+    if (out == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *out = NULL;
+    if (ctx == NULL || (stream == NULL && stream_length > 0)) {
+        return CANON_INVALID_INPUT;
+    }
+    /* spec 4.1: "unknown schema/action/profile/encoding versions are unsupported, never
+     * reinterpreted"; spec 2.1: EXT-DAG-1 under ATOM-TRANSPORT-1 is the built-in pair */
+    if (schema != CANON_SCHEMA_EXT_DAG_1 || action != CANON_ACTION_ATOM_TRANSPORT_1) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
+    if (degree > ctx->defaults.max_n) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: admitted degree first, then the data */
+    }
+    canon_object *obj = new_object(CANON_ROOT_SUBSET, degree);
+    if (obj == NULL) {
+        return CANON_RESOURCE_LIMIT;
+    }
+    /* spec 17: copies data; spec 4.1 strict decode, spec 4.2 normalisation, spec 11.1 limits
+     * of the normal form against the context defaults, spec 7.1 root kind */
+    const canon_dag_limits lim = dag_limits(&ctx->defaults);
+    canon_status st = canon_root_import_stream(&obj->root, degree, stream, stream_length, &lim,
+                                               NULL);
+    return finish_object(obj, st, out);
+}
+
+canon_status canon_stream_validate(canon_context *ctx, const uint8_t *stream, size_t length)
+{
+    if (ctx == NULL || (stream == NULL && length > 0)) {
+        return CANON_INVALID_INPUT;
+    }
+    /* spec 4.2: reconstruct the normal form and require byte identity */
+    const canon_dag_limits lim = dag_limits(&ctx->defaults);
+    canon_cdag_reason reason = CANON_CDAG_OK;
+    return canon_cdag_validate(stream, length, &lim, &reason);
+}
+
 /* spec 3, 4.3, 4.4: the objective/profile/encoding/order/witness combinations implemented
  * (slices S1, S4).  "unknown schema/action/profile/encoding versions are unsupported, never
  * reinterpreted" (spec 4.1). */
@@ -458,6 +524,18 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     /* spec 11.1: "Validation is deterministic over the normalised input." */
     if (object->root.n > cap.max_n) {
         return CANON_CAPACITY_LIMIT;
+    }
+    /* spec 11.1 node/reference/literal limits of the normal form (S5; the target is the
+     * object's kind and degree, and is checked the same way) */
+    for (int which = 0; which < 2; ++which) {
+        const canon_object *o = which == 0 ? object : target;
+        uint64_t nodes = 0, refs = 0, literal = 0;
+        if (o != NULL) {
+            canon_root_counts(&o->root, &nodes, &refs, &literal);
+            if (nodes > cap.max_nodes || refs > cap.max_refs || literal > cap.max_literal_bytes) {
+                return CANON_CAPACITY_LIMIT;
+            }
+        }
     }
     /* spec 11.1: each backend states which descriptors admit it (S3 brief 2.5: the explicit
      * table is bounded by max_group_order, the chain by nothing beyond its uint64 order). */

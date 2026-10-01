@@ -5,19 +5,21 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 to S4 (docs/slices/S1.md, S2.md, S3.md, S4.md).
+ * Status of this header: slices S1 to S5 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
  * subset objects, coloured directed multigraph objects and the simple undirected graph wrapper
- * (S2), problems for CANONICAL_IMAGE under profile P1 and (S4) for the enumeration objectives
- * LEX_MIN_IMAGE (orders CDAG-BYTE-1 and SIMPLE-UPPER-1), TRANSPORTER_ONE, STABILISER and
- * TRANSPORTER_COSET under profile NO_TREE, all with encoding CDAG-2, workspaces, canon_solve,
- * the result accessors, canon_result_encode and canon_result_verify_witness (S4).  Every other
- * entry point is a stub returning CANON_UNSUPPORTED_ACTION until its slice lands
- * (canon_object_create from a stream: S5; canon_solve_batch: S8; checkpoints: M6).  ALL
- * argument lists are PROVISIONAL until M4 and will be frozen there together with the section
- * 17 client vectors.
+ * (S2), objects of schema EXT-DAG-1 imported from a CDAG-2 stream and canon_stream_validate
+ * (S5: nested tuples, sets, multisets, literals, atoms, permutation, subgroup and
+ * labeling-coset leaves), problems for CANONICAL_IMAGE under profile P1 and (S4) for the
+ * enumeration objectives LEX_MIN_IMAGE (orders CDAG-BYTE-1 and SIMPLE-UPPER-1),
+ * TRANSPORTER_ONE, STABILISER and TRANSPORTER_COSET under profile NO_TREE, all with encoding
+ * CDAG-2, workspaces, canon_solve, the result accessors, canon_result_encode and
+ * canon_result_verify_witness (S4).  Every other entry point is a stub returning
+ * CANON_UNSUPPORTED_ACTION until its slice lands (canon_solve_batch: S8; checkpoints: M6).
+ * ALL argument lists are PROVISIONAL until M4 and will be frozen there together with the
+ * section 17 client vectors.
  */
 #ifndef CANON_CANON_H
 #define CANON_CANON_H
@@ -124,12 +126,20 @@ typedef struct canon_capacity {
                                   P1 reference traversal, plus (S4) the visit calls of every
                                   spec 8.1 coset enumeration the solve runs */
     uint64_t max_output_bytes; /* canonical stream bytes */
+    /* S5, detailed plan 2.1: limits of an object's normal form (spec 11.1 "node/reference/
+     * literal ... limits", "deterministic over the normalised input"): records, child
+     * references, and literal bytes (the |s| of every literal record).  A subset of k atoms
+     * counts k + 1 records and k references; a graph one record. */
+    uint64_t max_nodes;
+    uint64_t max_refs;
+    uint64_t max_literal_bytes;
 } canon_capacity;
 
 /* spec 17: create an immutable context holding the capacity defaults and the default options
  * (canon_context_create_with_options).  `defaults` may be NULL; a NULL
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
- * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26.
+ * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
+ * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5).
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -242,11 +252,41 @@ canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degre
                                               const uint32_t (*edges)[2], size_t edge_count,
                                               canon_object **out);
 
-/* spec section 17, 4.1: build an object from a CDAG-2 stream (copied by default).
- * STUB until slice S5: returns CANON_UNSUPPORTED_ACTION. */
+/* spec 17, 4.1, 4.2 (slice S5): build an object from a CDAG-2 stream (copied).  `schema` must
+ * be CANON_SCHEMA_EXT_DAG_1 and `action` CANON_ACTION_ATOM_TRANSPORT_1 (else
+ * CANON_UNSUPPORTED_ACTION: "unknown schema/action ... versions are unsupported, never
+ * reinterpreted").  The stream need not be canonical: sharing, record order and unreachable
+ * records have no meaning (spec 4.2), so repeated equal records, unreachable records, a root
+ * other than the last record, non-canonical Group presentations or coset representatives and
+ * graph arcs out of order or repeated (combined by exact addition) are accepted and
+ * normalised.  It must be well formed (spec 4.1): a bad magic, unknown tag, out-of-domain
+ * atom, malformed field (non-shortest or zero Nat count, Perm not a bijection of its listed
+ * support, malformed Group blocks), forward or self reference, set or multiset children not
+ * strictly increasing, root >= q or trailing bytes is CANON_INVALID_INPUT; the header's U32(n)
+ * must equal `degree` (else CANON_INVALID_INPUT).  CANON_UNSUPPORTED_ACTION for an encoding
+ * version byte other than 02, a header schema/action other than 1/1, the relations record 0a,
+ * or a graph record below the root (later slices).  CANON_CAPACITY_LIMIT for degree above the
+ * context's max_n, a count above uint64 (count-bit limit 64), or a normal form with more
+ * records, references or literal bytes than the context's max_nodes, max_refs,
+ * max_literal_bytes.  Order: NULL arguments (INVALID_INPUT), schema/action arguments, degree,
+ * then the stream in order (the first violation decides), then the normal form.  A root that
+ * is a set of atoms is a subset object and a graph record a graph object, identical to the
+ * objects the S1/S2 builders make; anything else is a nested object whose P1 initial key is
+ * empty (spec 7.1).  `stream` may be NULL when stream_length is 0. */
 canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_action action,
                                  uint32_t degree, const uint8_t *stream, size_t stream_length,
                                  canon_object **out);
+
+/* spec 4.2 (slice S5): CANON_COMPLETE iff `stream` is a well-formed CDAG-2 stream in canonical
+ * form: decoding, normalising and re-encoding it reproduces exactly these bytes ("Validate
+ * imported canonical streams by reconstructing this normal form and requiring byte identity;
+ * repeated equal nodes, redundant references, leading zeroes, noncanonical orders or
+ * unreachable records are invalid canonical encodings").  CANON_INVALID_INPUT for a malformed
+ * or non-canonical stream (including a graph with arcs out of order or repeated, which
+ * canon_object_create accepts and combines) and for NULL ctx (or NULL stream with a nonzero
+ * length); CANON_UNSUPPORTED_ACTION and CANON_CAPACITY_LIMIT as for canon_object_create, with
+ * the context's limits (U32(n) above max_n is CANON_CAPACITY_LIMIT). */
+canon_status canon_stream_validate(canon_context *ctx, const uint8_t *stream, size_t length);
 
 /* spec section 17, 3: bind group, object, objective, profile, encoding and order explicitly.
  * `capacity` may be NULL (all context defaults); a zero field selects the context default.
@@ -258,11 +298,14 @@ canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_
  * other than CDAG-2 or an order other than CDAG-BYTE-1;
  * CANON_INVALID_INPUT for a degree mismatch between group and object; CANON_CAPACITY_LIMIT
  * when the degree exceeds max_n, the group was built by the explicit backend and its order
- * exceeds max_group_order (S3: the chain backend has no such limit), or the exact
- * canonical stream length exceeds max_output_bytes (spec 11.1).  That length is a function of
- * the input alone: for a subset it is determined by its size; for a graph by n, the colour
- * multiset, the arc count, the label bytes and the multiplicities, none of which the action
- * changes. */
+ * exceeds max_group_order (S3: the chain backend has no such limit), the object's normal form
+ * has more records, references or literal bytes than max_nodes, max_refs, max_literal_bytes
+ * (S5), or the canonical stream length exceeds max_output_bytes (spec 11.1).  That length is
+ * a function of the input alone: for a subset it is determined by its size; for a graph by n,
+ * the colour multiset, the arc count, the label bytes and the multiplicities; for a nested
+ * object (S5) by its records' lengths, none of which the action changes, except the canonical
+ * Group bytes of subgroup and labeling-coset leaves, which are counted at a conservative
+ * bound derived from n and |H| (spec 11.1: "a conservative input-derived bound"). */
 canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
                                   const canon_object *object, canon_objective objective,
                                   canon_profile profile, canon_encoding encoding, canon_order order,

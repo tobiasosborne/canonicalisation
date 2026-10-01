@@ -2,11 +2,12 @@
  * UNSUPPORTED_ACTION; the slice S1 entry points validate NULL arguments.
  *
  * Documented stub behaviour (src/api/stubs.c): the section 17 entry points not implemented yet
- * (canon_object_create from a stream, canon_solve_batch, canon_checkpoint_write/read) return
- * CANON_UNSUPPORTED_ACTION unconditionally, even for NULL arguments, and store NULL through
- * out-pointers.  The implemented entry points (src/api/api.c), including
- * canon_result_verify_witness since slice S4, return CANON_INVALID_INPUT for NULL required
- * arguments and store NULL (or false) through out-pointers. */
+ * (canon_solve_batch, canon_checkpoint_write/read) return CANON_UNSUPPORTED_ACTION
+ * unconditionally, even for NULL arguments, and store NULL through out-pointers.  The
+ * implemented entry points (src/api/api.c), including canon_result_verify_witness since slice
+ * S4 and canon_object_create and canon_stream_validate since slice S5, return
+ * CANON_INVALID_INPUT for NULL required arguments and store NULL (or false) through
+ * out-pointers. */
 #include <stdio.h>
 #include <string.h>
 
@@ -55,9 +56,16 @@ int main(void)
     CHECK(canon_workspace_create(NULL, NULL) == CANON_INVALID_INPUT);
     CHECK(canon_result_encode(NULL, NULL, NULL) == CANON_INVALID_INPUT);
 
-    /* Remaining stubs. */
+    /* S5: canon_object_create and canon_stream_validate are implemented. */
+    canon_object *object = (canon_object *)&failures;
     CHECK(canon_object_create(NULL, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 0, NULL,
-                              0, NULL) == CANON_UNSUPPORTED_ACTION);
+                              0, &object) == CANON_INVALID_INPUT);
+    CHECK(object == NULL);
+    CHECK(canon_object_create(NULL, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 0, NULL,
+                              0, NULL) == CANON_INVALID_INPUT);
+    CHECK(canon_stream_validate(NULL, NULL, 0) == CANON_INVALID_INPUT);
+
+    /* Remaining stubs. */
 
     canon_status st[2] = {CANON_COMPLETE, CANON_COMPLETE};
     canon_result *rs[2] = {NULL, NULL};

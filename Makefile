@@ -27,7 +27,8 @@ endif
 LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c \
            src/encoding/graph_stream.c src/encoding/simple_upper.c src/encoding/group_stream.c \
-           src/object/subset.c src/object/graph.c src/object/object.c \
+           src/encoding/cdag_encode.c src/encoding/cdag_decode.c \
+           src/object/subset.c src/object/graph.c src/object/dag.c src/object/object.c \
            src/bsgs/group.c src/bsgs/explicit.c src/bsgs/provenance.c src/bsgs/chain.c \
            src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c \
            src/coset/least.c src/coset/enumerate.c src/partition/partition.c \
@@ -39,7 +40,8 @@ LIB      = $(BUILD)/libcanon.a
 UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition test_search_subset \
              test_nat test_graph test_graph_stream test_signature test_simple_upper \
              test_search_graph test_chain test_reference_schreier test_verify test_provenance \
-             test_coset_least test_enumerate test_group_stream test_objectives
+             test_coset_least test_enumerate test_group_stream test_objectives \
+             test_dag
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
