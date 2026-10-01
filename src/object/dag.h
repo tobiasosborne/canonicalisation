@@ -65,20 +65,20 @@ typedef struct canon_rec {
     uint32_t child_off;   /* first entry in the arena's child and mult arrays */
     size_t payload_off;   /* first payload byte in the arena's pool */
     size_t payload_len;
-    uint32_t height;      /* spec 4.2: 0 without child references, else 1 + max child height */
+    uint32_t height; /* spec 4.2: 0 without child references, else 1 + max child height */
 } canon_rec;
 
 typedef struct canon_dag {
-    uint32_t n;          /* degree of the atom domain (spec 2.1, the stream's U32(n)) */
-    uint32_t count;      /* records */
+    uint32_t n;     /* degree of the atom domain (spec 2.1, the stream's U32(n)) */
+    uint32_t count; /* records */
     uint32_t rec_cap;
     canon_rec *recs;
-    uint32_t refs;       /* child references in use (entries of child and mult) */
+    uint32_t refs; /* child references in use (entries of child and mult) */
     uint32_t child_cap, mult_cap;
-    uint32_t *child;     /* child record indices */
-    uint64_t *mult;      /* parallel to child: multiset counts (> 0); 1 for tuples and sets */
-    canon_buf pool;      /* payload bytes */
-    uint32_t root;       /* CANON_DAG_NONE until set */
+    uint32_t *child; /* child record indices */
+    uint64_t *mult;  /* parallel to child: multiset counts (> 0); 1 for tuples and sets */
+    canon_buf pool;  /* payload bytes */
+    uint32_t root;   /* CANON_DAG_NONE until set */
     /* Summary of a normalised arena (canon_dag_normalise): */
     uint64_t stream_size;   /* spec 11.1: the exact length of its CDAG-2 stream */
     uint64_t literal_bytes; /* total |s| over its literal records (capacity, detailed plan 2.1) */
@@ -97,9 +97,9 @@ void canon_dag_reset(canon_dag *d, uint32_t n);
  * the children (spec 4.2), which must already be records of d.  *index (may be NULL) receives
  * the new record's index.  CANON_CAPACITY_LIMIT when the record or reference count would not
  * fit uint32, CANON_RESOURCE_LIMIT on allocation failure; d is unchanged on failure. */
-canon_status canon_dag_append(canon_dag *d, uint8_t tag, const uint8_t *payload,
-                              size_t payload_len, const uint32_t *children,
-                              const uint64_t *counts, uint32_t k, uint32_t *index);
+canon_status canon_dag_append(canon_dag *d, uint8_t tag, const uint8_t *payload, size_t payload_len,
+                              const uint32_t *children, const uint64_t *counts, uint32_t k,
+                              uint32_t *index);
 
 /* Payload of record i. */
 static inline const uint8_t *canon_dag_payload(const canon_dag *d, uint32_t i)
@@ -119,10 +119,10 @@ typedef struct canon_dag_pair {
 
 typedef struct canon_dag_scratch {
     uint32_t map_cap, reach_cap;
-    uint32_t *map;    /* input record -> interned node id */
-    uint8_t *reach;   /* input record reachable from the root */
+    uint32_t *map;  /* input record -> interned node id */
+    uint8_t *reach; /* input record reachable from the root */
     uint32_t final_cap, order_cap, order_tmp_cap;
-    uint32_t *final;  /* interned node id -> final index */
+    uint32_t *final; /* interned node id -> final index */
     uint32_t *order, *order_tmp;
     uint32_t table_cap;   /* entries allocated in table */
     uint32_t table_slots; /* slots in use for the current normalisation (a power of two) */
@@ -132,11 +132,11 @@ typedef struct canon_dag_scratch {
     uint32_t fchild_cap, fmult_cap;
     uint32_t *fchild; /* children of interned nodes in final indices (sorted for sets) */
     uint64_t *fmult;
-    canon_dag nodes;  /* the interned nodes */
-    canon_dag raw;    /* the action's image before normalisation */
-    canon_buf leaf;   /* a leaf payload under construction */
+    canon_dag nodes; /* the interned nodes */
+    canon_dag raw;   /* the action's image before normalisation */
+    canon_buf leaf;  /* a leaf payload under construction */
     canon_buf leaf2;
-    uint32_t n_cap;   /* degree the per-point arrays below hold */
+    uint32_t n_cap;               /* degree the per-point arrays below hold */
     uint32_t *perm, *perm2, *inv; /* n entries each */
     uint64_t *bits;               /* 2 * ceil(n / 64) words (src/encoding/cdag_decode.h) */
     canon_perm_table gens;        /* generators of a subgroup leaf */
@@ -158,12 +158,12 @@ void canon_dag_scratch_free(canon_dag_scratch *s);
  *   4. numbering by increasing height and, within a height, by exact record bytes with the
  *      already assigned child indices; the root is the last record.
  * Statuses: CANON_INVALID_INPUT for out == in or out one of the scratch's arenas, a root out of
- * range, a child reference not smaller than its parent or a malformed leaf payload; CANON_UNSUPPORTED_ACTION for a reachable graph
- * record other than the root (slice S5 scope); CANON_CAPACITY_LIMIT for a merged multiset count
- * above uint64 (count-bit limit 64, detailed plan 2.1), an order above uint64 or a size that
- * does not fit; CANON_RESOURCE_LIMIT on allocation failure; CANON_INTERNAL_ERROR if an
- * invariant fails.  On success out->stream_size, literal_bytes and group_leaves are set and
- * out->image_bound = out->stream_size (see canon_dag_image_bound). */
+ * range, a child reference not smaller than its parent or a malformed leaf payload;
+ * CANON_UNSUPPORTED_ACTION for a reachable graph record other than the root (slice S5 scope);
+ * CANON_CAPACITY_LIMIT for a merged multiset count above uint64 (count-bit limit 64, detailed
+ * plan 2.1), an order above uint64 or a size that does not fit; CANON_RESOURCE_LIMIT on allocation
+ * failure; CANON_INTERNAL_ERROR if an invariant fails.  On success out->stream_size, literal_bytes
+ * and group_leaves are set and out->image_bound = out->stream_size (see canon_dag_image_bound). */
 canon_status canon_dag_normalise(const canon_dag *in, canon_dag *out, canon_dag_scratch *s,
                                  bool leaves_canonical);
 

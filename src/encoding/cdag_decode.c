@@ -98,8 +98,8 @@ static void bit_set(uint64_t *m, uint32_t v)
     m[v / 64u] |= (uint64_t)1 << (v % 64u);
 }
 
-canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits,
-                                  uint32_t *dense, canon_cdag_reason *reason)
+canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits, uint32_t *dense,
+                                  canon_cdag_reason *reason)
 {
     uint32_t s = 0;
     if (!take_u32(r, &s)) {
@@ -157,8 +157,7 @@ canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bi
 }
 
 canon_status canon_cdag_read_group(canon_cdag_reader *r, uint32_t n, uint64_t *bits,
-                                   canon_perm_table *gens, uint32_t *tmp,
-                                   canon_cdag_reason *reason)
+                                   canon_perm_table *gens, uint32_t *tmp, canon_cdag_reason *reason)
 {
     const uint8_t *mode = NULL;
     uint32_t k = 0;
@@ -280,8 +279,7 @@ canon_status canon_cdag_read_graph(canon_cdag_reader *r, uint32_t n, canon_graph
     for (uint32_t i = 0; i < e; ++i) {
         /* "An arc record is U32(source),U32(target),B(label),Nat(multiplicity)" */
         uint32_t s = 0, t = 0, len = 0;
-        if (!take_u32(r, &s) || !take_u32(r, &t) || !take_u32(r, &len) ||
-            !take(r, len, &bytes)) {
+        if (!take_u32(r, &s) || !take_u32(r, &t) || !take_u32(r, &len) || !take(r, len, &bytes)) {
             return TRUNCATED(reason);
         }
         if (s >= n || t >= n) {
@@ -345,8 +343,8 @@ typedef struct kids {
 static canon_status kids_reserve(kids *k, uint32_t need)
 {
     void *c = k->child, *m = k->mult;
-    canon_status st = canon_grow_array_to(&c, &k->cap_c, 0, need > 0 ? need : 1u, 16u,
-                                          sizeof *k->child);
+    canon_status st =
+        canon_grow_array_to(&c, &k->cap_c, 0, need > 0 ? need : 1u, 16u, sizeof *k->child);
     k->child = c;
     if (st == CANON_COMPLETE) {
         st = canon_grow_array_to(&m, &k->cap_m, 0, need > 0 ? need : 1u, 16u, sizeof *k->mult);

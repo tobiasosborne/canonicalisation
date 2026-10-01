@@ -36,8 +36,8 @@ static void put_perm(canon_dag *d, const uint32_t *p, uint32_t n, uint32_t *inde
 
 /* A rule-2 Group payload listing the k generators (any presentation), optionally followed by
  * Perm(r) for a coset. */
-static void put_group(canon_dag *d, const uint32_t *gens, uint32_t k, uint32_t n,
-                      const uint32_t *r, uint32_t *index)
+static void put_group(canon_dag *d, const uint32_t *gens, uint32_t k, uint32_t n, const uint32_t *r,
+                      uint32_t *index)
 {
     canon_buf b;
     canon_buf_init(&b);
@@ -165,15 +165,17 @@ static void test_nested_resort(void)
     d.root = top;
     CHECK(canon_dag_normalise(&d, &norm, &S, false) == CANON_COMPLETE);
     stream_of(&norm, &a);
-    CHECK(check_hex_is(a.data, a.len, "434e0200010001 00000002 00000005 01 00000000 01 00000001 "
-                                      "03 00000002 00000000 00000001 03 00000002 00000001 "
-                                      "00000001 04 00000002 00000002 00000003 00000004"));
+    CHECK(check_hex_is(a.data, a.len,
+                       "434e0200010001 00000002 00000005 01 00000000 01 00000001 "
+                       "03 00000002 00000000 00000001 03 00000002 00000001 "
+                       "00000001 04 00000002 00000002 00000003 00000004"));
     const uint32_t swap[2] = {1, 0};
     CHECK(canon_dag_act(&norm, swap, &img, &S) == CANON_COMPLETE);
     stream_of(&img, &a);
-    CHECK(check_hex_is(a.data, a.len, "434e0200010001 00000002 00000005 01 00000000 01 00000001 "
-                                      "03 00000002 00000000 00000000 03 00000002 00000001 "
-                                      "00000000 04 00000002 00000002 00000003 00000004"));
+    CHECK(check_hex_is(a.data, a.len,
+                       "434e0200010001 00000002 00000005 01 00000000 01 00000001 "
+                       "03 00000002 00000000 00000000 03 00000002 00000001 "
+                       "00000000 04 00000002 00000002 00000003 00000004"));
     /* the same value built directly */
     put_atom(&direct, 1, &a1);
     put_atom(&direct, 0, &a0);
@@ -199,9 +201,9 @@ static void test_nested_resort(void)
 
 typedef struct rnode {
     uint8_t tag;
-    uint32_t value;   /* atom id or literal choice */
-    uint32_t p[6];    /* permutation leaf, coset representative */
-    uint32_t k;       /* children, or generators of a subgroup/coset leaf */
+    uint32_t value; /* atom id or literal choice */
+    uint32_t p[6];  /* permutation leaf, coset representative */
+    uint32_t k;     /* children, or generators of a subgroup/coset leaf */
     uint32_t kid[3];
     uint64_t cnt[3];
     uint32_t gens[3][6];
@@ -274,8 +276,8 @@ static uint32_t build(canon_dag *d, uint32_t n, const rnode *nodes, uint32_t m, 
         case CANON_REC_LITERAL: {
             uint8_t p[8] = {0, 0, 0, (uint8_t)strlen(LITS[x->value])};
             memcpy(p + 4, LITS[x->value], strlen(LITS[x->value]));
-            CHECK(canon_dag_append(d, CANON_REC_LITERAL, p, 4 + strlen(LITS[x->value]), NULL,
-                                   NULL, 0, &rec[i]) == CANON_COMPLETE);
+            CHECK(canon_dag_append(d, CANON_REC_LITERAL, p, 4 + strlen(LITS[x->value]), NULL, NULL,
+                                   0, &rec[i]) == CANON_COMPLETE);
             break;
         }
         case CANON_REC_PERM:

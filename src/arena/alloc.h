@@ -45,8 +45,7 @@ static inline void *canon_alloc_array(size_t count, size_t size, canon_status *s
  * unchanged (spec 17).  elem_bytes may be 0 (rows of degree 0).  With used = 0 this reserves
  * scratch whose contents need not be kept. */
 static inline canon_status canon_grow_array_to(void **data, uint32_t *cap, uint32_t used,
-                                               uint64_t need, uint32_t min_cap,
-                                               size_t elem_bytes)
+                                               uint64_t need, uint32_t min_cap, size_t elem_bytes)
 {
     if (*data != NULL && need <= *cap) {
         return CANON_COMPLETE;

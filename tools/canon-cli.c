@@ -306,8 +306,8 @@ typedef struct subcommand {
     const char *name;
     canon_objective objective;
     canon_profile profile;
-    int kind;        /* 0 subset, 1 graph, 2 stream (S5), -1 chosen by --kind or the options */
-    bool target;     /* takes a target object */
+    int kind;    /* 0 subset, 1 graph, 2 stream (S5), -1 chosen by --kind or the options */
+    bool target; /* takes a target object */
 } subcommand;
 
 static const subcommand SUBCOMMANDS[] = {

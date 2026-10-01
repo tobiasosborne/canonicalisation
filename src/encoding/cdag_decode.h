@@ -79,8 +79,8 @@ size_t canon_cdag_bits_words(uint32_t n);
  * nonbijection."  Reads one Perm at r's position.  `bits` has canon_cdag_bits_words(n) zero
  * words and is zero again on return.  `dense` (n entries, may be NULL) receives p as an image
  * array.  CANON_INVALID_INPUT with *reason on a violation. */
-canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits,
-                                  uint32_t *dense, canon_cdag_reason *reason);
+canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits, uint32_t *dense,
+                                  canon_cdag_reason *reason);
 
 /* spec 9.4 Group(H): rule 1 "01 || U32(k)" then k blocks "U32(size), U32(points...)" (size
  * >= 2, points increasing, blocks ordered by least point, disjoint), or rule 2 "00 || U32(k)

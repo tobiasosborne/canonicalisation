@@ -37,8 +37,7 @@ static uint32_t literal(canon_dag *d, const char *s)
     p[3] = (uint8_t)len;
     memcpy(p + 4, s, len);
     uint32_t i = 0;
-    CHECK(canon_dag_append(d, CANON_REC_LITERAL, p, 4 + len, NULL, NULL, 0, &i) ==
-          CANON_COMPLETE);
+    CHECK(canon_dag_append(d, CANON_REC_LITERAL, p, 4 + len, NULL, NULL, 0, &i) == CANON_COMPLETE);
     return i;
 }
 
@@ -285,9 +284,9 @@ static void test_numbering(void)
 
 typedef struct rnode {
     uint8_t tag;
-    uint32_t value;   /* atom id, literal choice, permutation choice */
+    uint32_t value; /* atom id, literal choice, permutation choice */
     uint32_t k;
-    uint32_t kid[4];  /* child node indices (smaller) */
+    uint32_t kid[4]; /* child node indices (smaller) */
     uint64_t cnt[4];
 } rnode;
 
@@ -449,8 +448,7 @@ static void test_random_independence(void)
         CHECK(canon_dag_equal(&na, &again));
         /* encode, decode, normalise: identical bytes; and the stream validates */
         canon_cdag_reason reason = CANON_CDAG_OK;
-        CHECK(canon_cdag_decode(sa.data, sa.len, &n, UINT32_MAX, &dec, &reason) ==
-              CANON_COMPLETE);
+        CHECK(canon_cdag_decode(sa.data, sa.len, &n, UINT32_MAX, &dec, &reason) == CANON_COMPLETE);
         CHECK(canon_dag_normalise(&dec, &again, &S, false) == CANON_COMPLETE);
         canon_buf_truncate(&sc, 0);
         CHECK(canon_dag_stream_write(&sc, &again) == CANON_COMPLETE && buf_eq(&sa, &sc));
@@ -577,8 +575,9 @@ static void test_leaves(void)
     canon_buf_init(&out);
     /* C3 presented by [2,0,1] (rule 2): spec 7.4 "Group(C3)=00 00000001 00000003 00000000
      * 00000001 00000001 00000002 00000002 00000000" (the generator [1,2,0]) */
-    uint32_t g = leaf_hex(&d, CANON_REC_GROUP, "00 00000001 00000003 00000000 00000002 00000001 "
-                                               "00000000 00000002 00000001");
+    uint32_t g = leaf_hex(&d, CANON_REC_GROUP,
+                          "00 00000001 00000003 00000000 00000002 00000001 "
+                          "00000000 00000002 00000001");
     CHECK(normal_stream(&d, g, &out, &norm) == CANON_COMPLETE);
     CHECK(buf_is(&out, "434e0200010001 00000003 00000001 07 00 00000001 00000003 00000000 "
                        "00000001 00000001 00000002 00000002 00000000 00000000"));
@@ -595,13 +594,15 @@ static void test_leaves(void)
     const char *want = "434e0200010001 00000003 00000001 08 01 00000001 00000002 00000000 "
                        "00000001 00000002 00000001 00000002 00000002 00000001 00000000";
     canon_dag_reset(&d, 3);
-    g = leaf_hex(&d, CANON_REC_COSET, "01 00000001 00000002 00000000 00000001 "
-                                      "00000003 00000000 00000002 00000001 00000000 00000002 "
-                                      "00000001");
+    g = leaf_hex(&d, CANON_REC_COSET,
+                 "01 00000001 00000002 00000000 00000001 "
+                 "00000003 00000000 00000002 00000001 00000000 00000002 "
+                 "00000001");
     CHECK(normal_stream(&d, g, &out, &norm) == CANON_COMPLETE && buf_is(&out, want));
     canon_dag_reset(&d, 3);
-    g = leaf_hex(&d, CANON_REC_COSET, "01 00000001 00000002 00000000 00000001 "
-                                      "00000002 00000001 00000002 00000002 00000001");
+    g = leaf_hex(&d, CANON_REC_COSET,
+                 "01 00000001 00000002 00000000 00000001 "
+                 "00000002 00000001 00000002 00000002 00000001");
     CHECK(normal_stream(&d, g, &out, &norm) == CANON_COMPLETE && buf_is(&out, want));
     /* two presentations of one group are one node */
     canon_dag_reset(&d, 3);
@@ -702,8 +703,9 @@ static void test_output_size(void)
      * bytes); conjugated by g = (1 2) = [0,2,1,3] it becomes <(0 1 2 3)>, whose least element
      * [1,2,3,0] generates it, k = 1 (41 bytes). */
     canon_dag_reset(&d, 4);
-    uint32_t h = leaf_hex(&d, CANON_REC_GROUP, "00 00000001 00000004 00000000 00000002 00000001 "
-                                               "00000003 00000002 00000001 00000003 00000000");
+    uint32_t h = leaf_hex(&d, CANON_REC_GROUP,
+                          "00 00000001 00000004 00000000 00000002 00000001 "
+                          "00000003 00000002 00000001 00000003 00000000");
     CHECK(normal_stream(&d, h, &out, &norm) == CANON_COMPLETE);
     CHECK(norm.recs[0].payload_len == 77);
     CHECK(canon_dag_image_bound(&norm, &S) == CANON_COMPLETE);
