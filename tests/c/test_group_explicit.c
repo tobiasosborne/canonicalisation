@@ -97,7 +97,7 @@ int main(void)
         CHECK(in(g, r2));
         CHECK(!in(g, tr));
         /* S3 review item 8: the explicit backend admits a descriptor iff |G| <= max_group_order */
-        canon_capacity cap = {0, 3, 0, 0};
+        canon_capacity cap = {0, 3, 0, 0, 0, 0, 0};
         CHECK(g->ops->admits(g, &cap) == CANON_COMPLETE);
         cap.max_group_order = 2;
         CHECK(g->ops->admits(g, &cap) == CANON_CAPACITY_LIMIT);

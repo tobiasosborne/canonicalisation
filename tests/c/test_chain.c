@@ -192,7 +192,7 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
     CHECK(canon_group_chain_of(ex) == NULL);
     /* S3 review item 8: the chain admits every descriptor; the explicit table only up to its
      * order */
-    canon_capacity tight = {0, 1, 0, 0};
+    canon_capacity tight = {0, 1, 0, 0, 0, 0, 0};
     CHECK(ch->ops->admits(ch, &tight) == CANON_COMPLETE);
     CHECK(ex->ops->admits(ex, &tight) ==
           (ex->ops->order(ex) <= 1 ? CANON_COMPLETE : CANON_CAPACITY_LIMIT));

@@ -106,7 +106,7 @@ static void test_capacity(canon_context *ctx, canon_workspace *ws)
     /* spec 11.1 logical work quota: the arc-free graph on 2 vertices under Sym(2) has three
      * NODE tokens (root plus two children), as for the empty subset. */
     graph_case c = {2, swap, 1, NULL, NULL, NULL, 0};
-    canon_capacity cap = {0, 0, 2, 0};
+    canon_capacity cap = {0, 0, 2, 0, 0, 0, 0};
     canon_result *r = NULL;
     CHECK(solve_graph(ctx, ws, &c, &cap, &r) == CANON_CAPACITY_LIMIT);
     CHECK(r != NULL && canon_result_status(r) == CANON_CAPACITY_LIMIT);
@@ -125,7 +125,7 @@ static void test_capacity(canon_context *ctx, canon_workspace *ws)
     const canon_arc arc01[1] = {{0, 1, NULL, 0, 1}};
     c.arcs = arc01;
     c.arc_count = 1;
-    cap = (canon_capacity){0, 0, 0, 48};
+    cap = (canon_capacity){0, 0, 0, 48, 0, 0, 0};
     CHECK(solve_graph(ctx, ws, &c, &cap, &r) == CANON_CAPACITY_LIMIT && r == NULL);
     cap.max_output_bytes = 49;
     CHECK(solve_graph(ctx, ws, &c, &cap, &r) == CANON_COMPLETE);
@@ -268,7 +268,7 @@ static void test_invalid(canon_context *ctx)
     canon_object_release(x);
     /* Context degree limit, checked before the data. */
     canon_context *small = NULL;
-    canon_capacity d = {1, 0, 0, 0};
+    canon_capacity d = {1, 0, 0, 0, 0, 0, 0};
     CHECK(canon_context_create(&d, &small) == CANON_COMPLETE);
     CHECK(canon_object_create_graph(small, 2, colours, lengths, zero, 1, &x) ==
           CANON_CAPACITY_LIMIT);
@@ -433,7 +433,7 @@ static void test_release_then_reuse(canon_context *ctx)
      * 3-cycle under Sym(3) does not split at the root, so it needs more than one node */
     const canon_arc cycle[3] = {{0, 1, lab, 3, 1}, {1, 2, lab, 3, 1}, {2, 0, lab, 3, 1}};
     graph_case third = {3, sym3, 2, NULL, NULL, cycle, 3};
-    canon_capacity cap = {0, 0, 1, 0};
+    canon_capacity cap = {0, 0, 1, 0, 0, 0, 0};
     CHECK(solve_graph(ctx, ws, &third, &cap, &r) == CANON_CAPACITY_LIMIT);
     canon_result_release(r);
     CHECK(solve_graph(ctx, ws, &second, NULL, &r) == CANON_COMPLETE);
