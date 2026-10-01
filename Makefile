@@ -24,11 +24,12 @@ LDFLAGS  += -flto
 endif
 
 LIB_SRC  = src/api/version.c src/api/stubs.c \
-           src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c
+           src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c \
+           src/object/subset.c src/bsgs/explicit.c src/partition/partition.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
-UNIT_TESTS = test_perm test_wire
+UNIT_TESTS = test_perm test_wire test_group_explicit test_partition
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 FORMAT_FILES = $(shell find include src checker tests/c -name '*.c' -o -name '*.h' 2>/dev/null)
