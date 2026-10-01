@@ -1,8 +1,8 @@
 # Plain-make build of the canon library; works with gcc alone (no cmake needed).
 # CMakeLists.txt is a parallel definition of the same targets.
-#   make            build library, checker and C tests
+#   make            build library, checker, canon-cli and C tests
 #   make test       run the C tests
-#   make check      review_checks.py plus the Python vector/hexdump tests
+#   make check      review_checks.py plus the Python tests (vectors, hexdump, CLI end to end)
 #   make format     clang-format (no-op with a message if unavailable)
 #   make clean
 # Options: CC=clang  SANITIZE=1 (address,undefined)  LTO=1  BUILD=dir
@@ -34,7 +34,7 @@ UNIT_TESTS = test_perm test_wire test_group_explicit test_partition test_search_
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
-FORMAT_FILES = $(shell find include src checker tests/c -name '*.c' -o -name '*.h' 2>/dev/null)
+FORMAT_FILES = $(shell find include src checker tests/c tools -name '*.c' -o -name '*.h' 2>/dev/null)
 
 .PHONY: all test check format clean
 all: $(LIB) $(CHECKER) $(CLI) $(TESTS)
@@ -68,9 +68,10 @@ $(UNIT_TESTS:%=$(BUILD)/%): $(BUILD)/%: tests/c/%.c tests/c/check.h $(LIB)
 test: all
 	@set -e; for t in $(TESTS); do echo "run $$t"; $$t; done
 
-check:
+# make check builds the CLI first: tests/python/test_e2e.py drives it through CANON_CLI.
+check: $(CLI)
 	nice -n 19 python3 checks/review_checks.py
-	nice -n 19 python3 -m unittest discover -s tests/python -q
+	CANON_CLI=$(abspath $(CLI)) nice -n 19 python3 -m unittest discover -s tests/python -q
 
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \

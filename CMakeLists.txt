@@ -29,10 +29,18 @@ if(CANON_LTO)
   endif()
 endif()
 
-# The library.  No external dependencies.
-add_library(canon STATIC src/api/version.c src/api/stubs.c)
-target_include_directories(canon PUBLIC include)
+# The library.  No external dependencies.  Keep this list in step with LIB_SRC in the Makefile.
+add_library(canon STATIC
+  src/api/version.c src/api/stubs.c src/api/api.c
+  src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c
+  src/object/subset.c src/bsgs/explicit.c src/partition/partition.c
+  src/refine/p1.c src/search/p1_tree.c)
+target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
+
+# Command-line driver (refs/compare/FORMAT.md records); public header only.
+add_executable(canon-cli tools/canon-cli.c)
+target_link_libraries(canon-cli PRIVATE canon canon_options)
 
 # Independent certificate checker: must NOT link canon and must not see src/ or include/.
 add_executable(canon-check checker/main.c)
@@ -47,6 +55,24 @@ add_executable(test_header_abi tests/c/test_header_abi.c)
 target_include_directories(test_header_abi PRIVATE src)
 target_link_libraries(test_header_abi PRIVATE canon canon_options)
 add_test(NAME test_header_abi COMMAND test_header_abi)
+
+# Unit and end-to-end C tests; they may include internal headers from src/.
+foreach(t test_perm test_wire test_group_explicit test_partition test_search_subset)
+  add_executable(${t} tests/c/${t}.c)
+  target_include_directories(${t} PRIVATE src)
+  target_link_libraries(${t} PRIVATE canon canon_options)
+  add_test(NAME ${t} COMMAND ${t})
+endforeach()
+
+# Python end-to-end test of canon-cli against checks/review_checks.py and golden.json.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME test_e2e
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
+  set_tests_properties(test_e2e PROPERTIES ENVIRONMENT "CANON_CLI=$<TARGET_FILE:canon-cli>")
+else()
+  message(WARNING "python3 not found: test_e2e is not registered")
+endif()
 
 # Exit status 2 is the intended M0-M3 behaviour of the checker stub.
 add_test(NAME canon_check_stub COMMAND canon-check)
