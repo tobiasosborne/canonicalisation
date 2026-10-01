@@ -173,7 +173,7 @@ The review found no crash-class defect and raised seven findings plus one runtim
 8. **Fast e2e mode under the sanitizers** (`tests/python/test_e2e.py`, `CMakeLists.txt`, `tests/python/README.md`). `CANON_E2E_FAST=1`, set by CMake for `test_e2e` and `test_e2e_explicit` exactly when `CANON_SANITIZE` is ON, runs the large tiers on seeded subsets (listed in `tests/python/README.md`); `make check` keeps the full tiers.
    - Measured per test against the ASan/UBSan CLI before the change: L1 subsets 179 s, Z1 subsets 61 s, S4 T1 subsets 44 s, S2 G2 35 s, S4 G1 26 s, Z1 G1 22 s, L1 G1 19 s, S4 random 14 s, D1 13 s, S1 T1 12 s, S2 G1 8 s; about 436 s per run.
    - Thinning only L1, Z1, D1 and the S4 random groups would have left about 130 s per run, so fast mode also thins the S4 T1 and G1 tiers and S2's G2 (see the remark below).
-   - One fast run takes about 108 s against the sanitizer CLI. The CMake sanitizer ctest time is given below.
+   - One fast run takes about 108 s against the sanitizer CLI. The CMake sanitizer ctest (`-DCANON_SANITIZE=ON`, fast mode) passes all 32 entries in 3 min 56 s, against 14 min 51 s before: `test_e2e` 109.5 s, `test_e2e_explicit` 105.7 s, `test_labeling` 12.8 s, `test_signed` 1.8 s.
 
 **Remarks.**
 - On item 1: the reviewer's form makes an odd hit cost one wasted verified rebuild before it is recognised (476 rebuilds instead of 264 on T1, χ evaluations 1 287 instead of 2 453). Testing membership with `canon_bsgs_contains_scratch` before χ, and inserting only even non-members, would avoid that at the price of a second sift per non-member hit; I followed the finding as written.
