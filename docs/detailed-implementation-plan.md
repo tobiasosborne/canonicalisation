@@ -103,7 +103,7 @@ Provenance records (§9.2) are `{INPUT i | INVERSE j | PRODUCT j k}` nodes in a 
 
 ### 2.4 Coset enumerator (`src/coset/coset.h`)
 
-Implements §8.1 exactly, with a consumer callback and a cancellation poll. `visit(H, r)` chooses `a` = smallest atom moved by `H`, and for each `b` in sorted `a^H` the least image-array element `t_b` with `a^{t_b} = b`. **Decided:** `t_b` is found by descending the chain under the constraint `a ↦ b` and choosing the least image array by the same constrained descent used for §9.4 (point-image lexicographic order), so that the enumerator and the greedy generator routine share one audited primitive, `least_element_with_constraints`.
+Implements §8.1 exactly, with a consumer callback and a cancellation poll. `visit(H, r)` chooses `a` = smallest atom moved by `H`, and for each `b` in sorted `a^H` the least image-array element `t_b` with `a^{t_b} = b`. **Decided:** `t_b` is found by the same constrained least-element primitive used for §9.4, `canon_coset_least`: the point constraints are applied **first** (§9.4 "successive point constraints"), reducing the coset to the sub-coset of elements satisfying them, and only then is the image array minimised point by point in increasing order. Interleaving constraints with minimisation is wrong: for `J = Sym(3)`, `r = id` and the constraint `1 ↦ 0`, minimising point 0 first fixes `0 ↦ 0` and then no element satisfies the constraint, although `[1,0,2]` does (found in S4). The enumerator, the coset representative `r₀` and the greedy generator descent share this one audited primitive.
 
 ### 2.5 Objects (`src/object/object.h`)
 
