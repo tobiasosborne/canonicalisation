@@ -1,11 +1,12 @@
-/* Slice S1/S2/S3 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity
+/* Slice S1-S4 public entry points (spec sections 3, 3.2, 8, 11.1, 17): context, capacity
  * descriptor and options (S3: the group backend), retain/release handles, groups and their order
- * (S3), subset and graph objects (S2), problems, workspaces, solve, results and
- * result_encode.  Entry points of later slices remain in
- * src/api/stubs.c. */
+ * (S3), subset and graph objects (S2), problems with targets and options (S4), workspaces,
+ * solve for the canonical image and (S4) the enumeration objectives, results, result_encode
+ * and result_verify_witness (S4).  Entry points of later slices remain in src/api/stubs.c. */
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
 #include "arena/checked.h"
 #include "arena/refcount.h"
 #include "bsgs/chain_backend.h"
@@ -14,7 +15,10 @@
 #include "canon/canon.h"
 #include "object/graph.h"
 #include "object/object.h"
+#include "encoding/group_stream.h"
+#include "encoding/simple_upper.h"
 #include "object/subset.h"
+#include "search/objectives.h"
 #include "search/p1_tree.h"
 
 /* Built-in context defaults (docs/slices/S1.md section 3). */
@@ -49,6 +53,8 @@ struct canon_problem {
     canon_refcount refs;
     const canon_group *group;   /* shared, retained */
     const canon_object *object; /* shared, retained */
+    const canon_object *target; /* S4: transporter target, shared, retained; else NULL */
+    canon_witness_mode witness_mode; /* S4 */
     canon_objective objective;
     canon_profile profile;
     canon_encoding encoding;
@@ -59,6 +65,7 @@ struct canon_problem {
 struct canon_workspace {
     canon_refcount refs;
     canon_p1_search search; /* spec 17: one active owner; storage reused across solves */
+    canon_obj_search obj;   /* S4: enumeration objectives and the deterministic witness */
 };
 
 struct canon_result {
@@ -71,6 +78,16 @@ struct canon_result {
     size_t bytes_len;
     uint32_t *witness; /* non-NULL iff a witness was produced (one spare entry for n = 0) */
     uint32_t degree;
+    uint8_t *group_bytes; /* S4: Group(A) or Group(A) || Perm(r0); NULL if none */
+    size_t group_len;
+    uint8_t *key; /* S4: SIMPLE-UPPER-1 key of the minimum; NULL if none */
+    size_t key_len;
+    canon_objective objective;
+    /* S4, for canon_result_verify_witness: the problem's immutable inputs, retained (owned
+     * references, not borrowed pointers); NULL in a status-only result. */
+    const canon_group *group;
+    const canon_object *object;
+    const canon_object *target;
 };
 
 /* ---- capacity ---- */
@@ -174,6 +191,7 @@ void canon_problem_release(canon_problem *problem)
     if (problem != NULL && canon_ref_release(&problem->refs)) {
         canon_group_unshare(problem->group);
         object_unshare(problem->object);
+        object_unshare(problem->target);
         free(problem);
     }
 }
@@ -189,6 +207,7 @@ void canon_workspace_release(canon_workspace *workspace)
 {
     if (workspace != NULL && canon_ref_release(&workspace->refs)) {
         canon_p1_search_free(&workspace->search);
+        canon_obj_search_free(&workspace->obj);
         free(workspace);
     }
 }
@@ -206,6 +225,11 @@ void canon_result_release(canon_result *result)
         free(result->trace);
         free(result->bytes);
         free(result->witness);
+        free(result->group_bytes);
+        free(result->key);
+        canon_group_unshare(result->group);
+        object_unshare(result->object);
+        object_unshare(result->target);
         free(result);
     }
 }
@@ -345,10 +369,59 @@ canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degre
                          out);
 }
 
+/* spec 3, 4.3, 4.4: the objective/profile/encoding/order/witness combinations implemented
+ * (slices S1, S4).  "unknown schema/action/profile/encoding versions are unsupported, never
+ * reinterpreted" (spec 4.1). */
+static bool combination_supported(canon_objective objective, canon_profile profile,
+                                  canon_encoding encoding, canon_order order,
+                                  canon_witness_mode mode)
+{
+    if (encoding != CANON_ENCODING_CDAG_2) {
+        return false;
+    }
+    switch (objective) {
+    case CANON_OBJECTIVE_CANONICAL_IMAGE:
+        /* spec 4.3: "canonical and signed image objectives use P1" */
+        return profile == CANON_PROFILE_P1 && order == CANON_ORDER_CDAG_BYTE_1;
+    case CANON_OBJECTIVE_LEX_MIN_IMAGE:
+        /* spec 3: "Least image in the named order (§§4.3-4.4)"; spec 4.3: NO_TREE */
+        return profile == CANON_PROFILE_NO_TREE &&
+               (order == CANON_ORDER_CDAG_BYTE_1 || order == CANON_ORDER_SIMPLE_UPPER_1);
+    case CANON_OBJECTIVE_TRANSPORTER_COSET:
+        return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1;
+    case CANON_OBJECTIVE_TRANSPORTER_ONE:
+    case CANON_OBJECTIVE_STABILISER:
+        /* no deterministic witness for these (S4 brief 2; canon.h) */
+        return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1 &&
+               mode == CANON_WITNESS_ANY;
+    default:
+        return false; /* labeling cosets and signed images: S6; constraints: later */
+    }
+}
+
+static bool needs_target(canon_objective objective)
+{
+    return objective == CANON_OBJECTIVE_TRANSPORTER_ONE ||
+           objective == CANON_OBJECTIVE_TRANSPORTER_COSET;
+}
+
 canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
                                   const canon_object *object, canon_objective objective,
                                   canon_profile profile, canon_encoding encoding, canon_order order,
                                   const canon_capacity *capacity, canon_problem **out)
+{
+    return canon_problem_create_with_options(ctx, group, object, NULL, objective, profile,
+                                             encoding, order, capacity, NULL, out);
+}
+
+canon_status canon_problem_create_with_options(canon_context *ctx, const canon_group *group,
+                                               const canon_object *object,
+                                               const canon_object *target,
+                                               canon_objective objective, canon_profile profile,
+                                               canon_encoding encoding, canon_order order,
+                                               const canon_capacity *capacity,
+                                               const canon_problem_options *options,
+                                               canon_problem **out)
 {
     if (out == NULL) {
         return CANON_INVALID_INPUT;
@@ -357,14 +430,29 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
     if (ctx == NULL || group == NULL || object == NULL) {
         return CANON_INVALID_INPUT;
     }
-    /* spec 3.2 / 4.1: "unknown schema/action/profile/encoding versions are unsupported, never
-     * reinterpreted"; S1 implements only CANONICAL_IMAGE under P1, CDAG-2, CDAG-BYTE-1. */
-    if (objective != CANON_OBJECTIVE_CANONICAL_IMAGE || profile != CANON_PROFILE_P1 ||
-        encoding != CANON_ENCODING_CDAG_2 || order != CANON_ORDER_CDAG_BYTE_1) {
+    const canon_witness_mode mode = options != NULL ? options->witness_mode : CANON_WITNESS_ANY;
+    if (mode != CANON_WITNESS_ANY && mode != CANON_WITNESS_DETERMINISTIC) {
+        return CANON_INVALID_INPUT;
+    }
+    /* spec 3.2 / 4.1: unsupported identifiers are refused, never reinterpreted */
+    if (!combination_supported(objective, profile, encoding, order, mode)) {
         return CANON_UNSUPPORTED_ACTION;
     }
     if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
+    }
+    /* spec 3 table: the transporters relate x to a second object y on the same domain */
+    if (needs_target(objective) != (target != NULL) ||
+        (target != NULL &&
+         (target->root.kind != object->root.kind || target->root.n != object->root.n))) {
+        return CANON_INVALID_INPUT;
+    }
+    /* spec 4.4: "available only for uncoloured simple undirected graphs"; the class is
+     * invariant under the action, so it is checked once, here */
+    if (order == CANON_ORDER_SIMPLE_UPPER_1 &&
+        (object->root.kind != CANON_ROOT_GRAPH ||
+         !canon_simple_upper_in_class(&object->root.u.graph))) {
+        return CANON_UNSUPPORTED_ACTION;
     }
     canon_capacity cap = resolve_capacity(capacity, &ctx->defaults);
     /* spec 11.1: "Validation is deterministic over the normalised input." */
@@ -377,12 +465,31 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
     if (admitted != CANON_COMPLETE) {
         return admitted;
     }
-    /* spec 11.1: data-dependent output size uses an exact input-derived bound.  The stream
-     * length of x^g equals that of x for every g: a subset image has as many members; a graph
-     * image has the same colour multiset, arc count, label bytes and multiplicities (hence Nat
-     * lengths), since the action only renumbers vertices.  So the length is exact here. */
+    /* spec 11.1: data-dependent output size uses an exact input-derived bound where one
+     * exists, else a conservative one ("An API promising this property may conservatively
+     * reject an instance with a smaller actual output"). */
     uint64_t out_bytes = 0;
-    canon_status st = canon_root_stream_size(&object->root, &out_bytes);
+    canon_status st = CANON_COMPLETE;
+    switch (objective) {
+    case CANON_OBJECTIVE_CANONICAL_IMAGE:
+    case CANON_OBJECTIVE_LEX_MIN_IMAGE:
+        /* The stream length of x^g equals that of x for every g: a subset image has as many
+         * members; a graph image has the same colour multiset, arc count, label bytes and
+         * multiplicities (hence Nat lengths), since the action only renumbers vertices. */
+        st = canon_root_stream_size(&object->root, &out_bytes);
+        break;
+    case CANON_OBJECTIVE_STABILISER:
+    case CANON_OBJECTIVE_TRANSPORTER_COSET:
+        /* spec 9.4: Group(A) for A <= G, plus Perm(r0) for a coset */
+        if (!canon_group_bytes_bound(object->root.n, group->ops->order(group),
+                                     objective == CANON_OBJECTIVE_TRANSPORTER_COSET,
+                                     &out_bytes)) {
+            st = CANON_CAPACITY_LIMIT;
+        }
+        break;
+    default:
+        break; /* TRANSPORTER_ONE returns no canonical bytes */
+    }
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -398,8 +505,11 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
      * only their reference counts (bookkeeping, src/arena/refcount.h) change. */
     pr->group = group;
     pr->object = object;
+    pr->target = target;
     canon_group_share(group);
     object_share(object);
+    object_share(target);
+    pr->witness_mode = mode;
     pr->objective = objective;
     pr->profile = profile;
     pr->encoding = encoding;
@@ -424,6 +534,7 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out)
     }
     canon_ref_init(&ws->refs);
     canon_p1_search_init(&ws->search); /* lazy: arrays are sized on the first solve */
+    canon_obj_search_init(&ws->obj);
     *out = ws;
     return CANON_COMPLETE;
 }
@@ -449,6 +560,125 @@ static uint8_t *copy_bytes(const uint8_t *src, size_t len)
     return dst;
 }
 
+/* What a completed solve hands to the result: views into the workspace, copied by
+ * finish_result (spec 17: the result owns immutable copies and never aliases the workspace). */
+typedef struct answer {
+    canon_result_flags flags;
+    const canon_buf *trace, *bytes, *group, *key; /* NULL: not produced */
+    const uint32_t *witness;                      /* NULL: not produced */
+} answer;
+
+static const canon_buf *if_set(bool set, const canon_buf *b)
+{
+    return set ? b : NULL;
+}
+
+/* Build the result of a completed solve (status COMPLETE) or a status-only one. */
+static canon_status finish_result(const canon_problem *problem, canon_status st, const answer *a,
+                                  canon_result **out)
+{
+    if (st != CANON_COMPLETE) {
+        /* spec 3.2: an incomplete result carries no trace, bytes or witness and all flags
+         * false; spec 17: never a fabricated completion flag. */
+        *out = new_result(st);
+        return st;
+    }
+    const uint32_t n = problem->group->degree;
+    canon_result *r = new_result(CANON_COMPLETE);
+    canon_status alloc = CANON_COMPLETE;
+    bool ok = r != NULL;
+    if (ok && a->trace != NULL) {
+        ok = (r->trace = copy_bytes(a->trace->data, a->trace->len)) != NULL;
+        r->trace_len = a->trace->len;
+    }
+    if (ok && a->bytes != NULL) {
+        ok = (r->bytes = copy_bytes(a->bytes->data, a->bytes->len)) != NULL;
+        r->bytes_len = a->bytes->len;
+    }
+    if (ok && a->group != NULL) {
+        ok = (r->group_bytes = copy_bytes(a->group->data, a->group->len)) != NULL;
+        r->group_len = a->group->len;
+    }
+    if (ok && a->key != NULL) {
+        ok = (r->key = copy_bytes(a->key->data, a->key->len)) != NULL;
+        r->key_len = a->key->len;
+    }
+    if (ok && a->witness != NULL) {
+        ok = (r->witness = canon_alloc_array(n, sizeof *r->witness, &alloc)) != NULL;
+        if (ok && n > 0) {
+            memcpy(r->witness, a->witness, (size_t)n * sizeof *r->witness);
+        }
+    }
+    if (!ok) {
+        canon_result_release(r);
+        *out = new_result(CANON_RESOURCE_LIMIT);
+        return CANON_RESOURCE_LIMIT;
+    }
+    r->degree = n;
+    r->flags = a->flags;
+    r->objective = problem->objective;
+    /* spec 17 verify_witness needs G, x and the target after the problem may be released:
+     * the result retains them (owned references to immutable handles). */
+    r->group = problem->group;
+    r->object = problem->object;
+    r->target = problem->target;
+    canon_group_share(r->group);
+    object_share(r->object);
+    object_share(r->target);
+    *out = r;
+    return CANON_COMPLETE;
+}
+
+/* spec 7, 3: CANONICAL_IMAGE by the unpruned P1 tree; with the deterministic witness mode the
+ * least element of A t (spec 3), A the complete stabiliser from the spec 8.2 consumer. */
+static canon_status solve_canonical(canon_workspace *ws, const canon_problem *problem,
+                                    canon_result **out)
+{
+    canon_p1_search *s = &ws->search;
+    const uint64_t quota = problem->capacity.max_search_nodes;
+    canon_status st = canon_p1_search_run(s, problem->group, &problem->object->root, quota);
+    const uint32_t *witness = s->best_t;
+    if (st == CANON_COMPLETE && problem->witness_mode == CANON_WITNESS_DETERMINISTIC) {
+        /* spec 11.1: one quota for the solve; the enumeration gets what P1 left */
+        st = canon_obj_deterministic_witness(&ws->obj, problem->group, &problem->object->root,
+                                             s->best_t, quota - s->nodes);
+        witness = ws->obj.best;
+    }
+    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the full unpruned traversal
+     * (TRUSTED_ENGINE evidence): the witness is an element of G sending x to the returned
+     * image, the image is the P1 canonical image, and the encoding is complete. */
+    answer a;
+    memset(&a, 0, sizeof a);
+    a.flags.witness_valid = true;
+    a.flags.image_canonical = true;
+    a.flags.encoding_complete = true;
+    a.trace = &s->best_trace;
+    a.bytes = &s->best_bytes;
+    a.witness = witness;
+    return finish_result(problem, st, &a, out);
+}
+
+/* spec 8: the enumeration objectives (src/search/objectives.c). */
+static canon_status solve_enumeration(canon_workspace *ws, const canon_problem *problem,
+                                      canon_result **out)
+{
+    canon_obj_search *s = &ws->obj;
+    canon_obj_outcome o;
+    const canon_root *y = problem->target != NULL ? &problem->target->root : NULL;
+    canon_status st = canon_obj_run(s, problem->group, &problem->object->root, y,
+                                    problem->objective, problem->order,
+                                    problem->witness_mode == CANON_WITNESS_DETERMINISTIC,
+                                    problem->capacity.max_search_nodes, &o);
+    answer a;
+    memset(&a, 0, sizeof a);
+    a.flags = o.flags;
+    a.bytes = if_set(o.bytes, &s->bytes);
+    a.group = if_set(o.group, &s->group);
+    a.key = if_set(o.key, &s->best_key);
+    a.witness = o.witness ? s->best : NULL;
+    return finish_result(problem, st, &a, out);
+}
+
 canon_status canon_solve(canon_workspace *workspace, const canon_problem *problem,
                          canon_result **out)
 {
@@ -459,48 +689,12 @@ canon_status canon_solve(canon_workspace *workspace, const canon_problem *proble
     if (workspace == NULL || problem == NULL) {
         return CANON_INVALID_INPUT;
     }
-    /* Objective, profile, encoding, order and degrees were validated once, in
-     * canon_problem_create; a problem is immutable, so they are not re-checked here. */
-    canon_p1_search *s = &workspace->search;
-    canon_status st = canon_p1_search_run(s, problem->group, &problem->object->root,
-                                          problem->capacity.max_search_nodes);
-    if (st != CANON_COMPLETE) {
-        /* spec 3.2: an incomplete result carries no trace, bytes or witness and all flags
-         * false; spec 17: never a fabricated completion flag. */
-        *out = new_result(st);
-        return st;
+    /* Objective, profile, encoding, order, target and degrees were validated once, in
+     * canon_problem_create_with_options; a problem is immutable, so they are not re-checked. */
+    if (problem->objective == CANON_OBJECTIVE_CANONICAL_IMAGE) {
+        return solve_canonical(workspace, problem, out);
     }
-    const uint32_t n = problem->group->degree;
-    canon_result *r = new_result(CANON_COMPLETE);
-    size_t witness_bytes = 0;
-    if (r == NULL || !canon_size_mul(n > 0 ? (size_t)n : 1u, sizeof(uint32_t), &witness_bytes)) {
-        canon_result_release(r);
-        *out = new_result(CANON_RESOURCE_LIMIT);
-        return CANON_RESOURCE_LIMIT;
-    }
-    /* spec 17: the result owns immutable copies; it never aliases the workspace. */
-    r->trace = copy_bytes(s->best_trace.data, s->best_trace.len);
-    r->bytes = copy_bytes(s->best_bytes.data, s->best_bytes.len);
-    r->witness = malloc(witness_bytes);
-    if (r->trace == NULL || r->bytes == NULL || r->witness == NULL) {
-        canon_result_release(r);
-        *out = new_result(CANON_RESOURCE_LIMIT);
-        return CANON_RESOURCE_LIMIT;
-    }
-    r->trace_len = s->best_trace.len;
-    r->bytes_len = s->best_bytes.len;
-    if (n > 0) {
-        memcpy(r->witness, s->best_t, (size_t)n * sizeof *r->witness);
-    }
-    r->degree = n;
-    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the full unpruned traversal (TRUSTED_ENGINE
-     * evidence): the witness is an element of G sending x to the returned image, the image is
-     * the P1 canonical image, and the encoding is complete.  Every other flag stays false. */
-    r->flags.witness_valid = true;
-    r->flags.image_canonical = true;
-    r->flags.encoding_complete = true;
-    *out = r;
-    return CANON_COMPLETE;
+    return solve_enumeration(workspace, problem, out);
 }
 
 /* ---- result accessors (spec 3.2) ---- */
@@ -544,20 +738,91 @@ const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degre
     return result->witness;
 }
 
-/* spec 3.2: "Incomplete bytes cannot be used as a canonical database key." */
-const uint8_t *canon_result_bytes(const canon_result *result, size_t *length)
+/* Hand out an owned byte array when `ok`, else NULL with length 0. */
+static const uint8_t *bytes_if(bool ok, const uint8_t *data, size_t len, size_t *length)
 {
-    if (result == NULL || result->bytes == NULL || !result->flags.image_canonical ||
-        !result->flags.encoding_complete) {
+    if (!ok || data == NULL) {
         if (length != NULL) {
             *length = 0;
         }
         return NULL;
     }
     if (length != NULL) {
-        *length = result->bytes_len;
+        *length = len;
     }
-    return result->bytes;
+    return data;
+}
+
+/* spec 3.2: "Incomplete bytes cannot be used as a canonical database key." */
+const uint8_t *canon_result_bytes(const canon_result *result, size_t *length)
+{
+    const bool ok = result != NULL && result->flags.encoding_complete &&
+                    (result->flags.image_canonical || result->flags.minimum_proved);
+    return bytes_if(ok, ok ? result->bytes : NULL, ok ? result->bytes_len : 0, length);
+}
+
+/* spec 9.4; spec 3.2: a group answer needs the verified, complete subgroup. */
+const uint8_t *canon_result_group_bytes(const canon_result *result, size_t *length)
+{
+    bool ok = result != NULL && result->flags.subgroup_verified &&
+              result->flags.stabiliser_complete;
+    if (ok && result->objective == CANON_OBJECTIVE_TRANSPORTER_COSET) {
+        ok = result->flags.witness_valid; /* a nonempty coset A g (S4 notes, reading 4) */
+    }
+    return bytes_if(ok, ok ? result->group_bytes : NULL, ok ? result->group_len : 0, length);
+}
+
+/* spec 4.4: "return the selected graph in CDAG-2 plus its order key" */
+const uint8_t *canon_result_order_key(const canon_result *result, size_t *length)
+{
+    const bool ok = result != NULL && result->flags.minimum_proved;
+    return bytes_if(ok, ok ? result->key : NULL, ok ? result->key_len : 0, length);
+}
+
+/* spec 8.2: "Transporter one: ... stop successfully on one hit." */
+const uint32_t *canon_result_transporter(const canon_result *result, uint32_t *degree)
+{
+    if (result == NULL || (result->objective != CANON_OBJECTIVE_TRANSPORTER_ONE &&
+                           result->objective != CANON_OBJECTIVE_TRANSPORTER_COSET)) {
+        if (degree != NULL) {
+            *degree = 0;
+        }
+        return NULL;
+    }
+    return canon_result_witness(result, degree);
+}
+
+/* spec 17: "result_verify_witness checks membership and exact action, not canonicity". */
+canon_status canon_result_verify_witness(const canon_result *result, bool *valid)
+{
+    if (valid == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *valid = false;
+    uint32_t degree = 0;
+    const uint32_t *w = canon_result_witness(result, &degree);
+    if (w == NULL || result->group == NULL || result->object == NULL) {
+        return CANON_INVALID_INPUT; /* no witness to verify */
+    }
+    if (result->target == NULL) {
+        /* the image the witness is claimed to produce: the result's own bytes */
+        size_t len = 0;
+        const uint8_t *c = canon_result_bytes(result, &len);
+        if (c == NULL) {
+            return CANON_INVALID_INPUT;
+        }
+        return canon_obj_check_witness(result->group, &result->object->root, w, c, len, valid);
+    }
+    /* transporters: x^w must equal the target y, compared as CDAG-2 streams */
+    canon_buf y;
+    canon_buf_init(&y);
+    canon_status st = canon_root_stream_write(&result->target->root, &y);
+    if (st == CANON_COMPLETE) {
+        st = canon_obj_check_witness(result->group, &result->object->root, w, y.data, y.len,
+                                     valid);
+    }
+    canon_buf_free(&y);
+    return st;
 }
 
 /* spec 17: "result_encode returns canonical bytes only when the corresponding image is

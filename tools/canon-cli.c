@@ -1,24 +1,39 @@
-/* canon-cli: command-line driver for the canon library (slices S1, S2 and S3,
- * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3).
+/* canon-cli: command-line driver for the canon library (slices S1 to S4,
+ * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
- *                       [--max-nodes K] [--id CASE]
- *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."]
- *                       [--arcs "s,t,labelhex,m;..."] [--max-nodes K] [--id CASE]
- *   both also accept [--backend chain|explicit] (slice S3, docs/slices/S3.md 3): the group
- *   backend, default chain; the explicit backend is the test oracle.
+ *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."] [--arcs "s,t,labelhex,m;..."]
+ *       CANONICAL_IMAGE (0001) under profile P1;
+ *   canon-cli min [--order cdag|simple-upper] OBJECT
+ *       LEX_MIN_IMAGE (0002) under profile NO_TREE, order CDAG-BYTE-1 (default) or
+ *       SIMPLE-UPPER-1;
+ *   canon-cli transporter OBJECT TARGET        TRANSPORTER_ONE (0003);
+ *   canon-cli stabiliser OBJECT                STABILISER (0004);
+ *   canon-cli transporter-coset OBJECT TARGET  TRANSPORTER_COSET (0006);
+ * where for the S4 subcommands OBJECT is [--kind subset|graph] with --atoms (subset) or
+ * --colours/--arcs (graph), and TARGET is --target-atoms (subset) or --target-colours/
+ * --target-arcs (graph), each defaulting to the empty subset or the arc-free, uncoloured graph.
+ * The kind defaults to graph when any graph option is given, else subset.  Every subcommand
+ * also accepts [--max-nodes K] [--id CASE] [--backend chain|explicit] (slice S3: the group
+ * backend, default chain; the explicit backend is the test oracle) and
+ * [--witness any|deterministic] (slice S4: the spec 3 deterministic witness).
  *
- * Prints one refs/compare/FORMAT.md record:
- *   CASE \t 0001 \t STATUS \t trace_hex \t bytes_hex \t witness
- * `--gens ""` (the default) is the trivial group and `--atoms ""` (the default) the empty
- * subset.  Generators are image arrays p[v] = v^p (spec section 3), separated by ';'; for
- * N = 0 a generator is the empty string.  For p1-graph, `--colours ""` (the default) makes every
- * vertex colour empty; otherwise it lists exactly N hex strings separated by ';' (a hex string
- * may be empty).  `--arcs` (default: no arcs) lists arcs "source,target,labelhex,multiplicity"
- * separated by ';' (labelhex may be empty; the multiplicity is passed to the library as given,
- * so 0 yields INVALID_INPUT).  `--max-nodes K` sets the spec 11.1 logical work quota
- * (0 = the context default).  Exit status: 0 on COMPLETE, 3 on any other status, 2 on a usage
- * error.  Uses only the public header. */
+ * Prints one refs/compare/FORMAT.md record of seven fields:
+ *   CASE \t OBJECTIVE \t STATUS \t trace_hex \t bytes_hex \t witness \t group_hex
+ * trace_hex: the P1 trace (canonical image only); bytes_hex: the canonical image or the
+ * minimum image's CDAG-2 stream; witness: comma-separated images of the witness (canonical
+ * image, minimum, transporter hit), '-' if none or n = 0; group_hex: Group(A) (stabiliser),
+ * Group(A) || Perm(r0) (nonempty transporter coset), the SIMPLE-UPPER-1 key (minimum under
+ * that order), '-' otherwise.  `--gens ""` (the default) is the trivial group and `--atoms ""`
+ * (the default) the empty subset.  Generators are image arrays p[v] = v^p (spec section 3),
+ * separated by ';'; for N = 0 a generator is the empty string.  `--colours ""` (the default)
+ * makes every vertex colour empty; otherwise it lists exactly N hex strings separated by ';'
+ * (a hex string may be empty).  `--arcs` (default: no arcs) lists arcs
+ * "source,target,labelhex,multiplicity" separated by ';' (labelhex may be empty; the
+ * multiplicity is passed to the library as given, so 0 yields INVALID_INPUT).
+ * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Exit
+ * status: 0 on COMPLETE, 3 on any other status, 2 on a usage error.  Uses only the public
+ * header. */
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,10 +47,17 @@ static int usage(const char *msg)
     fprintf(stderr,
             "canon-cli: %s\n"
             "usage: canon-cli p1-subset --n N [--gens \"a0,a1,...;b0,...\"] [--atoms \"x,y,...\"]\n"
-            "                 [--max-nodes K] [--id CASE]\n"
             "       canon-cli p1-graph --n N [--gens \"...\"] [--colours \"hex;hex;...\"]\n"
-            "                 [--arcs \"s,t,labelhex,m;...\"] [--max-nodes K] [--id CASE]\n"
-            "       both: [--backend chain|explicit]\n",
+            "                 [--arcs \"s,t,labelhex,m;...\"]\n"
+            "       canon-cli min [--order cdag|simple-upper] OBJECT\n"
+            "       canon-cli transporter OBJECT TARGET\n"
+            "       canon-cli stabiliser OBJECT\n"
+            "       canon-cli transporter-coset OBJECT TARGET\n"
+            "       OBJECT: --n N [--gens ...] [--kind subset|graph] [--atoms ...]\n"
+            "               [--colours ...] [--arcs ...]\n"
+            "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
+            "       all: [--max-nodes K] [--id CASE] [--backend chain|explicit]\n"
+            "            [--witness any|deterministic]\n",
             msg);
     return 2;
 }
@@ -262,55 +284,135 @@ static int hex_sink(void *user, const uint8_t *chunk, size_t length, size_t *acc
 }
 
 /* Print a record with the given status and no evidence (non-COMPLETE outcomes). */
-static int print_failure(const char *id, canon_status st)
+static int print_failure(const char *id, canon_objective objective, canon_status st)
 {
-    printf("%s\t0001\t%s\t\t\t-\n", id, status_name(st));
+    printf("%s\t%04x\t%s\t\t\t-\t-\n", id, (unsigned)objective, status_name(st));
     return st == CANON_COMPLETE ? 0 : 3;
 }
 
-int main(int argc, char **argv)
+/* The subcommands and the problem each one builds. */
+typedef struct subcommand {
+    const char *name;
+    canon_objective objective;
+    canon_profile profile;
+    int kind;        /* 0 subset, 1 graph, -1 chosen by --kind or the options given */
+    bool target;     /* takes a target object */
+} subcommand;
+
+static const subcommand SUBCOMMANDS[] = {
+    {"p1-subset", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false},
+    {"p1-graph", CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, 1, false},
+    {"min", CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE, -1, false},
+    {"transporter", CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE, -1, true},
+    {"stabiliser", CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, -1, false},
+    {"transporter-coset", CANON_OBJECTIVE_TRANSPORTER_COSET, CANON_PROFILE_NO_TREE, -1, true},
+};
+
+/* Parsed command line. */
+typedef struct options {
+    const subcommand *cmd;
+    const char *n_arg, *gens, *id;
+    const char *atoms, *colours, *arcs;                      /* the object */
+    const char *target_atoms, *target_colours, *target_arcs; /* the target */
+    bool graph;                                              /* object kind */
+    uint64_t max_nodes;
+    canon_backend backend;
+    canon_order order;
+    canon_witness_mode witness;
+} options;
+
+/* Parse argv into *o; returns 0 or a usage exit status (message printed). */
+static int parse_options(int argc, char **argv, options *o)
 {
-    if (argc < 2 || (strcmp(argv[1], "p1-subset") != 0 && strcmp(argv[1], "p1-graph") != 0)) {
-        return usage("expected the subcommand p1-subset or p1-graph");
+    memset(o, 0, sizeof *o);
+    if (argc >= 2) {
+        for (size_t i = 0; i < sizeof SUBCOMMANDS / sizeof SUBCOMMANDS[0]; ++i) {
+            if (strcmp(argv[1], SUBCOMMANDS[i].name) == 0) {
+                o->cmd = &SUBCOMMANDS[i];
+            }
+        }
     }
-    const bool graph = strcmp(argv[1], "p1-graph") == 0;
-    const char *n_arg = NULL, *gens = "", *atoms_arg = "", *id = argv[1];
-    const char *colours_arg = "", *arcs_arg = "";
-    uint64_t max_nodes = 0;
-    canon_backend backend = CANON_BACKEND_CHAIN;
+    if (o->cmd == NULL) {
+        return usage("expected a subcommand: p1-subset, p1-graph, min, transporter, "
+                     "stabiliser or transporter-coset");
+    }
+    const bool s4 = o->cmd->kind < 0;
+    o->gens = o->atoms = o->colours = o->arcs = "";
+    o->target_atoms = o->target_colours = o->target_arcs = "";
+    o->id = argv[1];
+    o->backend = CANON_BACKEND_CHAIN;
+    o->order = CANON_ORDER_CDAG_BYTE_1;
+    o->witness = CANON_WITNESS_ANY;
+    int kind = o->cmd->kind; /* -1 until --kind or a kind-specific option decides */
+    bool subset_opt = false, graph_opt = false;
     for (int i = 2; i < argc; i += 2) {
         if (i + 1 >= argc) {
             return usage("option without a value");
         }
         const char *opt = argv[i], *val = argv[i + 1];
+        const bool takes_subset = o->cmd->kind != 1, takes_graph = o->cmd->kind != 0;
         if (strcmp(opt, "--n") == 0) {
-            n_arg = val;
+            o->n_arg = val;
         } else if (strcmp(opt, "--gens") == 0) {
-            gens = val;
-        } else if (!graph && strcmp(opt, "--atoms") == 0) {
-            atoms_arg = val;
-        } else if (graph && strcmp(opt, "--colours") == 0) {
-            colours_arg = val;
-        } else if (graph && strcmp(opt, "--arcs") == 0) {
-            arcs_arg = val;
+            o->gens = val;
+        } else if (takes_subset && strcmp(opt, "--atoms") == 0) {
+            o->atoms = val;
+            subset_opt = true;
+        } else if (takes_graph && strcmp(opt, "--colours") == 0) {
+            o->colours = val;
+            graph_opt = true;
+        } else if (takes_graph && strcmp(opt, "--arcs") == 0) {
+            o->arcs = val;
+            graph_opt = true;
+        } else if (o->cmd->target && strcmp(opt, "--target-atoms") == 0) {
+            o->target_atoms = val;
+            subset_opt = true;
+        } else if (o->cmd->target && strcmp(opt, "--target-colours") == 0) {
+            o->target_colours = val;
+            graph_opt = true;
+        } else if (o->cmd->target && strcmp(opt, "--target-arcs") == 0) {
+            o->target_arcs = val;
+            graph_opt = true;
+        } else if (s4 && strcmp(opt, "--kind") == 0) {
+            if (strcmp(val, "subset") != 0 && strcmp(val, "graph") != 0) {
+                return usage("--kind expects subset or graph");
+            }
+            kind = strcmp(val, "graph") == 0;
+        } else if (o->cmd->objective == CANON_OBJECTIVE_LEX_MIN_IMAGE &&
+                   strcmp(opt, "--order") == 0) {
+            if (strcmp(val, "cdag") == 0) {
+                o->order = CANON_ORDER_CDAG_BYTE_1;
+            } else if (strcmp(val, "simple-upper") == 0) {
+                o->order = CANON_ORDER_SIMPLE_UPPER_1;
+            } else {
+                return usage("--order expects cdag or simple-upper");
+            }
+        } else if (strcmp(opt, "--witness") == 0) {
+            if (strcmp(val, "any") == 0) {
+                o->witness = CANON_WITNESS_ANY;
+            } else if (strcmp(val, "deterministic") == 0) {
+                o->witness = CANON_WITNESS_DETERMINISTIC;
+            } else {
+                return usage("--witness expects any or deterministic");
+            }
         } else if (strcmp(opt, "--max-nodes") == 0) {
-            if (!parse_u64(val, strlen(val), UINT64_MAX, &max_nodes)) {
+            if (!parse_u64(val, strlen(val), UINT64_MAX, &o->max_nodes)) {
                 return usage("--max-nodes expects an unsigned decimal");
             }
         } else if (strcmp(opt, "--backend") == 0) {
             if (strcmp(val, "chain") == 0) {
-                backend = CANON_BACKEND_CHAIN;
+                o->backend = CANON_BACKEND_CHAIN;
             } else if (strcmp(val, "explicit") == 0) {
-                backend = CANON_BACKEND_EXPLICIT;
+                o->backend = CANON_BACKEND_EXPLICIT;
             } else {
                 return usage("--backend expects chain or explicit");
             }
         } else if (strcmp(opt, "--id") == 0) {
-            id = val;
+            o->id = val;
             /* refs/compare/FORMAT.md: one record per line, TAB-separated, and lines beginning
              * with '#' are comments, so an id must be nonempty, must not start with '#' and
              * must not contain TAB, CR or LF. */
-            if (*id == '\0' || *id == '#' || strpbrk(id, "\t\n\r") != NULL) {
+            if (*val == '\0' || *val == '#' || strpbrk(val, "\t\n\r") != NULL) {
                 return usage("--id must be nonempty, not start with '#', and have no tabs or "
                              "newlines");
             }
@@ -318,123 +420,171 @@ int main(int argc, char **argv)
             return usage("unknown option");
         }
     }
+    if (kind < 0) {
+        kind = graph_opt ? 1 : 0;
+    }
+    if ((kind == 1 && subset_opt) || (kind == 0 && graph_opt)) {
+        return usage("subset options (--atoms, --target-atoms) and graph options (--colours, "
+                     "--arcs, --target-colours, --target-arcs) do not mix");
+    }
+    o->graph = kind == 1;
+    return 0;
+}
+
+/* Build a subset or graph object of degree n from the CLI strings.  Returns 0 with *st the
+ * library status (and *out on success), 2 on a usage error, 3 on allocation failure. */
+static int build_object(canon_context *ctx, uint32_t n, bool graph, const char *atoms_arg,
+                        const char *colours_arg, const char *arcs_arg, canon_status *st,
+                        canon_object **out)
+{
+    *out = NULL;
+    if (graph) {
+        graph_input gin;
+        int prc = parse_graph(n, colours_arg, arcs_arg, &gin);
+        if (prc == 0) {
+            *st = canon_object_create_graph(ctx, n, gin.colours, gin.colour_lengths, gin.arcs,
+                                            gin.arc_count, out);
+        }
+        graph_input_free(&gin);
+        return prc;
+    }
+    size_t atom_cap = count_char(atoms_arg, ',') + 1;
+    uint32_t *atoms = malloc(atom_cap * sizeof *atoms);
+    if (atoms == NULL) {
+        return 3;
+    }
+    size_t atom_count = parse_list(atoms_arg, strlen(atoms_arg), atoms, atom_cap);
+    if (atom_count == SIZE_MAX) {
+        free(atoms);
+        return usage("--atoms expects comma-separated unsigned decimals");
+    }
+    *st = canon_object_create_subset(ctx, n, atoms, atom_count, out);
+    free(atoms);
+    return 0;
+}
+
+/* Print the seven-field record of a COMPLETE result; returns the exit status. */
+static int print_result(const char *id, canon_objective objective, const canon_result *result)
+{
+    size_t trace_len = 0;
+    const uint8_t *trace = canon_result_trace(result, &trace_len);
+    printf("%s\t%04x\t%s\t", id, (unsigned)objective, status_name(canon_result_status(result)));
+    put_hex(trace, trace_len);
+    putchar('\t');
+    canon_status enc = CANON_COMPLETE;
+    size_t bytes_len = 0;
+    if (canon_result_bytes(result, &bytes_len) != NULL) {
+        enc = canon_result_encode(result, hex_sink, NULL);
+    }
+    putchar('\t');
+    uint32_t degree = 0;
+    const uint32_t *w = canon_result_witness(result, &degree);
+    if (w == NULL || degree == 0) {
+        putchar('-'); /* FORMAT.md: no witness, or the n = 0 witness, is written '-' */
+    } else {
+        for (uint32_t v = 0; v < degree; ++v) {
+            printf(v == 0 ? "%lu" : ",%lu", (unsigned long)w[v]);
+        }
+    }
+    putchar('\t');
+    size_t group_len = 0, key_len = 0;
+    const uint8_t *group = canon_result_group_bytes(result, &group_len);
+    const uint8_t *key = canon_result_order_key(result, &key_len);
+    if (group != NULL) {
+        put_hex(group, group_len); /* Group(A) or Group(A) || Perm(r0) (spec 9.4) */
+    } else if (key != NULL) {
+        put_hex(key, key_len); /* the SIMPLE-UPPER-1 key of the minimum (spec 4.4) */
+    } else {
+        putchar('-');
+    }
+    putchar('\n');
+    return enc == CANON_COMPLETE ? 0 : 3;
+}
+
+int main(int argc, char **argv)
+{
+    options o;
+    int prc = parse_options(argc, argv, &o);
+    if (prc != 0) {
+        return prc;
+    }
+    const canon_objective objective = o.cmd->objective;
     uint64_t n64 = 0;
-    if (n_arg == NULL || !parse_u64(n_arg, strlen(n_arg), UINT32_MAX, &n64)) {
+    if (o.n_arg == NULL || !parse_u64(o.n_arg, strlen(o.n_arg), UINT32_MAX, &n64)) {
         return usage("--n N is required (unsigned 32-bit decimal)");
     }
     const uint32_t n = (uint32_t)n64;
 
     /* Generators: "" = none; otherwise ';'-separated lists of exactly n images. */
-    size_t gen_count = *gens == '\0' ? 0 : count_char(gens, ';') + 1;
-    size_t gen_words = 0;
+    size_t gen_count = *o.gens == '\0' ? 0 : count_char(o.gens, ';') + 1;
     if (n > 0 && gen_count > SIZE_MAX / n / sizeof(uint32_t)) {
         return usage("too many generators");
     }
-    gen_words = gen_count * (size_t)n;
+    const size_t gen_words = gen_count * (size_t)n;
     uint32_t *gen = malloc(gen_words > 0 ? gen_words * sizeof *gen : 1);
-    size_t atom_cap = count_char(atoms_arg, ',') + 1;
-    uint32_t *atoms = malloc(atom_cap * sizeof *atoms);
-    if (gen == NULL || atoms == NULL) {
-        free(gen);
-        free(atoms);
+    if (gen == NULL) {
         fprintf(stderr, "canon-cli: out of memory\n");
-        return print_failure(id, CANON_RESOURCE_LIMIT);
+        return print_failure(o.id, objective, CANON_RESOURCE_LIMIT);
     }
-    const char *p = gens;
+    const char *p = o.gens;
     for (size_t g = 0; g < gen_count; ++g) {
         const char *end = strchr(p, ';');
         size_t len = end != NULL ? (size_t)(end - p) : strlen(p);
         size_t got = parse_list(p, len, gen + g * (size_t)n, n);
         if (got != n) {
             free(gen);
-            free(atoms);
             return usage("each generator must list exactly N comma-separated images");
         }
         p += len + (end != NULL ? 1 : 0);
     }
-    size_t atom_count = parse_list(atoms_arg, strlen(atoms_arg), atoms, atom_cap);
-    if (atom_count == SIZE_MAX) {
-        free(gen);
-        free(atoms);
-        return usage("--atoms expects comma-separated unsigned decimals");
-    }
-    graph_input gin;
-    memset(&gin, 0, sizeof gin);
-    if (graph) {
-        int prc = parse_graph(n, colours_arg, arcs_arg, &gin);
-        if (prc != 0) {
-            graph_input_free(&gin);
-            free(gen);
-            free(atoms);
-            if (prc == 3) {
-                fprintf(stderr, "canon-cli: out of memory\n");
-                return print_failure(id, CANON_RESOURCE_LIMIT);
-            }
-            return prc;
-        }
-    }
 
     canon_context *ctx = NULL;
     canon_group *group = NULL;
-    canon_object *object = NULL;
+    canon_object *object = NULL, *target = NULL;
     canon_problem *problem = NULL;
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
-    canon_capacity cap = {0, 0, max_nodes, 0};
-    const canon_context_options options = {backend};
-    canon_status st = canon_context_create_with_options(NULL, &options, &ctx);
+    canon_capacity cap = {0, 0, o.max_nodes, 0};
+    const canon_context_options copts = {o.backend};
+    const canon_problem_options popts = {o.witness};
+    canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);
     if (st == CANON_COMPLETE) {
         st = canon_group_create(ctx, n, gen, gen_count, &group);
     }
-    if (st == CANON_COMPLETE && graph) {
-        st = canon_object_create_graph(ctx, n, gin.colours,
-                                       gin.colour_lengths, gin.arcs, gin.arc_count, &object);
-    } else if (st == CANON_COMPLETE) {
-        st = canon_object_create_subset(ctx, n, atoms, atom_count, &object);
-    }
+    int rc = 0;
     if (st == CANON_COMPLETE) {
-        st = canon_problem_create(ctx, group, object, CANON_OBJECTIVE_CANONICAL_IMAGE,
-                                  CANON_PROFILE_P1, CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1,
-                                  &cap, &problem);
+        rc = build_object(ctx, n, o.graph, o.atoms, o.colours, o.arcs, &st, &object);
     }
-    if (st == CANON_COMPLETE) {
+    if (rc == 0 && st == CANON_COMPLETE && o.cmd->target) {
+        rc = build_object(ctx, n, o.graph, o.target_atoms, o.target_colours, o.target_arcs, &st,
+                          &target);
+    }
+    if (rc == 0 && st == CANON_COMPLETE) {
+        st = canon_problem_create_with_options(ctx, group, object, target, objective,
+                                               o.cmd->profile, CANON_ENCODING_CDAG_2, o.order,
+                                               &cap, &popts, &problem);
+    }
+    if (rc == 0 && st == CANON_COMPLETE) {
         st = canon_workspace_create(ctx, &ws);
     }
-    if (st == CANON_COMPLETE) {
+    if (rc == 0 && st == CANON_COMPLETE) {
         st = canon_solve(ws, problem, &result);
     }
-    int rc = 0;
-    if (st != CANON_COMPLETE) {
-        rc = print_failure(id, st);
-    } else {
-        size_t trace_len = 0;
-        const uint8_t *trace = canon_result_trace(result, &trace_len);
-        printf("%s\t0001\t%s\t", id, status_name(canon_result_status(result)));
-        put_hex(trace, trace_len);
-        putchar('\t');
-        canon_status enc = canon_result_encode(result, hex_sink, NULL);
-        putchar('\t');
-        uint32_t degree = 0;
-        const uint32_t *w = canon_result_witness(result, &degree);
-        if (w == NULL || degree == 0) {
-            putchar('-'); /* FORMAT.md: n = 0 witness is written '-' */
-        } else {
-            for (uint32_t v = 0; v < degree; ++v) {
-                printf(v == 0 ? "%lu" : ",%lu", (unsigned long)w[v]);
-            }
-        }
-        putchar('\n');
-        rc = enc == CANON_COMPLETE ? 0 : 3;
+    if (rc == 3) {
+        fprintf(stderr, "canon-cli: out of memory\n");
+        rc = print_failure(o.id, objective, CANON_RESOURCE_LIMIT);
+    } else if (rc == 0) {
+        rc = st != CANON_COMPLETE ? print_failure(o.id, objective, st)
+                                  : print_result(o.id, objective, result);
     }
     canon_result_release(result);
     canon_workspace_release(ws);
     canon_problem_release(problem);
     canon_object_release(object);
+    canon_object_release(target);
     canon_group_release(group);
     canon_context_release(ctx);
-    graph_input_free(&gin);
     free(gen);
-    free(atoms);
     if (fflush(stdout) != 0 || ferror(stdout)) {
         return 3;
     }

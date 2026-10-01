@@ -52,6 +52,11 @@ static int in_class(const canon_graph *g)
     return 1;
 }
 
+bool canon_simple_upper_in_class(const canon_graph *g)
+{
+    return in_class(g) != 0;
+}
+
 canon_status canon_simple_upper_key(const canon_graph *g, canon_buf *out)
 {
     if (!in_class(g)) {

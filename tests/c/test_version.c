@@ -58,7 +58,7 @@ int main(void)
     CHECK(st[0] == CANON_UNSUPPORTED_ACTION && st[1] == CANON_UNSUPPORTED_ACTION);
 
     bool valid = true;
-    CHECK(canon_result_verify_witness(NULL, &valid) == CANON_UNSUPPORTED_ACTION);
+    CHECK(canon_result_verify_witness(NULL, &valid) == CANON_INVALID_INPUT); /* S4 */
     CHECK(!valid);
     CHECK(canon_checkpoint_write(NULL, NULL, NULL) == CANON_UNSUPPORTED_ACTION);
     CHECK(canon_checkpoint_read(NULL, NULL, 0, NULL) == CANON_UNSUPPORTED_ACTION);

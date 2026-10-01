@@ -1,10 +1,12 @@
 /*
  * Internal header: the SIMPLE-UPPER-1 key (order 0x0002, spec section 4.4).  Implemented in
- * slice S2 (docs/slices/S2.md section 3.3) as a library function only: the minimum search under
- * this order is slice S4, and canon_problem_create still rejects order 0x0002.
+ * slice S2 (docs/slices/S2.md section 3.3); slice S4 adds the minimum search under this order
+ * (LEX_MIN_IMAGE, src/search/objectives.c).
  */
 #ifndef CANON_SRC_ENCODING_SIMPLE_UPPER_H
 #define CANON_SRC_ENCODING_SIMPLE_UPPER_H
+
+#include <stdbool.h>
 
 #include "canon/canon.h"
 #include "encoding/wire.h"
@@ -18,5 +20,10 @@
  * length does not fit size_t is CANON_CAPACITY_LIMIT; allocation failure CANON_RESOURCE_LIMIT
  * (all or nothing). */
 canon_status canon_simple_upper_key(const canon_graph *g, canon_buf *out);
+
+/* spec 4.4: true iff g is in the class the order is defined for (uncoloured, empty labels, no
+ * loops, exactly one unit arc in each direction for each edge).  The class is invariant under
+ * the action, so slice S4 checks it once, at problem creation. */
+bool canon_simple_upper_in_class(const canon_graph *g);
 
 #endif /* CANON_SRC_ENCODING_SIMPLE_UPPER_H */

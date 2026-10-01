@@ -1,10 +1,10 @@
-/* Stubs for the spec section 17 entry points not implemented in slice S1.  Every function
+/* Stubs for the spec section 17 entry points not implemented yet (slices S1-S4).  Every function
  * reports CANON_UNSUPPORTED_ACTION (spec section 3.2: unknown or unimplemented actions are
  * unsupported, never reinterpreted) and stores NULL through any out-pointer it is given.
  * No argument is validated or dereferenced other than the out-pointers.
  * Replaced by: canon_object_create (S5), canon_solve_batch (S8),
- * canon_result_verify_witness (S4), canon_checkpoint_write/read (M6).
- * The S1 entry points live in src/api/api.c. */
+ * canon_checkpoint_write/read (M6).  canon_result_verify_witness was implemented in S4.
+ * The implemented entry points live in src/api/api.c. */
 #include "canon/canon.h"
 
 /* spec section 17 */
@@ -35,16 +35,6 @@ canon_status canon_solve_batch(canon_workspace *workspace, const canon_problem *
             results[i] = NULL;
             statuses[i] = CANON_UNSUPPORTED_ACTION;
         }
-    }
-    return CANON_UNSUPPORTED_ACTION;
-}
-
-/* spec section 17 */
-canon_status canon_result_verify_witness(const canon_result *result, bool *valid)
-{
-    (void)result;
-    if (valid != NULL) {
-        *valid = false; /* spec section 3.2: false means unproved */
     }
     return CANON_UNSUPPORTED_ACTION;
 }
