@@ -1,6 +1,7 @@
-/* Slice S1 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity descriptor,
- * retain/release handles, groups, subset objects, problems, workspaces, solve, results and
- * result_encode.  Entry points of later slices remain in src/api/stubs.c. */
+/* Slice S1/S2 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity
+ * descriptor, retain/release handles, groups, subset and graph objects (S2), problems,
+ * workspaces, solve, results and result_encode.  Entry points of later slices remain in
+ * src/api/stubs.c. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,7 +10,8 @@
 #include "bsgs/explicit.h"
 #include "bsgs/group.h"
 #include "canon/canon.h"
-#include "encoding/subset_stream.h"
+#include "object/graph.h"
+#include "object/object.h"
 #include "object/subset.h"
 #include "search/p1_tree.h"
 
@@ -26,7 +28,8 @@ struct canon_context {
     canon_capacity defaults; /* every field nonzero */
 };
 
-/* S1 objects are subsets only (spec 7.1 top-level subset); S2/S5 add other kinds.  Like
+/* An object is a root (src/object/object.h): a top-level subset (S1) or a top-level coloured
+ * directed multigraph (S2); nested DAGs arrive in S5.  Like
  * canon_group, an object is immutable and shareable, so its reference count is reached through
  * a pointer (src/arena/refcount.h): retain/release work through a const handle without a
  * cast.  `block` is the allocation, used only to free it. */
@@ -34,7 +37,7 @@ struct canon_object {
     canon_refcount *refs; /* = &refs_storage */
     void *block;          /* = this handle's allocation */
     canon_refcount refs_storage;
-    canon_subset subset;
+    canon_root root;
 };
 
 /* Problems, workspaces and results are retained through non-const handles only, so their
@@ -128,7 +131,7 @@ static void object_unshare(const canon_object *object)
 {
     if (object != NULL && canon_ref_release(object->refs)) {
         canon_object *owned = object->block; /* the allocation, now unreferenced */
-        canon_subset_free(&owned->subset);
+        canon_root_free(&owned->root);
         free(owned);
     }
 }
@@ -211,6 +214,33 @@ canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint3
                                        ctx->defaults.max_group_order, out);
 }
 
+/* Allocate an object handle of the given kind with one reference; the root's storage is
+ * zero (valid to free). */
+static canon_object *new_object(canon_root_kind kind, uint32_t degree)
+{
+    canon_object *obj = calloc(1, sizeof *obj);
+    if (obj != NULL) {
+        obj->block = obj;
+        obj->refs = &obj->refs_storage;
+        canon_ref_init(obj->refs);
+        obj->root.kind = kind;
+        obj->root.n = degree;
+    }
+    return obj;
+}
+
+/* Finish a builder: on success hand out the object, otherwise free it. */
+static canon_status finish_object(canon_object *obj, canon_status st, canon_object **out)
+{
+    if (st != CANON_COMPLETE) {
+        canon_root_free(&obj->root);
+        free(obj);
+        return st;
+    }
+    *out = obj;
+    return CANON_COMPLETE;
+}
+
 canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
                                         const uint32_t *atoms, size_t count, canon_object **out)
 {
@@ -226,22 +256,64 @@ canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
     if (degree > ctx->defaults.max_n) {
         return CANON_CAPACITY_LIMIT;
     }
-    canon_object *obj = malloc(sizeof *obj);
+    canon_object *obj = new_object(CANON_ROOT_SUBSET, degree);
     if (obj == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
-    obj->block = obj;
-    obj->refs = &obj->refs_storage;
-    canon_ref_init(obj->refs);
     /* spec 17: copies data; spec 4.2: duplicates deduplicated. */
-    canon_status st = canon_subset_init(&obj->subset, degree, atoms, count);
-    if (st != CANON_COMPLETE) {
-        canon_subset_free(&obj->subset);
-        free(obj);
-        return st;
+    return finish_object(obj, canon_subset_init(&obj->root.u.subset, degree, atoms, count), out);
+}
+
+canon_status canon_object_create_graph(canon_context *ctx, uint32_t degree,
+                                       const uint8_t *const *colours, const size_t *colour_lengths,
+                                       const canon_arc *arcs, size_t arc_count, canon_object **out)
+{
+    if (out == NULL) {
+        return CANON_INVALID_INPUT;
     }
-    *out = obj;
-    return CANON_COMPLETE;
+    *out = NULL;
+    /* Required arrays: the colour arrays for degree > 0 (they may be NULL only when degree is
+     * 0), the arcs for arc_count > 0. */
+    if (ctx == NULL || (degree > 0 && (colours == NULL || colour_lengths == NULL)) ||
+        (arc_count > 0 && arcs == NULL)) {
+        return CANON_INVALID_INPUT;
+    }
+    if (degree > ctx->defaults.max_n) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: admitted degree first, then the data */
+    }
+    canon_object *obj = new_object(CANON_ROOT_GRAPH, degree);
+    if (obj == NULL) {
+        return CANON_RESOURCE_LIMIT;
+    }
+    /* spec 17: copies data; spec 4.1: duplicate arcs combined, zero multiplicities invalid. */
+    canon_status st = canon_graph_init(&obj->root.u.graph, degree, degree > 0 ? colours : NULL,
+                                       degree > 0 ? colour_lengths : NULL, arcs, arc_count);
+    return finish_object(obj, st, out);
+}
+
+canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degree,
+                                              const uint32_t (*edges)[2], size_t edge_count,
+                                              canon_object **out)
+{
+    if (out == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *out = NULL;
+    if (ctx == NULL || (edge_count > 0 && edges == NULL)) {
+        return CANON_INVALID_INPUT;
+    }
+    if (degree > ctx->defaults.max_n) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    canon_object *obj = new_object(CANON_ROOT_GRAPH, degree);
+    if (obj == NULL) {
+        return CANON_RESOURCE_LIMIT;
+    }
+    /* spec 4.1: the schema-specific wrapper rejects loops, coalesces duplicate edges and emits
+     * two opposite unit arcs per edge; it is the only undirected-to-directed conversion. */
+    return finish_object(obj, canon_graph_init_simple(&obj->root.u.graph, degree, edges,
+                                                      edge_count),
+                         out);
 }
 
 canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
@@ -262,21 +334,23 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
         encoding != CANON_ENCODING_CDAG_2 || order != CANON_ORDER_CDAG_BYTE_1) {
         return CANON_UNSUPPORTED_ACTION;
     }
-    if (group->degree != object->subset.n) {
+    if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
     }
     canon_capacity cap = resolve_capacity(capacity, &ctx->defaults);
     /* spec 11.1: "Validation is deterministic over the normalised input." */
-    if (object->subset.n > cap.max_n) {
+    if (object->root.n > cap.max_n) {
         return CANON_CAPACITY_LIMIT;
     }
     if (group->ops->order(group) > cap.max_group_order) {
         return CANON_CAPACITY_LIMIT;
     }
-    /* spec 11.1: data-dependent output size uses an exact input-derived bound: the canonical
-     * subset stream has the same number of members as x, so its length is exact here. */
+    /* spec 11.1: data-dependent output size uses an exact input-derived bound.  The stream
+     * length of x^g equals that of x for every g: a subset image has as many members; a graph
+     * image has the same colour multiset, arc count, label bytes and multiplicities (hence Nat
+     * lengths), since the action only renumbers vertices.  So the length is exact here. */
     uint64_t out_bytes = 0;
-    canon_status st = canon_subset_stream_size(object->subset.k, &out_bytes);
+    canon_status st = canon_root_stream_size(&object->root, &out_bytes);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -356,8 +430,8 @@ canon_status canon_solve(canon_workspace *workspace, const canon_problem *proble
     /* Objective, profile, encoding, order and degrees were validated once, in
      * canon_problem_create; a problem is immutable, so they are not re-checked here. */
     canon_p1_search *s = &workspace->search;
-    canon_status st = canon_p1_search_subset(s, problem->group, &problem->object->subset,
-                                             problem->capacity.max_search_nodes);
+    canon_status st = canon_p1_search_run(s, problem->group, &problem->object->root,
+                                          problem->capacity.max_search_nodes);
     if (st != CANON_COMPLETE) {
         /* spec 3.2: an incomplete result carries no trace, bytes or witness and all flags
          * false; spec 17: never a fabricated completion flag. */

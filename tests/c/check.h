@@ -2,6 +2,7 @@
 #ifndef CANON_TESTS_CHECK_H
 #define CANON_TESTS_CHECK_H
 
+#include <stddef.h>
 #include <stdio.h>
 
 static int check_failures;
@@ -24,6 +25,23 @@ static inline unsigned long long check_rng(void)
     x ^= x << 17;
     check_rng_state = x;
     return x;
+}
+
+/* 1 iff the n bytes at b, written as lowercase hex, equal `want` (spaces in `want` ignored). */
+static inline int check_hex_is(const unsigned char *b, size_t n, const char *want)
+{
+    static const char digits[] = "0123456789abcdef";
+    size_t i = 0;
+    for (; *want != '\0'; ++want) {
+        if (*want == ' ') {
+            continue;
+        }
+        if (i >= 2 * n || *want != digits[(i % 2 == 0) ? b[i / 2] >> 4 : b[i / 2] & 15]) {
+            return 0;
+        }
+        ++i;
+    }
+    return i == 2 * n;
 }
 
 static inline int check_finish(const char *name)

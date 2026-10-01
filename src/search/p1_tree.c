@@ -1,16 +1,17 @@
-/* Unpruned P1 canonical-image search for a top-level subset (spec sections 7.1-7.3, 11.1). */
+/* Unpruned P1 canonical-image search for a root object (spec sections 7.1-7.3, 11.1). */
 #include "search/p1_tree.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "arena/checked.h"
-#include "encoding/subset_stream.h"
 #include "perm/perm.h"
 
 void canon_p1_search_init(canon_p1_search *s)
 {
     memset(s, 0, sizeof *s);
+    canon_p1_scratch_init(&s->scratch);
+    canon_root_image_init(&s->image);
     canon_buf_init(&s->trace);
     canon_buf_init(&s->leaf_bytes);
     canon_buf_init(&s->best_trace);
@@ -20,20 +21,12 @@ void canon_p1_search_init(canon_p1_search *s)
 static void free_arrays(canon_p1_search *s)
 {
     canon_partition_free(&s->part);
-    free(s->scratch.fixed);
-    free(s->scratch.u);
-    free(s->scratch.orbit);
-    free(s->scratch.sig);
     free(s->snaps);
     free(s->leaf_t);
-    free(s->leaf_atoms);
-    free(s->leaf_bits);
     free(s->best_t);
-    s->scratch.fixed = s->scratch.u = s->scratch.orbit = s->scratch.sig = NULL;
     s->snaps = NULL;
     s->snap_alloc = 0;
-    s->leaf_t = s->leaf_atoms = s->best_t = NULL;
-    s->leaf_bits = NULL;
+    s->leaf_t = s->best_t = NULL;
     s->ready = false;
     s->cap = 0;
     s->n = 0;
@@ -42,6 +35,8 @@ static void free_arrays(canon_p1_search *s)
 void canon_p1_search_free(canon_p1_search *s)
 {
     free_arrays(s);
+    canon_p1_scratch_free(&s->scratch);
+    canon_root_image_free(&s->image);
     canon_buf_free(&s->trace);
     canon_buf_free(&s->leaf_bytes);
     canon_buf_free(&s->best_trace);
@@ -50,9 +45,11 @@ void canon_p1_search_free(canon_p1_search *s)
 
 /* Size the per-point arrays to a capacity that only grows: a solve of degree n <= cap reuses
  * them; a larger n reallocates them for n.  The snapshot stack keeps its words across degrees
- * (it is indexed by the current snap_words). */
-static canon_status prepare(canon_p1_search *s, uint32_t n)
+ * (it is indexed by the current snap_words).  The refinement scratch and the leaf image storage
+ * grow on their own (canon_p1_scratch_reserve, canon_root_act_into). */
+static canon_status prepare(canon_p1_search *s, const canon_root *x)
 {
+    const uint32_t n = x->n;
     canon_status st = CANON_COMPLETE;
     if (!s->ready || n > s->cap) {
         uint32_t *snaps = s->snaps; /* keep the stack: snapshot_slot grows it as needed */
@@ -61,10 +58,8 @@ static canon_status prepare(canon_p1_search *s, uint32_t n)
         free_arrays(s);
         s->snaps = snaps;
         s->snap_alloc = snap_alloc;
-        size_t entries = n > 0 ? (size_t)n : 1, bytes = 0, bit_bytes = 0;
-        size_t words = canon_bitset_words(n) > 0 ? canon_bitset_words(n) : 1;
-        if (!canon_size_mul(entries, sizeof(uint32_t), &bytes) ||
-            !canon_size_mul(words, sizeof(uint64_t), &bit_bytes)) {
+        size_t entries = n > 0 ? (size_t)n : 1, bytes = 0;
+        if (!canon_size_mul(entries, sizeof(uint32_t), &bytes)) {
             return CANON_CAPACITY_LIMIT; /* spec 11.1 */
         }
         st = canon_partition_init(&s->part, n);
@@ -72,22 +67,18 @@ static canon_status prepare(canon_p1_search *s, uint32_t n)
             free_arrays(s);
             return st;
         }
-        s->scratch.fixed = malloc(bytes);
-        s->scratch.u = malloc(bytes);
-        s->scratch.orbit = malloc(bytes);
-        s->scratch.sig = malloc(bytes);
         s->leaf_t = malloc(bytes);
-        s->leaf_atoms = malloc(bytes);
         s->best_t = malloc(bytes);
-        s->leaf_bits = malloc(bit_bytes);
-        if (s->scratch.fixed == NULL || s->scratch.u == NULL || s->scratch.orbit == NULL ||
-            s->scratch.sig == NULL || s->leaf_t == NULL || s->leaf_atoms == NULL ||
-            s->best_t == NULL || s->leaf_bits == NULL) {
+        if (s->leaf_t == NULL || s->best_t == NULL) {
             free_arrays(s);
             return CANON_RESOURCE_LIMIT;
         }
         s->cap = n;
         s->ready = true;
+    }
+    st = canon_p1_scratch_reserve(&s->scratch, x);
+    if (st != CANON_COMPLETE) {
+        return st;
     }
     st = canon_partition_snapshot_words(n, &s->snap_words);
     if (st != CANON_COMPLETE) {
@@ -131,7 +122,7 @@ static canon_status snapshot_slot(canon_p1_search *s, uint32_t depth, uint32_t *
 /* spec 7.2 leaf map: L = singleton order; t_L the unique element minimising L^G; image x^t_L;
  * key (complete trace, CDAG-2 bytes).  Keep the least key; on an equal key keep the
  * lexicographically smaller witness (spec 7.4 preamble). */
-static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, const canon_subset *x)
+static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, const canon_root *x)
 {
     const uint32_t n = s->n;
     /* spec 7.2: "At a leaf extract L from the partition's singleton order."  Every cell is a
@@ -140,10 +131,14 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
     if (st != CANON_COMPLETE) {
         return st;
     }
-    /* spec 2.1: x^t = {t[a] : a in x}; spec 4.1/4.2: its CDAG-2 stream. */
-    canon_subset_act_sorted(x, s->leaf_t, s->leaf_bits, s->leaf_atoms);
+    /* spec 2.1: the image x^t (subset: {t[a] : a in x}; graph: vertices and arcs relabelled
+     * by t, re-sorted); spec 4.1/4.2: its CDAG-2 stream. */
+    st = canon_root_act_into(x, s->leaf_t, &s->image);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
     canon_buf_truncate(&s->leaf_bytes, 0);
-    st = canon_subset_stream_write(&s->leaf_bytes, n, s->leaf_atoms, x->k);
+    st = canon_root_stream_write(&s->image.root, &s->leaf_bytes);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -187,7 +182,7 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
 /* spec 7.1: one node of the unpruned tree; the partition on entry is the node's partition
  * before refinement.  Recursion depth is bounded by the number of individualisations, at most
  * n - 1 (spec 7.2 termination). */
-static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_subset *x,
+static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_root *x,
                           uint32_t depth, uint64_t max_nodes)
 {
     /* spec 11.1: the logical work quota counts NODE tokens of the fixed reference traversal;
@@ -197,7 +192,7 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
     }
     s->nodes += 1;
     size_t mark = s->trace.len;
-    canon_status st = canon_p1_refine_node(&s->part, g, depth, &s->trace, &s->scratch);
+    canon_status st = canon_p1_refine_node(&s->part, g, x, depth, &s->trace, &s->scratch);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -246,13 +241,13 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
     return CANON_COMPLETE;
 }
 
-canon_status canon_p1_search_subset(canon_p1_search *s, const canon_group *g,
-                                    const canon_subset *x, uint64_t max_nodes)
+canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const canon_root *x,
+                                 uint64_t max_nodes)
 {
     if (g->degree != x->n) {
         return CANON_INVALID_INPUT;
     }
-    canon_status st = prepare(s, x->n);
+    canon_status st = prepare(s, x);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -263,7 +258,7 @@ canon_status canon_p1_search_subset(canon_p1_search *s, const canon_group *g,
     canon_buf_truncate(&s->best_bytes, 0);
     /* spec 7.1 root: initial key partition; spec 7.2: n = 0 gives an empty list and the root is
      * a leaf. */
-    canon_p1_initial_subset(&s->part, x, &s->scratch);
+    canon_p1_initial(&s->part, x, &s->scratch);
     st = visit(s, g, x, 0, max_nodes);
     if (st != CANON_COMPLETE) {
         s->have_best = false;

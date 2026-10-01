@@ -33,7 +33,9 @@ endif()
 add_library(canon STATIC
   src/api/version.c src/api/stubs.c src/api/api.c
   src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c
-  src/object/subset.c src/bsgs/group.c src/bsgs/explicit.c src/partition/partition.c
+  src/encoding/graph_stream.c src/encoding/simple_upper.c
+  src/object/subset.c src/object/graph.c src/object/object.c
+  src/bsgs/group.c src/bsgs/explicit.c src/partition/partition.c
   src/util/sort.c src/refine/p1.c src/search/p1_tree.c)
 target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
@@ -57,7 +59,9 @@ target_link_libraries(test_header_abi PRIVATE canon canon_options)
 add_test(NAME test_header_abi COMMAND test_header_abi)
 
 # Unit and end-to-end C tests; they may include internal headers from src/.
-foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_search_subset)
+foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_search_subset
+          test_nat test_graph test_graph_stream test_signature test_simple_upper
+          test_search_graph)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)

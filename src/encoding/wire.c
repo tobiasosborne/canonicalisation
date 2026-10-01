@@ -110,6 +110,39 @@ canon_status canon_buf_put_b(canon_buf *buf, const uint8_t *bytes, size_t length
     return st;
 }
 
+/* spec section 4.1: the shortest b with k < 256^b; b = 0 exactly for k = 0. */
+static uint32_t nat_width(uint64_t k)
+{
+    uint32_t b = 0;
+    while (k != 0) {
+        ++b;
+        k >>= 8;
+    }
+    return b;
+}
+
+uint32_t canon_nat_length(uint64_t k)
+{
+    return 4u + nat_width(k);
+}
+
+/* spec section 4.1: "Nat(k)=U32(b) || big_endian_bytes(k,b) uses the shortest b, with b=0 for
+ * k=0 and no leading zero otherwise." */
+canon_status canon_buf_put_nat(canon_buf *buf, uint64_t k)
+{
+    uint8_t bytes[12];
+    uint32_t b = nat_width(k);
+    bytes[0] = (uint8_t)(b >> 24);
+    bytes[1] = (uint8_t)(b >> 16);
+    bytes[2] = (uint8_t)(b >> 8);
+    bytes[3] = (uint8_t)b;
+    for (uint32_t i = 0; i < b; ++i) {
+        /* big endian: the most significant of the b bytes first, which is nonzero */
+        bytes[4 + i] = (uint8_t)(k >> (8u * (b - 1u - i)));
+    }
+    return canon_buf_put_bytes(buf, bytes, 4u + (size_t)b); /* all or nothing */
+}
+
 /* spec section 4.3: unsigned byte lexicographic order, proper prefix smaller. */
 int canon_bytes_compare(const uint8_t *a, size_t a_len, const uint8_t *b, size_t b_len)
 {
