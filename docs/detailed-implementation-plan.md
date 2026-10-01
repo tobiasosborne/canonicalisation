@@ -270,7 +270,7 @@ Bitset plus sorted list for subsets; tuple with repeated positions. Action, equa
 
 ### WP3.6 Nested DAG and algebraic leaves (`src/object/dag.c`)
 
-Tuples, sets, multisets over the above, plus permutation, subgroup and labeling-coset leaves encoded through WP2.7. Action on a permutation leaf is conjugation `g⁻¹pg`; on a subgroup `g⁻¹Hg`; on a coset `g⁻¹Hρ` (§2.1). Tests: conjugation convention with noncommuting `p, q`; coset action preserves the set of labelings.
+Tuples, sets, multisets over the above, plus permutation, subgroup and labeling-coset leaves encoded through WP2.7. Action on a permutation leaf is conjugation `g⁻¹pg`; on a subgroup `g⁻¹Hg`; on a coset `g⁻¹Hρ` (§2.1). Tests: conjugation convention pinned with a `g` of order at least 3 (an involution cannot distinguish `g⁻¹pg` from `gpg⁻¹`; S5 used `p = [1,0,2]`, `g = [1,2,0]`: `g⁻¹pg = [0,2,1]`, `gpg⁻¹ = [2,1,0]`); coset action preserves the set of labelings. **Output size (§11.1):** the stream length of a nested object is invariant under the action for tags 01–06, but not for subgroup or coset leaves, whose greedy-generator payload can change length under conjugation (`C₄ = ⟨(0 2 1 3)⟩` on 4 points: 77 bytes; its conjugate by `(1 2)`: 41 bytes). The capacity check therefore uses the exact length for 01–06 and the §9.4 bound for 07/08, which is constant on the orbit (found in S5).
 
 ### WP3.7 Adapter proof bundles (Lean, after M1)
 
