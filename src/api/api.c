@@ -215,15 +215,10 @@ canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
     if (ctx == NULL || (count > 0 && atoms == NULL)) {
         return CANON_INVALID_INPUT;
     }
-    /* spec 4.1: out-of-domain atom IDs are invalid (checked before the capacity test so that
-     * malformed input is reported as such). */
-    for (size_t i = 0; i < count; ++i) {
-        if (atoms[i] >= degree) {
-            return CANON_INVALID_INPUT;
-        }
-    }
+    /* spec 11.1: the admitted degree is checked first, as in canon_group_create, then the
+     * data (spec 4.1: out-of-domain atom IDs are invalid, in canon_subset_init). */
     if (degree > ctx->defaults.max_n) {
-        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+        return CANON_CAPACITY_LIMIT;
     }
     canon_object *obj = malloc(sizeof *obj);
     if (obj == NULL) {

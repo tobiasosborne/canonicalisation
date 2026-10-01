@@ -8,4 +8,6 @@ Coverage: tags `01`-`05` and `09` are parsed and checked strictly (atoms in doma
 
 **Tests.** `tests/python/test_hexdump_stream.py` (the six §7.4 streams plus malformed variants).
 
-**Governing spec sections.** §4.1, §9.4.
+**`canon-cli.c`** (slice S1, built as `build/make/canon-cli` by `make`, `canon-cli` by CMake). Links `libcanon` through the public header only. `canon-cli p1-subset --n N --gens "a0,a1,...;b0,..." --atoms "x,y,..." [--max-nodes K] [--id CASE]` solves `CANONICAL_IMAGE` under P1 and prints one `refs/compare/FORMAT.md` record (`CASE`, `0001`, status, trace hex, bytes hex, witness or `-`). `--gens ""` is the trivial group and `--atoms ""` the empty subset; `--max-nodes` sets the §11.1 NODE quota (0 = default). Exit 0 on `COMPLETE`, 3 on another status (hex fields empty), 2 on a usage error. Tested by `tests/python/test_e2e.py`.
+
+**Governing spec sections.** §4.1, §9.4; `canon-cli`: §§3.2, 7, 11.1, 17.

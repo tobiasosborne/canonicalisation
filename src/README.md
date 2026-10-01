@@ -6,6 +6,6 @@
 
 **Milestones.** perm/bsgs/coset: M2. object/encoding: M3. partition/refine/search/symmetry/api: M4. arena/metrics: M5. scheduler/checkpoint: M6. cpu_dispatch: M8.
 
-**Current state.** Real code exists only in `api/version.c`, `api/stubs.c` and, as declarations only, `perm/perm.h`.
+**Current state.** Slice S1 (`docs/slices/S1.md`) implements the subset canonical-image path in `perm`, `bsgs` (explicit backend), `object` (subset), `encoding` (wire primitives, subset stream), `partition`, `refine`, `search`, `api` and `arena/checked.h`; each module README says what exists. Other modules are placeholders.
 
 **What may live here.** C17 only, no dependencies. Public declarations belong in `include/canon/`; headers here are internal.
