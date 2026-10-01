@@ -23,10 +23,13 @@ CFLAGS   += -flto
 LDFLAGS  += -flto
 endif
 
-LIB_SRC  = src/api/version.c src/api/stubs.c
+LIB_SRC  = src/api/version.c src/api/stubs.c \
+           src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
-TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi
+# Unit tests that may include internal headers from src/ (tests/c/README.md).
+UNIT_TESTS = test_perm test_wire
+TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 FORMAT_FILES = $(shell find include src checker tests/c -name '*.c' -o -name '*.h' 2>/dev/null)
 
@@ -35,7 +38,7 @@ all: $(LIB) $(CHECKER) $(TESTS)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Iinclude -MMD -MP -c $< -o $@
+	$(CC) $(CFLAGS) -Iinclude -Isrc -MMD -MP -c $< -o $@
 
 $(LIB): $(LIB_OBJ)
 	ar rcs $@ $^
@@ -49,6 +52,9 @@ $(BUILD)/test_version: tests/c/test_version.c $(LIB)
 	$(CC) $(CFLAGS) -Iinclude $< $(LIB) -o $@ $(LDFLAGS)
 
 $(BUILD)/test_header_abi: tests/c/test_header_abi.c $(LIB)
+	$(CC) $(CFLAGS) -Iinclude -Isrc $< $(LIB) -o $@ $(LDFLAGS)
+
+$(UNIT_TESTS:%=$(BUILD)/%): $(BUILD)/%: tests/c/%.c tests/c/check.h $(LIB)
 	$(CC) $(CFLAGS) -Iinclude -Isrc $< $(LIB) -o $@ $(LDFLAGS)
 
 test: all
