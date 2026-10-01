@@ -26,8 +26,28 @@ void canon_dag_init(canon_dag *d, uint32_t n)
     canon_buf_init(&d->pool);
 }
 
+/* Release the objects the arena owns besides its records (chains, graph); the chain array
+ * itself is kept for reuse. */
+static void drop_objects(canon_dag *d)
+{
+    for (uint32_t i = 0; i < d->chains_cap; ++i) {
+        if (d->chains[i] != NULL) {
+            canon_bsgs_free(d->chains[i]);
+            free(d->chains[i]);
+            d->chains[i] = NULL;
+        }
+    }
+    if (d->graph != NULL) {
+        canon_graph_free(d->graph);
+        free(d->graph);
+        d->graph = NULL;
+    }
+}
+
 void canon_dag_free(canon_dag *d)
 {
+    drop_objects(d);
+    free(d->chains);
     free(d->recs);
     free(d->child);
     free(d->mult);
@@ -37,6 +57,7 @@ void canon_dag_free(canon_dag *d)
 
 void canon_dag_reset(canon_dag *d, uint32_t n)
 {
+    drop_objects(d);
     d->n = n;
     d->count = 0;
     d->refs = 0;
@@ -53,6 +74,29 @@ uint32_t canon_dag_atom(const canon_dag *d, uint32_t i)
     /* spec 4.1: "01 U32(a)", big endian */
     const uint8_t *p = canon_dag_payload(d, i);
     return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
+}
+
+/* Give record i the chain c (heap, owned by d from now on, also on failure, when it is
+ * released).  Grow-only array; new entries are NULL. */
+static canon_status attach_chain(canon_dag *d, uint32_t i, canon_bsgs *c)
+{
+    if (i >= d->chains_cap) {
+        const uint32_t old = d->chains_cap;
+        void *p = d->chains;
+        canon_status st =
+            canon_grow_array_to(&p, &d->chains_cap, old, (uint64_t)i + 1u, 16u, sizeof *d->chains);
+        d->chains = p;
+        if (st != CANON_COMPLETE) {
+            canon_bsgs_free(c);
+            free(c);
+            return st;
+        }
+        for (uint32_t j = old; j < d->chains_cap; ++j) {
+            d->chains[j] = NULL;
+        }
+    }
+    d->chains[i] = c;
+    return CANON_COMPLETE;
 }
 
 /* Reserve one more record, k more references and the payload, then append the record header
@@ -199,6 +243,8 @@ static canon_status reserve_points(canon_dag_scratch *s, uint32_t n)
         free(bits);
         return st;
     }
+    /* the payload readers' bits contract (cdag_decode.h): zero once, kept zero by them */
+    memset(bits, 0, (canon_cdag_bits_words(n) > 0 ? canon_cdag_bits_words(n) : 1u) * sizeof *bits);
     free(s->perm);
     free(s->bits);
     s->perm = block;
@@ -223,7 +269,7 @@ static void gens_reset(canon_perm_table *t, uint32_t n)
 /* ---- canonical leaf payloads (spec 4.1, 9.4) ---- */
 
 /* Read a Group(H) payload at rd into s->gens and build its verified chain in *chain (spec 9.1
- * "exact verification is mandatory": the chain decides canonical bytes). */
+ * "exact verification is mandatory": the chain decides canonical bytes).  Counted. */
 static canon_status group_chain(canon_cdag_reader *rd, uint32_t n, canon_dag_scratch *s,
                                 canon_bsgs *chain)
 {
@@ -232,19 +278,40 @@ static canon_status group_chain(canon_cdag_reader *rd, uint32_t n, canon_dag_scr
     canon_status st = canon_cdag_read_group(rd, n, s->bits, &s->gens, s->perm, &reason);
     if (st == CANON_COMPLETE) {
         st = canon_bsgs_build_verified(chain, n, s->gens.data, s->gens.count);
+        s->stats.chain_builds += 1;
     }
     return st;
+}
+
+/* Move a chain into a new heap block (*out), or release it when that fails. */
+static canon_status chain_to_heap(canon_bsgs *chain, canon_bsgs **out)
+{
+    canon_status st = CANON_COMPLETE;
+    *out = canon_alloc_array(1, sizeof **out, &st);
+    if (*out == NULL) {
+        canon_bsgs_free(chain);
+        return st;
+    }
+    **out = *chain; /* moved: the arrays now belong to *out */
+    return CANON_COMPLETE;
 }
 
 /* Write the canonical payload of the leaf (tag, payload) of degree n into s->leaf:
  *   07: Group(H) by spec 9.4 rules 1 and 2 (src/encoding/group_stream.h);
  *   08: Group(H) || Perm(r0), r0 the least element of H r (spec 9.4);
  *   09: the normalised graph record payload (spec 4.1: arcs combined and sorted).
- * When `conj` is not NULL the leaf is first conjugated by g = conj (spec 2.1): every generator
- * p of H becomes g^-1 p g, i.e. q[g[v]] = g[p[v]], and r becomes g^-1 r, i.e. r'[g[v]] = r[v]
- * (spec 2.1: "A labeling-coset object H rho ... becomes g^-1 H rho = (g^-1 H g)(g^-1 rho)"). */
+ * With g not NULL the leaf is first acted on by g (spec 2.1): H becomes g^-1 H g and r becomes
+ * g^-1 r, i.e. r'[g[v]] = r[v] ("A labeling-coset object H rho ... becomes g^-1 H rho =
+ * (g^-1 H g)(g^-1 rho)").  The chain of the (acted-on) group is
+ *   - `src` conjugated by g when src is given (the stored chain of H; S5 review item 6: a
+ *     conjugate of a verified chain is a verified chain, canon_bsgs_conjugate), or
+ *   - built and verified from the payload's generators, each conjugated by g first
+ *     (q[g[v]] = g[p[v]], spec 2.1 "g^-1 p g").
+ * `keep` (07/08, may be NULL) receives that chain on the heap instead of releasing it;
+ * `graph_keep` (09, may be NULL) receives the imported graph object likewise. */
 static canon_status canonical_leaf(uint32_t n, uint8_t tag, const uint8_t *payload, size_t len,
-                                   const uint32_t *conj, canon_dag_scratch *s)
+                                   const uint32_t *g, const canon_bsgs *src, canon_bsgs **keep,
+                                   canon_graph **graph_keep, canon_dag_scratch *s)
 {
     canon_status st = reserve_points(s, n);
     if (st != CANON_COMPLETE) {
@@ -254,50 +321,70 @@ static canon_status canonical_leaf(uint32_t n, uint8_t tag, const uint8_t *paylo
     canon_cdag_reason reason = CANON_CDAG_OK;
     canon_buf_truncate(&s->leaf, 0);
     if (tag == CANON_REC_GRAPH) {
-        canon_graph g;
-        canon_graph_init_empty(&g);
-        st = canon_cdag_read_graph(&rd, n, &g, &reason);
+        canon_graph local, *gr = &local;
+        if (graph_keep != NULL) {
+            gr = canon_alloc_array(1, sizeof *gr, &st);
+            if (gr == NULL) {
+                return st;
+            }
+        }
+        canon_graph_init_empty(gr);
+        st = canon_cdag_read_graph(&rd, n, gr, &reason); /* the S2 import, done once */
         canon_buf_truncate(&s->leaf2, 0);
         if (st == CANON_COMPLETE) {
-            st = canon_graph_stream_write(&s->leaf2, &g); /* spec 4.1 normalised record */
+            st = canon_graph_stream_write(&s->leaf2, gr); /* spec 4.1 normalised record */
         }
-        canon_graph_free(&g);
         /* the stream is header (15 bytes), tag 09, payload, U32(root): keep the payload */
         if (st == CANON_COMPLETE) {
             st = canon_buf_put_bytes(&s->leaf, s->leaf2.data + 16u, s->leaf2.len - 20u);
+        }
+        if (graph_keep != NULL && st == CANON_COMPLETE) {
+            *graph_keep = gr;
+            return CANON_COMPLETE;
+        }
+        canon_graph_free(gr);
+        if (gr != &local) {
+            free(gr);
         }
         return st;
     }
     canon_bsgs chain;
     canon_bsgs_init(&chain, n);
-    gens_reset(&s->gens, n);
-    st = canon_cdag_read_group(&rd, n, s->bits, &s->gens, s->perm, &reason);
     uint32_t *r = s->perm2; /* coset representative */
+    if (src != NULL) {
+        /* the payload is canonical: skip Group(H), read Perm(r0) for a coset */
+        st = canon_cdag_read_group(&rd, n, s->bits, NULL, NULL, &reason);
+    } else {
+        gens_reset(&s->gens, n);
+        st = canon_cdag_read_group(&rd, n, s->bits, &s->gens, s->perm, &reason);
+    }
     if (st == CANON_COMPLETE && tag == CANON_REC_COSET) {
         st = canon_cdag_read_perm(&rd, n, s->bits, r, &reason);
     }
     if (st == CANON_COMPLETE && rd.pos != len) {
         st = CANON_INVALID_INPUT; /* the payload is exactly Group || [Perm] */
     }
-    if (st == CANON_COMPLETE && conj != NULL) {
-        for (uint32_t i = 0; i < s->gens.count; ++i) {
+    if (st == CANON_COMPLETE && src != NULL) {
+        st = canon_bsgs_conjugate(src, g, &chain); /* g^-1 H g, no rebuild */
+        s->stats.chain_conjugations += 1;
+    } else if (st == CANON_COMPLETE) {
+        for (uint32_t i = 0; g != NULL && i < s->gens.count; ++i) {
             uint32_t *p = s->gens.data + (size_t)i * n;
             for (uint32_t v = 0; v < n; ++v) {
-                s->perm[conj[v]] = conj[p[v]]; /* spec 2.1: g^-1 p g */
+                s->perm[g[v]] = g[p[v]]; /* spec 2.1: g^-1 p g */
             }
             if (n > 0) {
                 memcpy(p, s->perm, (size_t)n * sizeof *p);
             }
         }
-        if (tag == CANON_REC_COSET) {
-            for (uint32_t v = 0; v < n; ++v) {
-                s->perm[conj[v]] = r[v]; /* spec 2.1: g^-1 r, (g^-1 r)[g[v]] = r[v] */
-            }
-            r = s->perm;
-        }
-    }
-    if (st == CANON_COMPLETE) {
         st = canon_bsgs_build_verified(&chain, n, s->gens.data, s->gens.count);
+        s->stats.chain_builds += 1;
+    }
+    if (st == CANON_COMPLETE && tag == CANON_REC_COSET && g != NULL) {
+        for (uint32_t v = 0; v < n; ++v) {
+            s->perm[g[v]] = r[v]; /* spec 2.1: g^-1 r, (g^-1 r)[g[v]] = r[v] */
+        }
+        r = s->perm;
     }
     if (st == CANON_COMPLETE) {
         /* spec 9.4: "Use this deterministic priority, never whichever representation the
@@ -306,6 +393,9 @@ static canon_status canonical_leaf(uint32_t n, uint8_t tag, const uint8_t *paylo
         st = tag == CANON_REC_GROUP
                  ? canon_group_bytes_write(&s->leaf, &chain, NULL, &s->coset)
                  : canon_coset_bytes_write(&s->leaf, &chain, r, s->inv, NULL, &s->coset);
+    }
+    if (st == CANON_COMPLETE && keep != NULL) {
+        return chain_to_heap(&chain, keep);
     }
     canon_bsgs_free(&chain);
     return st;
@@ -359,9 +449,10 @@ static bool node_equal(const canon_dag *nodes, uint32_t e, uint8_t tag, const ui
     return true;
 }
 
-/* Intern input record i of `in` into s->nodes; s->map[i] receives its node id. */
-static canon_status intern_one(const canon_dag *in, uint32_t i, canon_dag_scratch *s,
-                               bool leaves_canonical)
+/* Intern input record i of `in` into s->nodes (s->map[i] receives its node id); a leaf
+ * canonicalised here leaves its chain or graph object in *chain / *graph. */
+static canon_status intern_node(const canon_dag *in, uint32_t i, canon_dag_scratch *s,
+                                bool leaves_canonical, canon_bsgs **chainp, canon_graph **graphp)
 {
     const canon_rec *r = &in->recs[i];
     const uint8_t *payload = canon_dag_payload(in, i);
@@ -405,8 +496,11 @@ static canon_status intern_one(const canon_dag *in, uint32_t i, canon_dag_scratc
         if (!leaves_canonical &&
             (r->tag == CANON_REC_GROUP || r->tag == CANON_REC_COSET || r->tag == CANON_REC_GRAPH)) {
             /* spec 4.2 "exact equality/normal forms for group leaves" (spec 9.4); atoms,
-             * literals and the strict Perm grammar are canonical as decoded */
-            st = canonical_leaf(in->n, r->tag, payload, len, NULL, s);
+             * literals and the strict Perm grammar are canonical as decoded.  The verified
+             * chain (or the graph object of the root) is kept for the arena. */
+            st = canonical_leaf(in->n, r->tag, payload, len, NULL, NULL,
+                                r->tag == CANON_REC_GRAPH ? NULL : chainp,
+                                r->tag == CANON_REC_GRAPH ? graphp : NULL, s);
             if (st != CANON_COMPLETE) {
                 return st;
             }
@@ -442,6 +536,34 @@ static canon_status intern_one(const canon_dag *in, uint32_t i, canon_dag_scratc
     s->map[i] = s->nodes.count - 1u;
     s->table[slot] = s->nodes.count; /* id + 1 */
     return CANON_COMPLETE;
+}
+
+/* Intern input record i (intern_node) and keep a canonicalised leaf's chain or graph object
+ * with its node: the first copy of a value keeps it, later equal copies release theirs. */
+static canon_status intern_one(const canon_dag *in, uint32_t i, canon_dag_scratch *s,
+                               bool leaves_canonical)
+{
+    canon_bsgs *chain = NULL;  /* built for a subgroup or coset leaf */
+    canon_graph *graph = NULL; /* built for the graph root */
+    canon_status st = intern_node(in, i, s, leaves_canonical, &chain, &graph);
+    const uint32_t id = st == CANON_COMPLETE ? s->map[i] : 0;
+    if (st == CANON_COMPLETE && chain != NULL && canon_dag_chain(&s->nodes, id) == NULL) {
+        st = attach_chain(&s->nodes, id, chain); /* the first copy of this value keeps it */
+        chain = NULL;
+    }
+    if (st == CANON_COMPLETE && graph != NULL && s->nodes.graph == NULL) {
+        s->nodes.graph = graph; /* only the root can be a graph record */
+        graph = NULL;
+    }
+    if (chain != NULL) {
+        canon_bsgs_free(chain);
+        free(chain);
+    }
+    if (graph != NULL) {
+        canon_graph_free(graph);
+        free(graph);
+    }
+    return st;
 }
 
 /* ---- canonical numbering (spec 4.2) ---- */
@@ -577,10 +699,17 @@ static canon_status renumber(canon_dag_scratch *s, canon_dag *out)
         st = canon_dag_append(out, r->tag, canon_dag_payload(nodes, id), r->payload_len,
                               s->fchild + r->child_off, s->fmult + r->child_off, r->child_count,
                               NULL);
+        canon_bsgs *chain = id < s->nodes.chains_cap ? s->nodes.chains[id] : NULL;
+        if (st == CANON_COMPLETE && chain != NULL) {
+            s->nodes.chains[id] = NULL; /* moved to the record's final index */
+            st = attach_chain(out, f, chain);
+        }
         if (st != CANON_COMPLETE) {
             return st;
         }
     }
+    out->graph = s->nodes.graph; /* moved: the graph root's object, if any */
+    s->nodes.graph = NULL;
     return CANON_COMPLETE;
 }
 
@@ -761,8 +890,9 @@ canon_status canon_dag_act(const canon_dag *x, const uint32_t *g, canon_dag *out
         case CANON_REC_GROUP:
         case CANON_REC_COSET:
             /* spec 2.1: "a subgroup H becomes g^-1 H g"; a labeling coset H rho becomes
-             * (g^-1 H g)(g^-1 rho); the canonical payload is recomputed (spec 9.4) */
-            st = canonical_leaf(n, r->tag, payload, len, g, s);
+             * (g^-1 H g)(g^-1 rho); the canonical payload is recomputed (spec 9.4) from the
+             * stored chain conjugated by g (S5 review item 6) */
+            st = canonical_leaf(n, r->tag, payload, len, g, canon_dag_chain(x, i), NULL, NULL, s);
             payload = s->leaf.data;
             len = s->leaf.len;
             break;
@@ -829,18 +959,25 @@ canon_status canon_dag_image_bound(canon_dag *d, canon_dag_scratch *s)
         if (r->tag != CANON_REC_GROUP && r->tag != CANON_REC_COSET) {
             continue;
         }
-        canon_cdag_reader rd = {canon_dag_payload(d, i), r->payload_len, 0};
-        canon_bsgs chain;
-        canon_bsgs_init(&chain, d->n);
-        st = group_chain(&rd, d->n, s, &chain);
+        /* |H| from the chain stored at normalisation (S5 review item 5); rebuilt only for an
+         * arena without one */
+        const canon_bsgs *stored = canon_dag_chain(d, i);
+        uint64_t order = stored != NULL ? stored->order : 0;
+        if (stored == NULL) {
+            canon_cdag_reader rd = {canon_dag_payload(d, i), r->payload_len, 0};
+            canon_bsgs chain;
+            canon_bsgs_init(&chain, d->n);
+            st = group_chain(&rd, d->n, s, &chain);
+            order = chain.order;
+            canon_bsgs_free(&chain);
+        }
         uint64_t b = 0;
         /* spec 11.1 "a conservative input-derived bound": spec 9.4 bounds Group(H) through
          * k <= floor(log2 |H|), and |g^-1 H g| = |H|; a coset adds Perm(r0) <= 4 + 8n */
         if (st == CANON_COMPLETE &&
-            !canon_group_bytes_bound(d->n, chain.order, r->tag == CANON_REC_COSET, &b)) {
+            !canon_group_bytes_bound(d->n, order, r->tag == CANON_REC_COSET, &b)) {
             st = CANON_CAPACITY_LIMIT;
         }
-        canon_bsgs_free(&chain);
         if (st == CANON_COMPLETE &&
             (!canon_u64_add(bound - r->payload_len, b, &bound))) { /* payload <= stream size */
             st = CANON_CAPACITY_LIMIT;

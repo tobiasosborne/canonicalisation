@@ -757,6 +757,106 @@ canon_status canon_bsgs_insert_verified(canon_bsgs *k, canon_perm_table *gens, c
     return CANON_COMPLETE;
 }
 
+/* ---- conjugation (spec 2.1; S5 review item 6) ---- */
+
+/* Append to `dst` the rows of `src`, each conjugated by g: q[g[v]] = g[p[v]] (spec 2.1
+ * "g^-1 p g"; the cycles of p relabelled through g). */
+static canon_status conjugate_rows(const canon_perm_table *src, const uint32_t *g, uint32_t *tmp,
+                                   canon_perm_table *dst)
+{
+    const uint32_t n = src->n;
+    for (uint32_t i = 0; i < src->count; ++i) {
+        const uint32_t *p = canon_perm_table_row(src, i);
+        for (uint32_t v = 0; v < n; ++v) {
+            tmp[g[v]] = g[p[v]];
+        }
+        uint32_t index = 0;
+        canon_status st = canon_perm_table_push(dst, tmp, &index);
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+    }
+    return CANON_COMPLETE;
+}
+
+canon_status canon_bsgs_conjugate(const canon_bsgs *src, const uint32_t *g, canon_bsgs *out)
+{
+    const uint32_t n = src->n;
+    canon_bsgs_init(out, n);
+    canon_status st = CANON_COMPLETE;
+    uint32_t *tmp = canon_alloc_array(n, sizeof *tmp, &st);
+    if (tmp == NULL) {
+        return st;
+    }
+    /* generators, inverses and inputs: same ids, conjugated arrays */
+    st = conjugate_rows(&src->gens, g, tmp, &out->gens);
+    if (st == CANON_COMPLETE) {
+        st = conjugate_rows(&src->invs, g, tmp, &out->invs);
+    }
+    if (st == CANON_COMPLETE) {
+        st = conjugate_rows(&src->inputs, g, tmp, &out->inputs);
+    }
+    free(tmp);
+    /* provenance and generator nodes: structural, unchanged ((pq)^g = p^g q^g) */
+    void *nodes = out->prov.nodes, *gn = out->gen_node, *in = out->inv_node;
+    if (st == CANON_COMPLETE) {
+        st = canon_grow_array_to(&nodes, &out->prov.cap, 0, src->prov.count, 16u,
+                                 sizeof *src->prov.nodes);
+        out->prov.nodes = nodes;
+    }
+    if (st == CANON_COMPLETE) {
+        st = canon_grow_array_to(&gn, &out->node_cap, 0, src->node_cap, 8u, sizeof *out->gen_node);
+        out->gen_node = gn;
+    }
+    uint32_t inv_cap = 0;
+    if (st == CANON_COMPLETE) {
+        st = canon_grow_array_to(&in, &inv_cap, 0, out->node_cap, 8u, sizeof *out->inv_node);
+        out->inv_node = in;
+    }
+    if (st == CANON_COMPLETE) {
+        if (src->prov.count > 0) {
+            memcpy(out->prov.nodes, src->prov.nodes, src->prov.count * sizeof *src->prov.nodes);
+        }
+        out->prov.count = src->prov.count;
+        if (src->gens.count > 0) {
+            memcpy(out->gen_node, src->gen_node, src->gens.count * sizeof *out->gen_node);
+            memcpy(out->inv_node, src->inv_node, src->gens.count * sizeof *out->inv_node);
+        }
+        st = ensure_levels(out, 1u); /* the terminal level; append_base_point grows */
+    }
+    /* levels: base points, orbits and Schreier parents relabelled through g */
+    for (uint32_t i = 0; i < src->depth && st == CANON_COMPLETE; ++i) {
+        const canon_bsgs_level *L = &src->levels[i];
+        st = append_base_point(out, g[L->base_point]);
+        canon_bsgs_level *M = &out->levels[i];
+        for (uint32_t k = 0; k < L->gen_count && st == CANON_COMPLETE; ++k) {
+            st = level_push_gen(M, L->gen_ids[k]);
+        }
+        if (st != CANON_COMPLETE) {
+            break;
+        }
+        M->orbit_len = L->orbit_len;
+        M->orbit_pos[M->base_point] = CANON_BSGS_NONE;
+        for (uint32_t k = 0; k < L->orbit_len; ++k) {
+            /* the point orbit[k] = parent^s becomes g[orbit[k]] = g[parent]^(g^-1 s g) */
+            M->orbit[k] = g[L->orbit[k]];
+            M->orbit_pos[M->orbit[k]] = k;
+            M->parent_point[k] =
+                L->parent_point[k] == CANON_BSGS_NONE ? CANON_BSGS_NONE : g[L->parent_point[k]];
+            M->parent_gen[k] = L->parent_gen[k];
+            M->schreier_done[k] = L->schreier_done != NULL ? L->schreier_done[k] : 0;
+        }
+    }
+    if (st != CANON_COMPLETE) {
+        canon_bsgs_free(out);
+        return st;
+    }
+    out->order = src->order; /* |g^-1 K g| = |K| */
+    out->verified = src->verified;
+    out->stats = src->stats;
+    return CANON_COMPLETE;
+}
+
 /* ---- orbits of a pointwise stabiliser (spec 7.1) ---- */
 
 /* Union-find with parent[x] <= x, so every root is the least point of its class. */

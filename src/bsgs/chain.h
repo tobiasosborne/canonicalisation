@@ -160,6 +160,21 @@ canon_status canon_bsgs_build_verified(canon_bsgs *out, uint32_t n, const uint32
 canon_status canon_bsgs_insert_verified(canon_bsgs *k, canon_perm_table *gens, const uint32_t *g,
                                         uint32_t *scratch, bool *inserted);
 
+/* spec 2.1, 9.1 (slice S5 review item 6): *out = the chain of g^-1 K g, the conjugate of the
+ * chain `src` by the permutation g, obtained by relabelling every point through g instead of
+ * rebuilding: base points b -> g[b]; orbits, orbit_pos and Schreier parents mapped pointwise;
+ * every stored generator, inverse and input p -> g^-1 p g (q[g[v]] = g[p[v]]); the same
+ * generator ids, Schreier generator indices and provenance records.  It is a valid chain of
+ * g^-1 K g for the conjugated inputs, and is marked verified iff src is: conjugation by g is an
+ * isomorphism that relabels points, x^s = y iff g[x]^(g^-1 s g) = g[y], and (pq)^g = p^g q^g,
+ * so every condition the verifier checks (bijections, provenance re-derivation, prefix
+ * fixation, orbit reachability and closure, transversal images, Schreier residues sifting to
+ * the identity, input membership, terminal triviality, nesting, order) holds for the image iff
+ * it holds for src.  g is a permutation of {0..src->n-1}.  *out is initialised here; on
+ * failure it is left empty.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation
+ * failure. */
+canon_status canon_bsgs_conjugate(const canon_bsgs *src, const uint32_t *g, canon_bsgs *out);
+
 /* spec 7.1 ordering of the orbits of K_level (the pointwise stabiliser of b_0..b_{level-1}):
  * orbit_id[v] = rank of the orbit of v, orbits ranked by their least point. */
 void canon_bsgs_orbit_ids(const canon_bsgs *c, uint32_t level, uint32_t *orbit_id);

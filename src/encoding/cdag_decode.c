@@ -98,29 +98,42 @@ static void bit_set(uint64_t *m, uint32_t v)
     m[v / 64u] |= (uint64_t)1 << (v % 64u);
 }
 
-canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits, uint32_t *dense,
-                                  canon_cdag_reason *reason)
+static void bit_clear(uint64_t *m, uint32_t v)
 {
-    uint32_t s = 0;
-    if (!take_u32(r, &s)) {
-        return TRUNCATED(reason);
+    m[v / 64u] &= ~((uint64_t)1 << (v % 64u));
+}
+
+/* The bits contract (cdag_decode.h): clear the source bits (src) and target bits (dst) of the
+ * first c pairs of a Perm whose pairs start at data[start]; each of them was read and
+ * range-checked before. */
+static void clear_pairs(const uint8_t *data, size_t len, size_t start, uint32_t c, uint64_t *src,
+                        uint64_t *dst)
+{
+    canon_cdag_reader again = {data, len, start};
+    for (uint32_t t = 0; t < c; ++t) {
+        uint32_t i = 0, j = 0;
+        (void)take_u32(&again, &i);
+        (void)take_u32(&again, &j);
+        bit_clear(src, i);
+        bit_clear(dst, j);
     }
-    if (s > remaining(r) / 8u) {
-        return TRUNCATED(reason); /* s pairs of 8 bytes */
-    }
-    const size_t words = canon_cdag_bits_words(n) / 2u;
-    uint64_t *src = bits, *dst = bits + words;
-    if (words > 0) {
-        memset(bits, 0, 2u * words * sizeof *bits);
-    }
+}
+
+/* The s pairs of a Perm at r (the count is read and its bytes are available).  *touched
+ * receives the number of leading pairs whose bits may be set, for clear_pairs. */
+static canon_status perm_pairs(canon_cdag_reader *r, uint32_t n, uint32_t s, uint64_t *src,
+                               uint64_t *dst, uint32_t *dense, uint32_t *touched,
+                               canon_cdag_reason *reason)
+{
     const size_t start = r->pos;
     /* spec 4.1: "s pairs U32(i),U32(p[i]) in increasing i, exactly the moved support ...
      * Reject duplicate sources, fixed pairs, out-of-range targets" */
     uint32_t last = 0;
     for (uint32_t t = 0; t < s; ++t) {
         uint32_t i = 0, j = 0;
-        (void)take_u32(r, &i); /* available: checked above */
+        (void)take_u32(r, &i); /* available: checked by the caller */
         (void)take_u32(r, &j);
+        *touched = t;
         if (i >= n || j >= n) {
             return fail(reason, CANON_CDAG_PERM_RANGE, CANON_INVALID_INPUT);
         }
@@ -133,6 +146,7 @@ canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bi
         last = i;
         bit_set(src, i);
     }
+    *touched = s; /* every pair is in range from here on */
     /* "or a nonbijection": the targets are distinct and are exactly the sources (unlisted
      * points are fixed, so the moved support maps onto itself) */
     r->pos = start;
@@ -156,6 +170,102 @@ canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bi
     return CANON_COMPLETE;
 }
 
+canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits, uint32_t *dense,
+                                  canon_cdag_reason *reason)
+{
+    uint32_t s = 0;
+    if (!take_u32(r, &s)) {
+        return TRUNCATED(reason);
+    }
+    if (s > remaining(r) / 8u) {
+        return TRUNCATED(reason); /* s pairs of 8 bytes */
+    }
+    const size_t words = canon_cdag_bits_words(n) / 2u;
+    uint64_t *src = bits, *dst = bits + words;
+    const size_t start = r->pos;
+    uint32_t touched = 0;
+    canon_status st = perm_pairs(r, n, s, src, dst, dense, &touched, reason);
+    clear_pairs(r->data, r->len, start, touched, src, dst); /* zero again, on every path */
+    return st;
+}
+
+/* Rule-1 blocks (k of them) at r; the first half of `bits` marks the points seen and
+ * *marked counts them, for the caller's clearing (cdag_decode.h bits contract). */
+static canon_status rule1_blocks(canon_cdag_reader *r, uint32_t n, uint32_t k, uint64_t *bits,
+                                 canon_perm_table *gens, uint32_t *tmp, uint32_t *marked,
+                                 canon_cdag_reason *reason)
+{
+    canon_status st = CANON_COMPLETE;
+    uint32_t prev_least = 0;
+    for (uint32_t b = 0; b < k; ++b) {
+        uint32_t size = 0;
+        if (!take_u32(r, &size)) {
+            return TRUNCATED(reason);
+        }
+        if (size < 2u) {
+            return fail(reason, CANON_CDAG_GROUP_BLOCK, CANON_INVALID_INPUT);
+        }
+        if (size > remaining(r) / 4u) {
+            return TRUNCATED(reason);
+        }
+        const size_t start = r->pos;
+        uint32_t last = 0;
+        for (uint32_t j = 0; j < size; ++j) {
+            uint32_t v = 0;
+            (void)take_u32(r, &v); /* available: checked above */
+            if (v >= n) {
+                return fail(reason, CANON_CDAG_ATOM_RANGE, CANON_INVALID_INPUT);
+            }
+            if ((j > 0 && v <= last) || (j == 0 && b > 0 && v <= prev_least) || bit_get(bits, v)) {
+                return fail(reason, CANON_CDAG_GROUP_BLOCK, CANON_INVALID_INPUT);
+            }
+            bit_set(bits, v);
+            *marked += 1;
+            if (j == 0) {
+                prev_least = v;
+            }
+            last = v;
+        }
+        if (gens == NULL) {
+            continue;
+        }
+        /* the symmetric group on the block is generated by the transposition of its first
+         * two points and the cycle through all of them */
+        for (int which = 0; which < 2 && st == CANON_COMPLETE; ++which) {
+            if (which == 1 && size == 2u) {
+                break; /* the cycle is the transposition */
+            }
+            for (uint32_t v = 0; v < n; ++v) {
+                tmp[v] = v;
+            }
+            canon_cdag_reader pts = {r->data, r->len, start};
+            uint32_t first = 0, prev = 0, cur = 0;
+            for (uint32_t j = 0; j < size; ++j) {
+                (void)take_u32(&pts, &cur);
+                if (j == 0) {
+                    first = cur;
+                } else if (which == 1 || j == 1) {
+                    tmp[prev] = cur; /* prev -> cur */
+                }
+                if (which == 0 && j == 1) {
+                    tmp[cur] = first; /* the transposition closes */
+                    break;
+                }
+                prev = cur;
+            }
+            if (which == 1) {
+                tmp[prev] = first; /* the cycle closes */
+            }
+            uint32_t index = 0;
+            st = canon_perm_table_push(gens, tmp, &index);
+        }
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+    }
+    return CANON_COMPLETE;
+}
+
 canon_status canon_cdag_read_group(canon_cdag_reader *r, uint32_t n, uint64_t *bits,
                                    canon_perm_table *gens, uint32_t *tmp, canon_cdag_reason *reason)
 {
@@ -169,78 +279,21 @@ canon_status canon_cdag_read_group(canon_cdag_reader *r, uint32_t n, uint64_t *b
         /* spec 9.4 rule 1: "Encode 01 || U32(k) followed by each non-singleton orbit as
          * U32(size), U32(points...); points increase, blocks order by least point.  Omit
          * singleton orbits."  The blocks are orbits, hence disjoint. */
-        const size_t words = canon_cdag_bits_words(n) / 2u;
-        if (words > 0) {
-            memset(bits, 0, words * sizeof *bits);
-        }
-        uint32_t prev_least = 0;
-        for (uint32_t b = 0; b < k; ++b) {
-            uint32_t size = 0;
-            if (!take_u32(r, &size)) {
-                return TRUNCATED(reason);
-            }
-            if (size < 2u) {
-                return fail(reason, CANON_CDAG_GROUP_BLOCK, CANON_INVALID_INPUT);
-            }
-            if (size > remaining(r) / 4u) {
-                return TRUNCATED(reason);
-            }
-            const size_t start = r->pos;
-            uint32_t last = 0;
-            for (uint32_t j = 0; j < size; ++j) {
-                uint32_t v = 0;
-                (void)take_u32(r, &v); /* available: checked above */
-                if (v >= n) {
-                    return fail(reason, CANON_CDAG_ATOM_RANGE, CANON_INVALID_INPUT);
-                }
-                if ((j > 0 && v <= last) || (j == 0 && b > 0 && v <= prev_least) ||
-                    bit_get(bits, v)) {
-                    return fail(reason, CANON_CDAG_GROUP_BLOCK, CANON_INVALID_INPUT);
-                }
-                bit_set(bits, v);
-                if (j == 0) {
-                    prev_least = v;
-                }
-                last = v;
-            }
-            if (gens == NULL) {
-                continue;
-            }
-            /* the symmetric group on the block is generated by the transposition of its first
-             * two points and the cycle through all of them */
-            for (int which = 0; which < 2 && st == CANON_COMPLETE; ++which) {
-                if (which == 1 && size == 2u) {
-                    break; /* the cycle is the transposition */
-                }
-                for (uint32_t v = 0; v < n; ++v) {
-                    tmp[v] = v;
-                }
-                canon_cdag_reader pts = {r->data, r->len, start};
-                uint32_t first = 0, prev = 0, cur = 0;
-                for (uint32_t j = 0; j < size; ++j) {
-                    (void)take_u32(&pts, &cur);
-                    if (j == 0) {
-                        first = cur;
-                    } else if (which == 1 || j == 1) {
-                        tmp[prev] = cur; /* prev -> cur */
-                    }
-                    if (which == 0 && j == 1) {
-                        tmp[cur] = first; /* the transposition closes */
-                        break;
-                    }
-                    prev = cur;
-                }
-                if (which == 1) {
-                    tmp[prev] = first; /* the cycle closes */
-                }
-                uint32_t index = 0;
-                st = canon_perm_table_push(gens, tmp, &index);
-            }
-            if (st != CANON_COMPLETE) {
-                return st;
+        const size_t blocks = r->pos;
+        uint32_t marked = 0;
+        st = rule1_blocks(r, n, k, bits, gens, tmp, &marked, reason);
+        /* bits contract: clear the marked points, the first `marked` points of the blocks
+         * (each was read and range-checked before it was marked) */
+        canon_cdag_reader again = {r->data, r->len, blocks};
+        while (marked > 0) {
+            uint32_t size = 0, v = 0;
+            (void)take_u32(&again, &size);
+            for (uint32_t j = 0; j < size && marked > 0; ++j, --marked) {
+                (void)take_u32(&again, &v);
+                bit_clear(bits, v);
             }
         }
-        return CANON_COMPLETE;
+        return st;
     }
     if (*mode == 0x00) {
         /* spec 9.4 rule 2: "encode 00 || U32(k) || Perm(g_1)...Perm(g_k)" */
@@ -279,11 +332,16 @@ canon_status canon_cdag_read_graph(canon_cdag_reader *r, uint32_t n, canon_graph
     for (uint32_t i = 0; i < e; ++i) {
         /* "An arc record is U32(source),U32(target),B(label),Nat(multiplicity)" */
         uint32_t s = 0, t = 0, len = 0;
-        if (!take_u32(r, &s) || !take_u32(r, &t) || !take_u32(r, &len) || !take(r, len, &bytes)) {
+        if (!take_u32(r, &s) || !take_u32(r, &t)) {
             return TRUNCATED(reason);
         }
+        /* the endpoints are checked as soon as they are read: the first violation in stream
+         * order decides (S5 review item 3) */
         if (s >= n || t >= n) {
             return fail(reason, CANON_CDAG_ATOM_RANGE, CANON_INVALID_INPUT);
+        }
+        if (!take_u32(r, &len) || !take(r, len, &bytes)) {
+            return TRUNCATED(reason);
         }
         uint64_t m = 0;
         canon_status st = take_nat(r, &m, reason);
@@ -521,10 +579,12 @@ canon_status canon_cdag_decode(const uint8_t *stream, size_t length, const uint3
     }
     canon_dag_reset(out, n);
     canon_status st = CANON_COMPLETE;
-    uint64_t *bits = canon_alloc_array(canon_cdag_bits_words(n), sizeof *bits, &st);
+    const size_t words = canon_cdag_bits_words(n);
+    uint64_t *bits = canon_alloc_array(words, sizeof *bits, &st);
     if (bits == NULL) {
         return fail(reason, CANON_CDAG_SIZE, st);
     }
+    memset(bits, 0, (words > 0 ? words : 1u) * sizeof *bits); /* bits contract: zero on entry */
     st = decode_records(&r, n, q, bits, out, reason);
     free(bits);
     if (st != CANON_COMPLETE) {
@@ -560,6 +620,32 @@ static canon_cdag_reason normalise_reason(canon_status st)
     }
 }
 
+/* spec 4.1, 4.2, 11.1: the pipeline shared by import and validate (S5 review item 8): strict
+ * decode into *raw (with the expected degree when expect_n is not NULL), normalisation into
+ * *out (scratch s; leaf chains and a graph root's object are kept in *out), then the limits of
+ * the normal form ("Validation is deterministic over the normalised input").  *reason names
+ * the refusal. */
+static canon_status decode_normalise(const uint8_t *stream, size_t length, const uint32_t *expect_n,
+                                     const canon_dag_limits *limits, canon_dag *raw, canon_dag *out,
+                                     canon_dag_scratch *s, canon_cdag_reason *reason)
+{
+    canon_status st = canon_cdag_decode(stream, length, expect_n, limits->max_n, raw, reason);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    /* spec 4.2: sharing, order and unreachable records have no meaning */
+    st = canon_dag_normalise(raw, out, s, false);
+    if (st != CANON_COMPLETE) {
+        *reason = normalise_reason(st);
+        return st;
+    }
+    st = canon_dag_check_limits(out, limits);
+    if (st != CANON_COMPLETE) {
+        *reason = CANON_CDAG_SIZE;
+    }
+    return st;
+}
+
 canon_status canon_cdag_import(const uint8_t *stream, size_t length, uint32_t degree,
                                const canon_dag_limits *limits, canon_dag *out,
                                canon_cdag_reason *reason)
@@ -568,21 +654,7 @@ canon_status canon_cdag_import(const uint8_t *stream, size_t length, uint32_t de
     canon_dag_init(&raw, degree);
     canon_dag_scratch s;
     canon_dag_scratch_init(&s);
-    canon_status st = canon_cdag_decode(stream, length, &degree, limits->max_n, &raw, reason);
-    if (st == CANON_COMPLETE) {
-        /* spec 4.2: sharing, order and unreachable records have no meaning */
-        st = canon_dag_normalise(&raw, out, &s, false);
-        if (st != CANON_COMPLETE) {
-            *reason = normalise_reason(st);
-        }
-    }
-    if (st == CANON_COMPLETE) {
-        /* spec 11.1: "Validation is deterministic over the normalised input." */
-        st = canon_dag_check_limits(out, limits);
-        if (st != CANON_COMPLETE) {
-            *reason = CANON_CDAG_SIZE;
-        }
-    }
+    canon_status st = decode_normalise(stream, length, &degree, limits, &raw, out, &s, reason);
     if (st == CANON_COMPLETE) {
         st = canon_dag_image_bound(out, &s); /* spec 11.1 output bound of the images */
         if (st != CANON_COMPLETE) {
@@ -604,19 +676,7 @@ canon_status canon_cdag_validate(const uint8_t *stream, size_t length,
     canon_dag_scratch_init(&s);
     canon_buf again;
     canon_buf_init(&again);
-    canon_status st = canon_cdag_decode(stream, length, NULL, limits->max_n, &raw, reason);
-    if (st == CANON_COMPLETE) {
-        st = canon_dag_normalise(&raw, &norm, &s, false);
-        if (st != CANON_COMPLETE) {
-            *reason = normalise_reason(st);
-        }
-    }
-    if (st == CANON_COMPLETE) {
-        st = canon_dag_check_limits(&norm, limits);
-        if (st != CANON_COMPLETE) {
-            *reason = CANON_CDAG_SIZE;
-        }
-    }
+    canon_status st = decode_normalise(stream, length, NULL, limits, &raw, &norm, &s, reason);
     if (st == CANON_COMPLETE) {
         /* spec 4.1: "all records are reachable from root" in a canonical stream */
         bool all = raw.root == raw.count - 1u;

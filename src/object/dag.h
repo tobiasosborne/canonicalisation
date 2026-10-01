@@ -33,6 +33,7 @@
 #include "canon/canon.h"
 #include "coset/coset.h"
 #include "encoding/wire.h"
+#include "object/graph.h"
 #include "perm/perm.h"
 
 /* Record tags of the spec 4.1 table. */
@@ -84,6 +85,17 @@ typedef struct canon_dag {
     uint64_t literal_bytes; /* total |s| over its literal records (capacity, detailed plan 2.1) */
     bool group_leaves;      /* it has a subgroup or labeling-coset record */
     uint64_t image_bound;   /* spec 11.1 output bound of every image (canon_dag_image_bound) */
+    /* Objects built while canonicalising leaves from a stream (S5 review items 5-7), owned by
+     * the arena and released by canon_dag_reset/canon_dag_free; they are not part of the value
+     * (canon_dag_equal ignores them):
+     *   chains[i] (i < chains_cap; NULL when absent): the verified chain (spec 9.1) of the
+     *     group of subgroup or coset record i.  canon_dag_act conjugates it instead of
+     *     rebuilding (canon_bsgs_conjugate), and canon_dag_image_bound reads its order.
+     *     Arenas produced by canon_dag_act carry none (their leaves are only encoded);
+     *   graph: the imported graph object of a graph root, handed to the S2 root unchanged. */
+    canon_bsgs **chains;
+    uint32_t chains_cap;
+    canon_graph *graph;
 } canon_dag;
 
 /* An empty arena of degree n (no allocation); free with canon_dag_free. */
@@ -109,6 +121,18 @@ static inline const uint8_t *canon_dag_payload(const canon_dag *d, uint32_t i)
 
 /* The atom id of an atom record (its payload U32(a)). */
 uint32_t canon_dag_atom(const canon_dag *d, uint32_t i);
+
+/* The stored chain of record i (see canon_dag.chains), or NULL. */
+static inline const canon_bsgs *canon_dag_chain(const canon_dag *d, uint32_t i)
+{
+    return i < d->chains_cap ? d->chains[i] : NULL;
+}
+
+/* Counters of the leaf work (S5 review item 6; spec 8.3/9.2 ledgers).  No timings. */
+typedef struct canon_dag_stats {
+    uint64_t chain_builds;       /* verified chains built from a Group payload's generators */
+    uint64_t chain_conjugations; /* stored chains conjugated (canon_bsgs_conjugate) */
+} canon_dag_stats;
 
 /* Grow-only scratch of the normaliser and the action (spec 17: workspace storage reused across
  * leaves and solves, no heap round-trip per leaf once grown).  Not shareable between threads. */
@@ -141,6 +165,7 @@ typedef struct canon_dag_scratch {
     uint64_t *bits;               /* 2 * ceil(n / 64) words (src/encoding/cdag_decode.h) */
     canon_perm_table gens;        /* generators of a subgroup leaf */
     canon_coset_scratch coset;    /* the spec 9.4 descents (src/coset/coset.h) */
+    canon_dag_stats stats;        /* accumulated over every use of this scratch */
 } canon_dag_scratch;
 
 void canon_dag_scratch_init(canon_dag_scratch *s);
@@ -154,7 +179,9 @@ void canon_dag_scratch_free(canon_dag_scratch *s);
  *      children ("Sets deduplicate equal children; multisets combine equal children and add
  *      positive counts"); leaf payloads are replaced by their canonical form (Perm, Group,
  *      coset per spec 9.4, graph per spec 4.1) unless `leaves_canonical` says they already
- *      are (the action recomputes them itself);
+ *      are (the action recomputes them itself); in that case the verified chain of each
+ *      subgroup or coset leaf and the graph object of a graph root are kept in out (see
+ *      canon_dag.chains, canon_dag.graph);
  *   4. numbering by increasing height and, within a height, by exact record bytes with the
  *      already assigned child indices; the root is the last record.
  * Statuses: CANON_INVALID_INPUT for out == in or out one of the scratch's arenas, a root out of
@@ -171,7 +198,10 @@ canon_status canon_dag_normalise(const canon_dag *in, canon_dag *out, canon_dag_
  * reset first; out != x).  Atom a -> g[a]; literals fixed; tuple positions and multiplicities
  * preserved; a permutation leaf p -> g^-1 p g; a subgroup leaf H -> g^-1 H g; a labeling coset
  * H r -> (g^-1 H g)(g^-1 r); leaf payloads are recomputed canonically and the image is
- * re-normalised, since set and multiset child orders change.  g is a permutation of
+ * re-normalised, since set and multiset child orders change.  A subgroup or coset leaf with a
+ * stored chain is recomputed from that chain conjugated by g (no rebuild, no re-verification;
+ * counted in s->stats.chain_conjugations); without one (an arena that is itself an image) a
+ * verified chain is built from its generators (s->stats.chain_builds).  g is a permutation of
  * {0..x->n-1}.  CANON_INVALID_INPUT when x is not normalised (its root is not its last record)
  * or x or out is one of the scratch's arenas or out == x; otherwise statuses as
  * canon_dag_normalise (a graph record is CANON_INTERNAL_ERROR: graph roots are top-level
@@ -193,8 +223,9 @@ bool canon_dag_equal(const canon_dag *a, const canon_dag *b);
  *     The canonical Group bytes of a conjugate can be shorter or longer than those of H
  *     (rule 2's greedy sequence depends on the numbering; docs/slices/S5-notes.md), so no exact
  *     invariant length exists there.
- * The bound depends only on the orbit of d (|H| is invariant under conjugation).  Builds one
- * verified chain per subgroup or coset leaf (import time only). */
+ * The bound depends only on the orbit of d (|H| is invariant under conjugation).  |H| is read
+ * from the stored chain of each such leaf (built once, during normalisation); only a leaf
+ * without one is rebuilt. */
 canon_status canon_dag_image_bound(canon_dag *d, canon_dag_scratch *s);
 
 /* Capacity of a normalised arena (spec 11.1, detailed plan 2.1: max_nodes, max_refs,

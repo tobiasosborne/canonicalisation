@@ -3,8 +3,8 @@
  * mirrored (truncation, magic, schema/action, q >= 1, unknown tag, atom range, child
  * references below the parent, set and multiset order, zero counts, Nat leading zeros, Perm
  * order, fixed pairs and bijection, Group mode and blocks, arc multiplicities, root range,
- * trailing bytes, reachability, root last), plus the rules the tool does not check (version
- * byte, degree, Nat range, overlapping blocks, relations and nested graphs unsupported,
+ * trailing bytes, reachability, root last, overlapping rule-1 blocks), plus the rules the tool
+ * does not check (version byte, degree, Nat range, relations and nested graphs unsupported,
  * canonical order).  Round trips: the six spec 7.4 streams and every tag validate and
  * re-encode to themselves.  Expected hex lives here, never in src/. */
 #include <stdint.h>
@@ -216,8 +216,8 @@ static void test_rejections(void)
     BAD(HDR "00000004 00000001 07 01 00000002 00000002 00000002 00000003 00000002 00000000 "
             "00000001 00000000",
         CANON_CDAG_GROUP_BLOCK); /* blocks not ordered by least point */
-    /* overlapping blocks {0,1}, {1,2}: ordered by least point, but not orbits (the tool does
-     * not check disjointness) */
+    /* overlapping blocks {0,1}, {1,2}: ordered by least point, but not orbits (the tool checks
+     * this too since the S5 review) */
     BAD(HDR "00000003 00000001 07 01 00000002 00000002 00000000 00000001 00000002 00000001 "
             "00000002 00000000",
         CANON_CDAG_GROUP_BLOCK);
@@ -341,8 +341,67 @@ static void test_mutations(void)
     canon_dag_free(&d);
 }
 
+/* S5 review item 2: the payload readers leave `bits` all zero on every path (the contract of
+ * cdag_decode.h), on valid, refused and randomly corrupted Perm and Group payloads. */
+static void test_bits_contract(void)
+{
+    static const char *const PAYLOADS[] = {
+        "00000002 00000000 00000001 00000001 00000000",                      /* Perm([1,0,2]) */
+        "00000002 00000000 00000001 00000001 00000002",                      /* not a bijection */
+        "00000003 00000000 00000001 00000001 00000000 00000002 00000000",    /* repeated target */
+        "00000002 00000001 00000000 00000000 00000001",                      /* sources unordered */
+        "00000002 00000000 00000001 00000001 00000001",                      /* fixed pair */
+        "00000002 00000000 00000001 00000002 00000007",                      /* out of range */
+        "01 00000001 00000003 00000000 00000001 00000002",                   /* rule 1, valid */
+        "01 00000002 00000002 00000000 00000001 00000002 00000001 00000002", /* overlap */
+        "01 00000002 00000002 00000001 00000002 00000002 00000000 00000002", /* unordered */
+        "01 00000001 00000003 00000000 00000002 00000001",                   /* points unordered */
+        "00 00000002 00000002 00000000 00000001 00000001 00000000 00000001 00000002 00000000",
+    };
+    uint64_t bits[2];
+    uint32_t dense[3], tmp[3];
+    for (int trial = 0; trial < 4000; ++trial) {
+        const size_t which = (size_t)trial % (sizeof PAYLOADS / sizeof *PAYLOADS);
+        uint8_t buf[64];
+        size_t len = unhex(PAYLOADS[which], buf, sizeof buf);
+        if (trial >= (int)(sizeof PAYLOADS / sizeof *PAYLOADS)) {
+            buf[check_rng() % len] ^= (uint8_t)(1u << (check_rng() % 8)); /* corrupt one bit */
+        }
+        bits[0] = bits[1] = 0;
+        canon_cdag_reader r = {buf, len, 0};
+        canon_cdag_reason reason = CANON_CDAG_OK;
+        canon_perm_table gens;
+        canon_perm_table_init(&gens, 3);
+        if (buf[0] == 0x00 && len % 2 == 1) {
+            (void)canon_cdag_read_group(&r, 3, bits, &gens, tmp, &reason);
+        } else if (buf[0] <= 0x01 && len % 2 == 1) {
+            (void)canon_cdag_read_group(&r, 3, bits, NULL, NULL, &reason);
+        } else {
+            (void)canon_cdag_read_perm(&r, 3, bits, dense, &reason);
+        }
+        CHECK(bits[0] == 0 && bits[1] == 0);
+        canon_perm_table_free(&gens);
+    }
+}
+
+/* S5 review item 3: an arc's endpoints are checked before its label is consumed, so an
+ * out-of-range source followed by a truncated label is ATOM_RANGE (the first violation in
+ * stream order), not TRUNCATED. */
+static void test_reason_order(void)
+{
+    BAD(HDR "00000002 00000001 09 00000000 00000000 00000001 00000002 00000000 0000ffff 00000000",
+        CANON_CDAG_ATOM_RANGE);
+    BAD(HDR "00000002 00000001 09 00000000 00000000 00000001 00000000 00000005 0000ffff 00000000",
+        CANON_CDAG_ATOM_RANGE);
+    /* in range, then the truncated label decides */
+    BAD(HDR "00000002 00000001 09 00000000 00000000 00000001 00000000 00000001 0000ffff 00000000",
+        CANON_CDAG_TRUNCATED);
+}
+
 int main(void)
 {
+    test_bits_contract();
+    test_reason_order();
     test_round_trips();
     test_rejections();
     test_noncanonical();
