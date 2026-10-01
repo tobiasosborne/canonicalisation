@@ -1221,6 +1221,10 @@ class NestedObjects(CliTestCase):
         code, f, _ = run_stream("p1-stream", 3, [], bytes.fromhex(H2 + "00000001" "0400000000"
                                                                        "00000000"))
         self.assertEqual((code, f[2]), (3, "INVALID_INPUT"))
+        # a degree beyond the context limit is a deterministic CAPACITY_LIMIT, as for p1-subset
+        proc = cli(["p1-stream", "--n", "4294967295", "--stream", "00", "--id", "huge"])
+        self.assertEqual((proc.returncode, proc.stdout.splitlines()),
+                         (3, ["huge\t0001\tCAPACITY_LIMIT\t\t\t-\t-"]))
         for args in (["p1-stream", "--n", "1", "--stream", "434"],          # odd hex
                      ["p1-stream", "--n", "1", "--stream", "zz"],           # not hex
                      ["p1-stream", "--n", "1", "--atoms", "0"],             # subset option
