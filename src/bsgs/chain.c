@@ -78,9 +78,9 @@ static canon_status ensure_levels(canon_bsgs *c, uint32_t need)
     if (need <= c->level_cap) {
         return CANON_COMPLETE;
     }
-    uint32_t cap = c->level_cap < 4u ? 4u : c->level_cap;
+    uint32_t cap = c->level_cap;
     while (cap < need) {
-        cap = cap > UINT32_MAX / 2u ? need : cap * 2u;
+        cap = canon_u32_grow(cap, 4u); /* strictly grows while cap < need <= UINT32_MAX */
     }
     canon_status st = CANON_COMPLETE;
     canon_bsgs_level *grown = canon_alloc_array(cap, sizeof *grown, &st);
@@ -141,7 +141,7 @@ static canon_status level_push_gen(canon_bsgs_level *L, uint32_t id)
         if (L->gen_cap == UINT32_MAX) {
             return CANON_CAPACITY_LIMIT;
         }
-        uint32_t cap = L->gen_cap < 4u ? 4u : (L->gen_cap > UINT32_MAX / 2u ? UINT32_MAX : L->gen_cap * 2u);
+        uint32_t cap = canon_u32_grow(L->gen_cap, 4u);
         canon_status st = CANON_COMPLETE;
         uint32_t *grown = canon_alloc_array(cap, sizeof *grown, &st);
         if (grown == NULL) {
@@ -375,8 +375,8 @@ static canon_status prov_times_recorded(canon_bsgs *c, const build_ctx *x, uint3
     for (uint32_t i = 0; i < x->rec_count; ++i) {
         const canon_bsgs_level *L = &c->levels[x->rec_level[i]];
         for (uint32_t q = x->rec_pos[i]; q != 0; q = L->orbit_pos[L->parent_point[q]]) {
-            canon_status st =
-                canon_prov_product(&c->prov, *node, c->inv_node[L->gen_ids[L->parent_gen[q]]], node);
+            const uint32_t inv = c->inv_node[L->gen_ids[L->parent_gen[q]]];
+            canon_status st = canon_prov_product(&c->prov, *node, inv, node);
             if (st != CANON_COMPLETE) {
                 return st;
             }
@@ -408,7 +408,7 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
         }
     }
     if (c->gens.count == c->node_cap) {
-        uint32_t cap = c->node_cap < 8u ? 8u : (c->node_cap > UINT32_MAX / 2u ? UINT32_MAX : c->node_cap * 2u);
+        uint32_t cap = canon_u32_grow(c->node_cap, 8u);
         uint32_t *gn = canon_alloc_array(cap, sizeof *gn, &st);
         uint32_t *in = canon_alloc_array(cap, sizeof *in, &st);
         if (gn == NULL || in == NULL) {

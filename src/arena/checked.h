@@ -58,4 +58,15 @@ static inline bool canon_u64_mul(uint64_t a, uint64_t b, uint64_t *out)
     return true;
 }
 
+/* The next capacity of a grow-only uint32-indexed array (slice S3): max(min_cap, 2 * cap),
+ * saturating at UINT32_MAX instead of wrapping.  The caller still checks the byte size of
+ * the allocation (canon_alloc_array) and that the new capacity exceeds the old one. */
+static inline uint32_t canon_u32_grow(uint32_t cap, uint32_t min_cap)
+{
+    if (cap < min_cap) {
+        return min_cap;
+    }
+    return cap > UINT32_MAX / 2u ? UINT32_MAX : cap * 2u;
+}
+
 #endif /* CANON_SRC_ARENA_CHECKED_H */

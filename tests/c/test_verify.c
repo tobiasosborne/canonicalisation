@@ -81,7 +81,8 @@ static void ten_mutations(void)
         for (uint32_t p = 1; p < L->orbit_len && !done; ++p) {
             for (uint32_t q = p + 1; q < L->orbit_len && !done; ++q) {
                 const uint32_t *sp = canon_perm_table_row(&c.gens, L->gen_ids[L->parent_gen[p]]);
-                if (L->parent_point[p] != L->parent_point[q] && sp[L->parent_point[q]] != L->orbit[p]) {
+                if (L->parent_point[p] != L->parent_point[q] &&
+                    sp[L->parent_point[q]] != L->orbit[p]) {
                     uint32_t t = L->parent_point[p];
                     L->parent_point[p] = L->parent_point[q];
                     L->parent_point[q] = t;

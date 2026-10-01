@@ -8,8 +8,8 @@
  * Status of this header: slices S1, S2 and S3 (docs/slices/S1.md, S2.md, S3.md).  Implemented:
  * the version functions, the context and capacity descriptor, retain/release for every handle
  * below, groups (S3: a verified stabiliser chain by default; the S1 explicit enumeration
- * backend stays selectable), canon_group_order, subset objects, coloured directed multigraph objects and the
- * simple undirected graph wrapper (S2), problems for CANONICAL_IMAGE under profile P1 with
+ * backend stays selectable), canon_group_order, subset objects, coloured directed multigraph
+ * objects and the simple undirected graph wrapper (S2), problems for CANONICAL_IMAGE under profile P1 with
  * encoding CDAG-2 and order CDAG-BYTE-1, workspaces, canon_solve, the result accessors and
  * canon_result_encode.  Every other entry point is a stub returning CANON_UNSUPPORTED_ACTION
  * until its slice lands (canon_object_create from a stream: S5; canon_solve_batch: S8;
