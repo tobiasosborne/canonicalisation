@@ -45,7 +45,8 @@ typedef struct vscratch {
     uint32_t *path;   /* n: generator ids or orbit positions along a tree path */
     uint32_t *gmark;  /* one stamp per strong generator (nesting) */
     uint64_t *bitmap; /* (n + 63) / 64 words (bijection checks) */
-    uint32_t *values; /* prov.count * n: every provenance node evaluated */
+    uint32_t *targets;          /* 2 * gens.count provenance nodes: generators, inverses */
+    const uint32_t **expected;  /* their stored rows */
 } vscratch;
 
 static void scratch_free(vscratch *s)
@@ -57,7 +58,8 @@ static void scratch_free(vscratch *s)
     free(s->path);
     free(s->gmark);
     free(s->bitmap);
-    free(s->values);
+    free(s->targets);
+    free(s->expected);
 }
 
 /* A fresh stamp: everything marked before is now unmarked. */
@@ -239,22 +241,27 @@ static bool inputs_match(const canon_bsgs *c, const uint32_t *inputs, uint32_t i
 }
 
 /* 2b: every stored generator and inverse equals the array re-derived from its record, down to
- * INPUT entries (evaluated from the recorded inputs, which 2a proved equal to the originals). */
-static bool provenance_matches(const canon_bsgs *c, vscratch *s)
+ * INPUT entries (evaluated from the recorded inputs, which 2a proved equal to the originals).
+ * Only the records reachable from them are evaluated, each row freed after its last use
+ * (canon_prov_check).  *st receives an allocation failure. */
+static bool provenance_matches(const canon_bsgs *c, vscratch *s, canon_status *st)
 {
-    const uint32_t n = c->n;
-    if (canon_prov_eval_all(&c->prov, &c->inputs, s->values) != CANON_COMPLETE) {
-        return false; /* malformed record */
+    const uint32_t g = c->gens.count;
+    for (uint32_t k = 0; k < g; ++k) {
+        s->targets[k] = c->gen_node[k];
+        s->expected[k] = gen_row(c, k);
+        s->targets[g + k] = c->inv_node[k];
+        s->expected[g + k] = inv_row(c, k);
     }
-    for (uint32_t k = 0; k < c->gens.count; ++k) {
-        if (n > 0 && (memcmp(gen_row(c, k), s->values + (size_t)c->gen_node[k] * n,
-                             (size_t)n * sizeof(uint32_t)) != 0 ||
-                      memcmp(inv_row(c, k), s->values + (size_t)c->inv_node[k] * n,
-                             (size_t)n * sizeof(uint32_t)) != 0)) {
-            return false;
-        }
+    bool match = false;
+    uint32_t peak = 0;
+    canon_status r = canon_prov_check(&c->prov, &c->inputs, s->targets, s->expected, 2u * g,
+                                      &match, &peak);
+    if (r == CANON_INVALID_INPUT) {
+        return false; /* a malformed record */
     }
-    return true;
+    *st = r;
+    return r == CANON_COMPLETE && match;
 }
 
 /* 2c: invs[k] is the inverse of gens[k] (sifting relies on it). */
@@ -450,7 +457,7 @@ static bool order_matches(const canon_bsgs *c)
 }
 
 static canon_bsgs_reason run(canon_bsgs *c, const uint32_t *inputs, uint32_t input_count,
-                             vscratch *s)
+                             vscratch *s, canon_status *st)
 {
     if (!structure_ok(c, s)) {
         return CANON_BSGS_BAD_STRUCTURE;
@@ -464,8 +471,9 @@ static canon_bsgs_reason run(canon_bsgs *c, const uint32_t *inputs, uint32_t inp
     if (!inputs_match(c, inputs, input_count)) {
         return CANON_BSGS_INPUT_MISMATCH; /* 2 */
     }
-    if (!provenance_matches(c, s)) {
-        return CANON_BSGS_PROVENANCE_MISMATCH; /* 2 */
+    if (!provenance_matches(c, s, st)) {
+        /* 2, unless the evaluation's scratch could not be allocated (no verdict) */
+        return *st == CANON_COMPLETE ? CANON_BSGS_PROVENANCE_MISMATCH : CANON_BSGS_UNCHECKED;
     }
     if (!inverses_match(c, s)) {
         return CANON_BSGS_INVERSE_MISMATCH; /* 2 */
@@ -507,8 +515,8 @@ canon_status canon_bsgs_verify(canon_bsgs *c, const uint32_t *inputs, uint32_t i
     canon_status st = CANON_COMPLETE;
     vscratch s;
     memset(&s, 0, sizeof s);
-    size_t values = 0;
-    if (!canon_size_mul((size_t)c->prov.count, (size_t)n, &values)) {
+    size_t targets = 0;
+    if (!canon_size_mul((size_t)c->gens.count, 2u, &targets)) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
     s.mark = canon_alloc_array(n, sizeof *s.mark, &st);
@@ -518,9 +526,10 @@ canon_status canon_bsgs_verify(canon_bsgs *c, const uint32_t *inputs, uint32_t i
     s.path = canon_alloc_array(n, sizeof *s.path, &st);
     s.gmark = canon_alloc_array(c->gens.count, sizeof *s.gmark, &st);
     s.bitmap = canon_alloc_array(((size_t)n + 63u) / 64u, sizeof *s.bitmap, &st);
-    s.values = canon_alloc_array(values, sizeof *s.values, &st);
+    s.targets = canon_alloc_array(targets, sizeof *s.targets, &st);
+    s.expected = canon_alloc_array(targets, sizeof *s.expected, &st);
     if (s.mark == NULL || s.t == NULL || s.tmp == NULL || s.g == NULL || s.path == NULL ||
-        s.gmark == NULL || s.bitmap == NULL || s.values == NULL) {
+        s.gmark == NULL || s.bitmap == NULL || s.targets == NULL || s.expected == NULL) {
         scratch_free(&s);
         return st;
     }
@@ -530,10 +539,10 @@ canon_status canon_bsgs_verify(canon_bsgs *c, const uint32_t *inputs, uint32_t i
     for (uint32_t k = 0; k < c->gens.count; ++k) {
         s.gmark[k] = 0;
     }
-    *reason = run(c, inputs, input_count, &s);
+    *reason = run(c, inputs, input_count, &s, &st);
     c->verified = *reason == CANON_BSGS_VALID;
     scratch_free(&s);
-    return CANON_COMPLETE;
+    return st; /* CANON_COMPLETE whenever a verdict was reached */
 }
 
 const char *canon_bsgs_reason_name(canon_bsgs_reason reason)

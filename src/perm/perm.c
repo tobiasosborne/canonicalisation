@@ -112,26 +112,15 @@ void canon_perm_table_free(canon_perm_table *t)
 
 canon_status canon_perm_table_push(canon_perm_table *t, const uint32_t *p, uint32_t *index)
 {
-    if (t->count == UINT32_MAX) {
-        return CANON_CAPACITY_LIMIT; /* spec 11.1: row ids are uint32 */
+    size_t row_bytes = 0;
+    if (!canon_size_mul((size_t)t->n, sizeof *t->data, &row_bytes)) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
-    if (t->count == t->cap) {
-        uint32_t new_cap = canon_u32_grow(t->cap, 8u);
-        size_t words = 0;
-        if (!canon_size_mul((size_t)new_cap, (size_t)t->n, &words)) {
-            return CANON_CAPACITY_LIMIT; /* spec 11.1: checked before allocation */
-        }
-        canon_status st = CANON_COMPLETE;
-        uint32_t *grown = canon_alloc_array(words, sizeof *grown, &st);
-        if (grown == NULL) {
-            return st;
-        }
-        if (t->count > 0 && t->n > 0) {
-            memcpy(grown, t->data, (size_t)t->count * t->n * sizeof *grown);
-        }
-        free(t->data);
-        t->data = grown;
-        t->cap = new_cap;
+    void *data = t->data;
+    canon_status st = canon_grow_array(&data, &t->cap, t->count, 8u, row_bytes);
+    t->data = data;
+    if (st != CANON_COMPLETE) {
+        return st;
     }
     if (t->n > 0) {
         memcpy(t->data + (size_t)t->count * t->n, p, (size_t)t->n * sizeof *p);

@@ -41,6 +41,11 @@ typedef struct canon_bsgs_level {
     uint32_t *orbit_pos;    /* n entries: position in orbit, or CANON_BSGS_NONE */
     uint32_t *parent_point; /* by orbit position: the point it was discovered from */
     uint32_t *parent_gen;   /* by orbit position: index into gen_ids of the generator used */
+    uint32_t *schreier_done; /* construction bookkeeping, by orbit position: how many of the
+                                generators (a prefix of gen_ids) have had their Schreier
+                                generator checked (chain.c closure); not part of the chain's
+                                meaning and not read by the verifier; may be NULL on levels
+                                built by hand */
     uint32_t gen_count, gen_cap;
     uint32_t *gen_ids;      /* indices into the chain's generator table, insertion order */
 } canon_bsgs_level;
@@ -52,7 +57,6 @@ typedef struct canon_bsgs_stats {
                               identity by construction and is not sifted) */
     uint64_t compositions; /* dense O(n) products, including one step of a transporter walk */
     uint64_t insertions;   /* strong generators inserted */
-    uint64_t passes;       /* closure passes started (S3 brief 2.2 item 4) */
 } canon_bsgs_stats;
 
 typedef struct canon_bsgs {
@@ -89,8 +93,9 @@ canon_status canon_bsgs_build(canon_bsgs *out, uint32_t n, const uint32_t *gens,
                               const uint32_t *prefix, uint32_t prefix_len);
 
 /* Recompute the orbit, Schreier vector and orbit_pos of one level from its base point and
- * generator list (S3 brief 2.2 item 4: queue traversal in discovery order, generators in
- * gen_ids order).  Exposed for tests that build levels by hand. */
+ * generator list (queue traversal in discovery order, generators in gen_ids order).  The
+ * constructor extends orbits incrementally instead; this is for tests that build or edit
+ * levels by hand (it does not touch schreier_done). */
 void canon_bsgs_level_recompute(canon_bsgs *c, uint32_t level);
 
 /* The transporter t_b of `level` (S3 brief 2.2): the element of K_level sending the base point
@@ -107,9 +112,10 @@ canon_status canon_bsgs_transporter(const canon_bsgs *c, uint32_t level, uint32_
 void canon_bsgs_sift(const canon_bsgs *c, uint32_t from, uint32_t *g, uint32_t *stop,
                      canon_bsgs_stats *stats);
 
-/* spec 9.1/9.2 membership without allocation (the residue is evaluated point by point; at most
- * 63 levels move a point because the order fits uint64).  p must be a bijection of {0..n-1}. */
-bool canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p);
+/* spec 9.1/9.2 membership: *out = (p is in the group), by one sift of a copy of p in per-call
+ * scratch.  p must be a bijection of {0..n-1}.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT
+ * when the scratch cannot be allocated (*out = false). */
+canon_status canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p, bool *out);
 
 /* spec 9.2: the order of the suffix from `level` (the pointwise stabiliser
  * G_(b_0..b_{level-1}), spec 9.2 "point stabilisers"), the product of its orbit lengths.  It
@@ -118,11 +124,12 @@ uint64_t canon_bsgs_suffix_order(const canon_bsgs *c, uint32_t level);
 
 /* spec 9.2 "base change rebuilds/certifies for the requested ordered base (reuse is
  * optional)": a new chain for K_from (the suffix of `src` from level `from`) built from that
- * level's strong generators, with base starting with `prefix`, then verified by
- * canon_bsgs_verify against those generators.  CANON_INTERNAL_ERROR if verification fails;
- * otherwise as canon_bsgs_build. */
+ * level's strong generators, with base starting with `prefix`.  With `verify`, the result is
+ * then checked by canon_bsgs_verify against those generators (CANON_INTERNAL_ERROR if it is
+ * rejected); internal transient rebuilds (the tuple minimum) pass false.  Otherwise as
+ * canon_bsgs_build. */
 canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint32_t *prefix,
-                               uint32_t prefix_len, canon_bsgs *out);
+                               uint32_t prefix_len, bool verify, canon_bsgs *out);
 
 /* spec 7.1 ordering of the orbits of K_level (the pointwise stabiliser of b_0..b_{level-1}):
  * orbit_id[v] = rank of the orbit of v, orbits ranked by their least point. */
@@ -130,8 +137,8 @@ void canon_bsgs_orbit_ids(const canon_bsgs *c, uint32_t level, uint32_t *orbit_i
 
 /* spec 7.2 tuple minimum (and spec 7.1 G stage): see canon_group_ops.tuple_min in
  * src/bsgs/group.h for the contract; c must be a verified chain.  CANON_INVALID_INPUT for an
- * entry of L >= n, CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure,
- * CANON_INTERNAL_ERROR if a rebased chain fails verification. */
+ * entry of L >= n, CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure.  The
+ * transient rebased chains it builds are not verified (S3 review item 2). */
 canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32_t len,
                                   uint32_t *t_out, uint32_t *orbit_id_out,
                                   canon_bsgs_stats *stats);

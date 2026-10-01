@@ -1,5 +1,5 @@
 /* Slice S1/S2/S3 public entry points (spec sections 3, 3.2, 11.1, 17): context, capacity
- * descriptor, group backend selection (S3), retain/release handles, groups and their order
+ * descriptor and options (S3: the group backend), retain/release handles, groups and their order
  * (S3), subset and graph objects (S2), problems, workspaces, solve, results and
  * result_encode.  Entry points of later slices remain in
  * src/api/stubs.c. */
@@ -28,7 +28,7 @@
 
 struct canon_context {
     canon_capacity defaults; /* every field nonzero */
-    canon_backend backend;   /* S3: group backend for canon_group_create */
+    canon_backend backend;   /* S3: group backend for canon_group_create, fixed at creation */
 };
 
 /* An object is a root (src/object/object.h): a top-level subset (S1) or a top-level coloured
@@ -100,10 +100,22 @@ static canon_capacity resolve_capacity(const canon_capacity *given, const canon_
 
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out)
 {
+    return canon_context_create_with_options(defaults, NULL, out);
+}
+
+canon_status canon_context_create_with_options(const canon_capacity *defaults,
+                                               const canon_context_options *options,
+                                               canon_context **out)
+{
     if (out == NULL) {
         return CANON_INVALID_INPUT;
     }
     *out = NULL;
+    /* S3 brief 2.5: the chain is the default backend */
+    const canon_backend backend = options != NULL ? options->backend : CANON_BACKEND_CHAIN;
+    if (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT) {
+        return CANON_INVALID_INPUT;
+    }
     const canon_capacity builtin = {DEFAULT_MAX_N, DEFAULT_MAX_GROUP_ORDER,
                                     DEFAULT_MAX_SEARCH_NODES, DEFAULT_MAX_OUTPUT_BYTES};
     canon_context *ctx = malloc(sizeof *ctx);
@@ -111,7 +123,7 @@ canon_status canon_context_create(const canon_capacity *defaults, canon_context 
         return CANON_RESOURCE_LIMIT;
     }
     ctx->defaults = resolve_capacity(defaults, &builtin);
-    ctx->backend = CANON_BACKEND_CHAIN; /* S3 brief 2.5: the chain is the default */
+    ctx->backend = backend; /* fixed for the context's lifetime (spec 17: immutable) */
     *out = ctx;
     return CANON_COMPLETE;
 }
@@ -119,15 +131,6 @@ canon_status canon_context_create(const canon_capacity *defaults, canon_context 
 void canon_context_release(canon_context *ctx)
 {
     free(ctx);
-}
-
-canon_status canon_context_set_group_backend(canon_context *ctx, canon_backend backend)
-{
-    if (ctx == NULL || (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT)) {
-        return CANON_INVALID_INPUT;
-    }
-    ctx->backend = backend;
-    return CANON_COMPLETE;
 }
 
 /* ---- retain/release (spec 17).  Group retain/release live in src/bsgs/group.c. ---- */
@@ -368,9 +371,11 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
     if (object->root.n > cap.max_n) {
         return CANON_CAPACITY_LIMIT;
     }
-    /* S3 brief 2.5: max_group_order bounds the explicit backend's element table only. */
-    if (canon_group_is_explicit(group) && group->ops->order(group) > cap.max_group_order) {
-        return CANON_CAPACITY_LIMIT;
+    /* spec 11.1: each backend states which descriptors admit it (S3 brief 2.5: the explicit
+     * table is bounded by max_group_order, the chain by nothing beyond its uint64 order). */
+    canon_status admitted = group->ops->admits(group, &cap);
+    if (admitted != CANON_COMPLETE) {
+        return admitted;
     }
     /* spec 11.1: data-dependent output size uses an exact input-derived bound.  The stream
      * length of x^g equals that of x for every g: a subset image has as many members; a graph

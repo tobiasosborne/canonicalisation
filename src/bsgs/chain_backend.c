@@ -27,9 +27,18 @@ static uint64_t chain_order(const canon_group *group)
 }
 
 /* spec 9.1/9.2: membership by sifting. */
-static bool chain_contains(const canon_group *group, const uint32_t *p)
+static canon_status chain_contains(const canon_group *group, const uint32_t *p, bool *out)
 {
-    return canon_bsgs_contains(group->impl, p);
+    return canon_bsgs_contains(group->impl, p, out);
+}
+
+/* spec 11.1: S3 brief 2.5 - the chain is limited only by its uint64 order, which every built
+ * chain satisfies, so every problem descriptor admits it in S3. */
+static canon_status chain_admits(const canon_group *group, const canon_capacity *cap)
+{
+    (void)group;
+    (void)cap;
+    return CANON_COMPLETE;
 }
 
 /* spec 7.1 G stage, 7.2 leaf map: see src/bsgs/group.h and canon_bsgs_tuple_min. */
@@ -40,7 +49,7 @@ static canon_status chain_tuple_min(const canon_group *group, const uint32_t *L,
 }
 
 static const canon_group_ops chain_ops = {chain_destroy, chain_order, chain_contains,
-                                          chain_tuple_min};
+                                          chain_tuple_min, chain_admits};
 
 const canon_bsgs *canon_group_chain_of(const canon_group *group)
 {

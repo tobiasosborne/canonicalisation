@@ -10,14 +10,15 @@
  *     is the level at which its sift stopped (or the new level of rule 2).  The generator joins
  *     S_0, ..., S_j (inclusive membership, chain.h).
  *  4. Rebuild: after an insertion at level j the generator lists of levels 0..j have changed,
- *     so their orbits and Schreier vectors are recomputed (queue traversal in discovery order,
- *     generators in gen_ids order); levels > j are unchanged.  The closure then re-sifts the
- *     Schreier generators t_b s t_(b^s)^-1 level by level from level j up to level 0 (deepest
- *     first), each level in orbit order then generator order, sifting through the levels
- *     below.  A residue that is not the identity is inserted (rules 2, 3) and the pass
- *     restarts at its insertion level, the deepest level affected.  The closure ends when a
- *     pass reaches the end of level 0 without inserting.  (Reading of "levels >= i" and
- *     "lowest affected level": docs/slices/S3-notes.md.)
+ *     so their orbits and Schreier vectors are extended by the new generator (queue traversal
+ *     continued in discovery order, generators in gen_ids order, existing tree entries kept);
+ *     levels > j are unchanged.  The closure then sifts the Schreier generators
+ *     t_b s t_(b^s)^-1 not yet checked, level by level from level j up to level 0 (deepest
+ *     first), each level in orbit order then generator order, through the levels below.  A
+ *     residue that is not the identity is inserted (rules 2, 3) and the closure restarts at
+ *     its insertion level, the deepest level affected.  It ends when level 0 is reached and
+ *     finished without inserting.  Checks are incremental (S3 review item 3, closure()).
+ *     (Reading of "levels >= i" and "lowest affected level": docs/slices/S3-notes.md.)
  *  5. Strict growth: only the nonidentity remainder of a sift is inserted.  The sift stopped at
  *     level j because the residue's image of b_j is outside b_j^(K_j) (or j is new), so the
  *     residue is not in K_j and K_j grows strictly; this bounds the number of insertions by
@@ -40,6 +41,7 @@
 #include "arena/alloc.h"
 #include "arena/checked.h"
 #include "bsgs/verify.h"
+#include "util/sort.h"
 
 /* ---- lifetime ---- */
 
@@ -72,31 +74,20 @@ void canon_bsgs_free(canon_bsgs *c)
 
 /* ---- levels ---- */
 
-/* Room for `need` level entries; new entries are zero (a terminal level). */
+/* Room for `need` (>= 1) level entries; new entries are terminal levels. */
 static canon_status ensure_levels(canon_bsgs *c, uint32_t need)
 {
-    if (need <= c->level_cap) {
-        return CANON_COMPLETE;
-    }
-    uint32_t cap = c->level_cap;
-    while (cap < need) {
-        cap = canon_u32_grow(cap, 4u); /* strictly grows while cap < need <= UINT32_MAX */
-    }
-    canon_status st = CANON_COMPLETE;
-    canon_bsgs_level *grown = canon_alloc_array(cap, sizeof *grown, &st);
-    if (grown == NULL) {
+    const uint32_t old_cap = c->level_cap;
+    void *levels = c->levels;
+    canon_status st = canon_grow_array(&levels, &c->level_cap, need - 1u, 4u, sizeof *c->levels);
+    c->levels = levels;
+    if (st != CANON_COMPLETE) {
         return st;
     }
-    memset(grown, 0, (size_t)cap * sizeof *grown);
-    for (uint32_t i = cap; i-- > c->level_cap;) {
-        grown[i].base_point = CANON_BSGS_NONE;
+    for (uint32_t i = old_cap; i < c->level_cap; ++i) {
+        memset(&c->levels[i], 0, sizeof c->levels[i]);
+        c->levels[i].base_point = CANON_BSGS_NONE; /* a terminal level */
     }
-    if (c->level_cap > 0) {
-        memcpy(grown, c->levels, (size_t)c->level_cap * sizeof *grown);
-    }
-    free(c->levels);
-    c->levels = grown;
-    c->level_cap = cap;
     return CANON_COMPLETE;
 }
 
@@ -110,7 +101,7 @@ static canon_status append_base_point(canon_bsgs *c, uint32_t b)
         return st;
     }
     size_t words = 0;
-    if (!canon_size_mul((size_t)n, 4u, &words)) {
+    if (!canon_size_mul((size_t)n, 5u, &words)) {
         return CANON_CAPACITY_LIMIT;
     }
     uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
@@ -122,9 +113,11 @@ static canon_status append_base_point(canon_bsgs *c, uint32_t b)
     L->orbit_pos = block + n;
     L->parent_point = block + 2u * (size_t)n;
     L->parent_gen = block + 3u * (size_t)n;
+    L->schreier_done = block + 4u * (size_t)n;
     for (uint32_t v = 0; v < n; ++v) {
         L->orbit_pos[v] = CANON_BSGS_NONE;
     }
+    L->schreier_done[0] = 0;
     L->base_point = b;
     L->orbit_len = 1;
     L->orbit[0] = b;
@@ -137,31 +130,48 @@ static canon_status append_base_point(canon_bsgs *c, uint32_t b)
 
 static canon_status level_push_gen(canon_bsgs_level *L, uint32_t id)
 {
-    if (L->gen_count == L->gen_cap) {
-        if (L->gen_cap == UINT32_MAX) {
-            return CANON_CAPACITY_LIMIT;
-        }
-        uint32_t cap = canon_u32_grow(L->gen_cap, 4u);
-        canon_status st = CANON_COMPLETE;
-        uint32_t *grown = canon_alloc_array(cap, sizeof *grown, &st);
-        if (grown == NULL) {
-            return st;
-        }
-        if (L->gen_count > 0) {
-            memcpy(grown, L->gen_ids, (size_t)L->gen_count * sizeof *grown);
-        }
-        free(L->gen_ids);
-        L->gen_ids = grown;
-        L->gen_cap = cap;
+    void *ids = L->gen_ids;
+    canon_status st = canon_grow_array(&ids, &L->gen_cap, L->gen_count, 4u, sizeof *L->gen_ids);
+    L->gen_ids = ids;
+    if (st == CANON_COMPLETE) {
+        L->gen_ids[L->gen_count++] = id;
     }
-    L->gen_ids[L->gen_count++] = id;
-    return CANON_COMPLETE;
+    return st;
+}
+
+/* S3 review item 3: extend the orbit of `level` after generators gen_ids[first_new..] were
+ * appended.  The queue traversal continues from the existing tree, which is kept: the old
+ * points (positions < old length) are expanded by the new generators only, since the old
+ * generators already map the old orbit into itself, and every newly discovered point by all
+ * generators, in discovery order (FIFO).  Because no stored edge changes, the transporter of
+ * every old point, and so every Schreier generator already checked, keeps its value. */
+static void level_extend(canon_bsgs *c, uint32_t level, uint32_t first_new)
+{
+    canon_bsgs_level *L = &c->levels[level];
+    const uint32_t old_len = L->orbit_len;
+    uint32_t len = old_len;
+    for (uint32_t head = 0; head < len; ++head) {
+        const uint32_t x = L->orbit[head];
+        for (uint32_t gi = head < old_len ? first_new : 0; gi < L->gen_count; ++gi) {
+            const uint32_t y = canon_perm_table_row(&c->gens, L->gen_ids[gi])[x]; /* x^s */
+            if (L->orbit_pos[y] == CANON_BSGS_NONE) {
+                L->orbit[len] = y;
+                L->orbit_pos[y] = len;
+                L->parent_point[len] = x;
+                L->parent_gen[len] = gi;
+                L->schreier_done[len] = 0; /* no Schreier generator of y checked yet */
+                ++len;
+            }
+        }
+    }
+    L->orbit_len = len;
 }
 
 /* S3 brief 2.2 item 4: queue traversal from the base point, points expanded in discovery order
  * (FIFO), generators in gen_ids order; a point discovered through generator gen_ids[gi] from
  * point x records parent_point = x, parent_gen = gi.  orbit_pos must describe the current
- * orbit on entry (NONE elsewhere). */
+ * orbit on entry (NONE elsewhere).  The constructor extends orbits instead (level_extend); this
+ * full recomputation serves levels built or edited by hand (tests). */
 void canon_bsgs_level_recompute(canon_bsgs *c, uint32_t level)
 {
     canon_bsgs_level *L = &c->levels[level];
@@ -312,49 +322,24 @@ void canon_bsgs_sift(const canon_bsgs *c, uint32_t from, uint32_t *g, uint32_t *
     sift_record(c, from, g, stop, NULL, NULL, NULL, stats);
 }
 
-/* x^r for the residue r = p t_(c_0)^-1 t_(c_1)^-1 ... recorded so far (right action: apply p,
- * then each inverse transporter in order). */
-static uint32_t residue_image(const canon_bsgs *c, const uint32_t *p, const uint32_t *lev,
-                              const uint32_t *pos, uint32_t k, uint32_t x)
+canon_status canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p, bool *out)
 {
-    uint32_t y = p[x];
-    for (uint32_t i = 0; i < k; ++i) {
-        const canon_bsgs_level *L = &c->levels[lev[i]];
-        for (uint32_t q = pos[i]; q != 0; q = L->orbit_pos[L->parent_point[q]]) {
-            y = canon_perm_table_row(&c->invs, L->gen_ids[L->parent_gen[q]])[y];
-        }
+    /* spec 9.1/9.2: membership by sifting a copy of p once, in per-call scratch (S3 review
+     * item 5): p is in the group iff the residue is the identity. */
+    *out = false;
+    canon_status st = CANON_COMPLETE;
+    uint32_t *g = canon_alloc_array(c->n, sizeof *g, &st);
+    if (g == NULL) {
+        return st;
     }
-    return y;
-}
-
-bool canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p)
-{
-    /* spec 9.1/9.2 membership, evaluated point by point so that no allocation is needed.  Only
-     * levels whose orbit has at least two points can contribute a nonidentity transporter, and
-     * there are at most 63 of them because the order (their product) fits uint64. */
-    uint32_t lev[64], pos[64];
-    uint32_t k = 0;
-    for (uint32_t j = 0; j < c->depth; ++j) {
-        const canon_bsgs_level *L = &c->levels[j];
-        uint32_t q = L->orbit_pos[residue_image(c, p, lev, pos, k, L->base_point)];
-        if (q == CANON_BSGS_NONE) {
-            return false;
-        }
-        if (q != 0) {
-            if (k == 64) {
-                return false; /* unreachable for a chain whose order fits uint64 */
-            }
-            lev[k] = j;
-            pos[k] = q;
-            ++k;
-        }
+    if (c->n > 0) {
+        memcpy(g, p, (size_t)c->n * sizeof *g);
     }
-    for (uint32_t v = 0; v < c->n; ++v) {
-        if (residue_image(c, p, lev, pos, k, v) != v) {
-            return false;
-        }
-    }
-    return true;
+    uint32_t stop = 0;
+    sift_record(c, 0, g, &stop, NULL, NULL, NULL, NULL);
+    *out = stop == c->depth && canon_perm_is_identity(g, c->n);
+    free(g);
+    return CANON_COMPLETE;
 }
 
 /* ---- construction ---- */
@@ -386,8 +371,8 @@ static canon_status prov_times_recorded(canon_bsgs *c, const build_ctx *x, uint3
 }
 
 /* Insert the nonidentity residue x->g with provenance `node` at level `level` (policies 2, 3:
- * level == depth means the base is first extended by its least moved point), recompute the
- * changed levels 0..level, and refresh the order.  *inserted_at receives the level. */
+ * level == depth means the base is first extended by its least moved point), extend the orbits
+ * of the changed levels 0..level, and refresh the order.  *inserted_at receives the level. */
 static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t node,
                            uint32_t *inserted_at)
 {
@@ -407,25 +392,19 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
             return st;
         }
     }
-    if (c->gens.count == c->node_cap) {
-        uint32_t cap = canon_u32_grow(c->node_cap, 8u);
-        uint32_t *gn = canon_alloc_array(cap, sizeof *gn, &st);
-        uint32_t *in = canon_alloc_array(cap, sizeof *in, &st);
-        if (gn == NULL || in == NULL) {
-            free(gn);
-            free(in);
-            return st;
-        }
-        if (c->gens.count > 0) {
-            memcpy(gn, c->gen_node, (size_t)c->gens.count * sizeof *gn);
-            memcpy(in, c->inv_node, (size_t)c->gens.count * sizeof *in);
-        }
-        free(c->gen_node);
-        free(c->inv_node);
-        c->gen_node = gn;
+    /* gen_node and inv_node are parallel arrays sharing node_cap: grow both, then commit */
+    uint32_t cap_g = c->node_cap, cap_i = c->node_cap;
+    void *gn = c->gen_node, *in = c->inv_node;
+    st = canon_grow_array(&gn, &cap_g, c->gens.count, 8u, sizeof *c->gen_node);
+    c->gen_node = gn;
+    if (st == CANON_COMPLETE) {
+        st = canon_grow_array(&in, &cap_i, c->gens.count, 8u, sizeof *c->inv_node);
         c->inv_node = in;
-        c->node_cap = cap;
     }
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    c->node_cap = cap_g < cap_i ? cap_g : cap_i;
     uint32_t id = 0, inv_id = 0, inv_node = 0;
     canon_perm_inverse(x->g, x->tmp, n); /* spec 3: the inverse, stored once (S3 brief 2.1) */
     c->stats.compositions += 1;
@@ -449,7 +428,8 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
         }
     }
     for (uint32_t i = 0; i <= level; ++i) {
-        canon_bsgs_level_recompute(c, i); /* policy 4: the changed levels */
+        /* policy 4: the changed levels, extended by the new generator (the last in gen_ids) */
+        level_extend(c, i, c->levels[i].gen_count - 1u);
     }
     c->stats.insertions += 1;
     if (!orbit_product(c, 0, &c->order)) {
@@ -459,19 +439,32 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
     return CANON_COMPLETE;
 }
 
-/* Policy 4: the Schreier closure, deepest level first, restarting at each insertion level. */
+/* Policy 4 with incremental Schreier checks (S3 review item 3): the closure visits levels
+ * deepest first, restarting at each insertion level, and at each level sifts only the Schreier
+ * generators t_b s t_(b^s)^-1 not yet checked.  schreier_done[p] counts the generators of the
+ * point at orbit position p already checked, a prefix of gen_ids.  A check stays valid after
+ * later insertions: the old transporters are unchanged (level_extend keeps the tree), and an
+ * element that sifted to the identity through the levels below lies in their group, which only
+ * grows.  After an insertion of s at level j the new checks are exactly the pairs
+ * (new point, any generator) and (any point, s) of levels 0..j. */
 static canon_status closure(canon_bsgs *c, build_ctx *x, uint32_t start)
 {
     const uint32_t n = c->n;
     uint32_t k = start;
 restart:
-    c->stats.passes += 1;
     for (uint32_t lv = k + 1; lv-- > 0;) {
         for (uint32_t p = 0; p < c->levels[lv].orbit_len; ++p) {
-            const canon_bsgs_level *L = &c->levels[lv];
+            canon_bsgs_level *L = &c->levels[lv];
+            if (L->schreier_done[p] >= L->gen_count) {
+                continue;
+            }
             const uint32_t b = L->orbit[p];
             c->stats.compositions += transporter_into(c, L, p, x->t, x->tmp); /* t_b */
-            for (uint32_t gi = 0; gi < L->gen_count; ++gi) {
+            for (uint32_t gi = L->schreier_done[p]; gi < L->gen_count; ++gi) {
+                /* The pair counts as checked from here on: either its residue is the identity
+                 * or it is inserted below, after which the pair's element lies in the group of
+                 * the levels below. */
+                L->schreier_done[p] = gi + 1u;
                 const uint32_t sid = L->gen_ids[gi];
                 const uint32_t *s = canon_perm_table_row(&c->gens, sid);
                 const uint32_t cpos = L->orbit_pos[s[b]]; /* b^s is in the orbit (closed) */
@@ -510,7 +503,7 @@ restart:
                 }
                 uint32_t at = 0;
                 if (st == CANON_COMPLETE) {
-                    st = insert(c, x, stop, node, &at);
+                    st = insert(c, x, stop, node, &at); /* may move c->levels */
                 }
                 if (st != CANON_COMPLETE) {
                     return st;
@@ -523,9 +516,46 @@ restart:
     return CANON_COMPLETE;
 }
 
-static bool same_perm(const uint32_t *a, const uint32_t *b, uint32_t n)
+typedef struct rows_ctx {
+    const uint32_t *rows;
+    uint32_t n;
+} rows_ctx;
+
+/* spec 7.2 numerical lexicographic order of the image arrays of two row indices */
+static int row_index_cmp(const void *a, const void *b, void *ctx)
 {
-    return n == 0 || memcmp(a, b, (size_t)n * sizeof *a) == 0;
+    const rows_ctx *r = ctx;
+    size_t ia = *(const size_t *)a, ib = *(const size_t *)b;
+    return canon_perm_lex_compare(r->rows + ia * r->n, r->rows + ib * r->n, r->n);
+}
+
+/* Policy 1 (S3 review item 9): keep[i] = 1 iff input i is not the identity and no earlier
+ * input equals it.  The row indices are sorted by image array with the shared stable sort, so
+ * equal rows are adjacent and in input order: the first of each run is the first occurrence.
+ * O(count log count) comparisons of n entries. */
+static canon_status kept_inputs(const uint32_t *gens, uint32_t count, uint32_t n, uint8_t *keep)
+{
+    canon_status st = CANON_COMPLETE;
+    size_t *idx = canon_alloc_array(count, sizeof *idx, &st);
+    size_t *tmp = canon_alloc_array(count, sizeof *tmp, &st);
+    if (idx == NULL || tmp == NULL) {
+        free(idx);
+        free(tmp);
+        return st;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        idx[i] = i;
+    }
+    rows_ctx r = {gens, n};
+    canon_stable_sort(idx, count, sizeof *idx, tmp, row_index_cmp, &r);
+    for (uint32_t k = 0; k < count; ++k) {
+        const uint32_t *row = gens + idx[k] * n;
+        keep[idx[k]] = !canon_perm_is_identity(row, n) &&
+                       (k == 0 || row_index_cmp(&idx[k - 1], &idx[k], &r) != 0);
+    }
+    free(idx);
+    free(tmp);
+    return CANON_COMPLETE;
 }
 
 static canon_status build_run(canon_bsgs *c, const uint32_t *gens, uint32_t count,
@@ -560,24 +590,24 @@ static canon_status build_run(canon_bsgs *c, const uint32_t *gens, uint32_t coun
             return st;
         }
     }
-    for (uint32_t i = 0; i < count && n > 0; ++i) {
+    if (n == 0 || count == 0) {
+        return CANON_COMPLETE; /* degree 0: every generator is the identity; order 1 */
+    }
+    uint8_t *keep = canon_alloc_array(count, sizeof *keep, &st);
+    if (keep == NULL) {
+        return st;
+    }
+    st = kept_inputs(gens, count, n, keep);
+    for (uint32_t i = 0; i < count && st == CANON_COMPLETE; ++i) {
         const uint32_t *gi = gens + (size_t)i * n;
         /* policy 1: drop identities and exact duplicates of an earlier kept input */
-        if (canon_perm_is_identity(gi, n)) {
-            continue;
-        }
-        bool dup = false;
-        for (uint32_t j = 0; j < i && !dup; ++j) {
-            dup = !canon_perm_is_identity(gens + (size_t)j * n, n) &&
-                  same_perm(gens + (size_t)j * n, gi, n);
-        }
-        if (dup) {
+        if (!keep[i]) {
             continue;
         }
         uint32_t node = 0;
         st = canon_prov_input(&c->prov, i, &node);
         if (st != CANON_COMPLETE) {
-            return st;
+            break;
         }
         /* policy 5: sift first; only the nonidentity remainder is inserted */
         memcpy(x->g, gi, (size_t)n * sizeof *x->g);
@@ -596,14 +626,9 @@ static canon_status build_run(canon_bsgs *c, const uint32_t *gens, uint32_t coun
         if (st == CANON_COMPLETE) {
             st = closure(c, x, at);
         }
-        if (st != CANON_COMPLETE) {
-            return st;
-        }
     }
-    if (!orbit_product(c, 0, &c->order)) {
-        return CANON_CAPACITY_LIMIT; /* only possible through a prefix-only chain: no */
-    }
-    return CANON_COMPLETE;
+    free(keep);
+    return st; /* c->order was refreshed at every insertion */
 }
 
 canon_status canon_bsgs_build(canon_bsgs *out, uint32_t n, const uint32_t *gens, size_t count,
@@ -639,7 +664,7 @@ canon_status canon_bsgs_build(canon_bsgs *out, uint32_t n, const uint32_t *gens,
 /* ---- rebase (spec 9.2) ---- */
 
 canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint32_t *prefix,
-                               uint32_t prefix_len, canon_bsgs *out)
+                               uint32_t prefix_len, bool verify, canon_bsgs *out)
 {
     const uint32_t n = src->n;
     canon_bsgs_init(out, n);
@@ -661,7 +686,7 @@ canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint3
                (size_t)n * sizeof *flat);
     }
     st = canon_bsgs_build(out, n, flat, L->gen_count, prefix, prefix_len);
-    if (st == CANON_COMPLETE) {
+    if (st == CANON_COMPLETE && verify) {
         /* spec 9.2: "base change rebuilds/certifies" */
         canon_bsgs_reason reason = CANON_BSGS_UNCHECKED;
         st = canon_bsgs_verify(out, flat, L->gen_count, &reason);
@@ -709,11 +734,11 @@ void canon_bsgs_orbit_ids(const canon_bsgs *c, uint32_t level, uint32_t *orbit_i
         }
     }
     /* spec 7.1: "sort each orbit's target labels increasingly, then sort the orbit lists
-     * lexicographically": disjoint orbits order by their least points (the roots).  One
-     * increasing pass ranks roots and copies each root's rank to its members. */
-    for (uint32_t v = 0; v < n; ++v) {
-        (void)uf_find(parent, v);
-    }
+     * lexicographically": disjoint orbits order by their least points, which are the roots.
+     * Invariant: parent[x] <= x (unions attach the larger root to the smaller, path halving
+     * only shortens), so in one pass over v in increasing order parent[v] = r < v is a point
+     * already rewritten to the rank of its class, which is v's class; a root (r == v) takes
+     * the next rank. */
     uint32_t next = 0;
     for (uint32_t v = 0; v < n; ++v) {
         uint32_t r = parent[v];
@@ -772,15 +797,15 @@ static void add_stats(canon_bsgs_stats *acc, const canon_bsgs_stats *s)
         acc->sifts += s->sifts;
         acc->compositions += s->compositions;
         acc->insertions += s->insertions;
-        acc->passes += s->passes;
     }
 }
 
 /* spec 7.2: "A constructive procedure starts t=id, H=G; at list position i set a=t[L[i]],
  * choose b=min(a^H) and u in H with a^u=b, then t <- t u and H <- H_b."  H is a suffix of a
- * verified chain (cur, level); when b is not the base point of that level, H is rebased so
- * that its first base point is b (one verified rebuild per such step; O(n) rebuilds per call
- * at most).  u = t_a^-1, where t_a sends b to a in the rebased level.
+ * chain (cur, level); when b is not the base point of that level, H is rebased so that its
+ * first base point is b.  That is one rebuild per such step, not verified: these chains are
+ * transient and correct by construction.  At most O(n) rebuilds per call, the known S3 cost
+ * (M5 work).  u = t_a^-1, where t_a sends b to a in the rebased level.
  *
  * The list processed is L followed by 0, 1, ..., n-1.  After the |L| entries of L, t
  * minimises L^t and the minimisers are exactly the coset t G_M, M = L^t (if L^g = M then
@@ -815,7 +840,9 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
         if (level >= cur->depth || cur->levels[level].base_point != b) {
             /* spec 9.2 base change: H with base starting at b */
             canon_bsgs next;
-            canon_status st = canon_bsgs_rebase(cur, level, &b, 1, &next);
+            /* internal and transient: correct by the deterministic closure, not verified
+             * (S3 review item 2; the group's own chain was verified at creation) */
+            canon_status st = canon_bsgs_rebase(cur, level, &b, 1, false, &next);
             if (st != CANON_COMPLETE) {
                 return st;
             }

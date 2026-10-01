@@ -381,10 +381,8 @@ int main(int argc, char **argv)
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
     canon_capacity cap = {0, 0, max_nodes, 0};
-    canon_status st = canon_context_create(NULL, &ctx);
-    if (st == CANON_COMPLETE) {
-        st = canon_context_set_group_backend(ctx, backend);
-    }
+    const canon_context_options options = {backend};
+    canon_status st = canon_context_create_with_options(NULL, &options, &ctx);
     if (st == CANON_COMPLETE) {
         st = canon_group_create(ctx, n, gen, gen_count, &group);
     }

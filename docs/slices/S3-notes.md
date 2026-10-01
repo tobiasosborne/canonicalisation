@@ -23,10 +23,11 @@ Brief: [`S3.md`](S3.md). Normative text: `docs/specification.md` v2.0 (cited as 
 Files changed:
 
 - `src/perm/perm.h`, `perm.c`: `canon_perm_table`.
-- `src/arena/checked.h`: `canon_u32_grow`, the one saturating capacity-doubling rule used by the grow-only tables.
-- `src/bsgs/explicit.h`, `explicit.c`: `canon_group_is_explicit`.
-- `include/canon/canon.h`: `canon_backend`, `canon_context_set_group_backend`, `canon_group_order`, and documentation of the capacity changes.
-- `src/api/api.c`: the backend in the context, dispatch in `canon_group_create`, `canon_group_order`, and `max_group_order` applied to explicit groups only.
+- `src/arena/checked.h`: `canon_u32_grow`, the saturating capacity-doubling rule. `src/arena/alloc.h`: `canon_grow_array`, the one checked growth helper (review item 6).
+- `src/bsgs/group.h`: `contains` returns a status, and the new `admits` hook (review items 5, 8).
+- `src/bsgs/explicit.c`: `contains` and `admits` for the explicit backend.
+- `include/canon/canon.h`: `canon_backend`, `canon_context_options`, `canon_context_create_with_options`, `canon_group_order`, and documentation of the capacity changes.
+- `src/api/api.c`: the backend fixed at context creation, dispatch in `canon_group_create`, `canon_group_order`, and `ops->admits` in `canon_problem_create`.
 - `tools/canon-cli.c`: `--backend chain|explicit`.
 - `tests/c/test_search_subset.c`: see the deviations.
 - `tests/python/test_e2e.py`: `CANON_BACKEND`, and the `Backends` class.
@@ -42,8 +43,8 @@ Files changed:
 3. **Inclusive membership.** Brief §2.1 says "levels[i] generates G_(b_0..b_{i-1})". A strong generator inserted at level `j` fixes `b_0..b_{j-1}` and is listed in `S_0, …, S_j`, so `S_{i+1} ⊆ S_i`. This is the usual BSGS convention `S^(i) = S ∩ G_(b_0..b_{i-1})`.
 4. **Provenance and rebase (§9.1 "each generator's derivation from the original input", §9.2).** A chain's `INPUT` records name the generators it was built from: the validated user input for a group's chain, or the strong generators of the source level for a rebased chain. The verifier checks the chain's record of its inputs against the caller's originals. A rebased chain is therefore derived from its source's verified strong generators, and those are derived from the user input. Copying the source DAG into every transient chain of a tuple minimum would only add cost.
 5. **Order beyond uint64 (§9.2 "Group order is an exact multi-limb product", §11.1, detailed plan §2.1 count-bit limit 64).** Groups of order above `2^64 − 1` are `CAPACITY_LIMIT` at `canon_group_create` (brief §2.5). During construction, inclusive membership gives `K_(i+1) ≤ Stab_(K_i)(b_i)`. The product of the orbit lengths is therefore a lower bound on `|G|` at every stage, and it equals `|G|` at the end. The constructor stops as soon as that product overflows. This is the case iff `|G| > 2^64 − 1`, so the outcome is a function of the group alone. It also bounds the work: at most 63 levels with a nontrivial orbit, and at most 63 insertions per level.
-6. **Tuple minimum (§7.2) and the least minimiser.** The procedure runs over the list `L` followed by `0, 1, …, n−1`. After `|L|` steps, `t` minimises `L^t` and the minimisers are exactly `t·G_M` with `M = L^t`. The orbit ids of `G_M` are read at that point. The remaining steps minimise `(t g)[0], (t g)[1], …` over `g ∈ G_M`, which is the least minimiser that the group interface (S1) and the explicit backend return. Each step needs `H_b`. When `b` is not the first base point of the current `H` chain, `H` is rebased with prefix `(b)` and verified, and `u = t_a⁻¹` is taken from that level (`t_a` sends `b` to `a`). The brief's "u = t_b of that level" with base `a` would need `H_b = u⁻¹ H_a u` as a second step; both are one rebase per step. The cost is at most `n` verified rebuilds per call. A step is skipped without any rebuild when `a` is fixed by `H`, and it uses the current level when `b` is already its base point.
-7. **Membership without allocation.** `contains` returns `bool`, and the interface is unchanged. Membership therefore evaluates the residue point by point. It keeps at most 63 (level, point) pairs on the stack, which is enough because the order fits `uint64`. A heap allocation would have needed a failure value that `bool` cannot carry.
+6. **Tuple minimum (§7.2) and the least minimiser.** The procedure runs over the list `L` followed by `0, 1, …, n−1`. After `|L|` steps, `t` minimises `L^t` and the minimisers are exactly `t·G_M` with `M = L^t`. The orbit ids of `G_M` are read at that point. The remaining steps minimise `(t g)[0], (t g)[1], …` over `g ∈ G_M`, which is the least minimiser that the group interface (S1) and the explicit backend return. Each step needs `H_b`. When `b` is not the first base point of the current `H` chain, `H` is rebased with prefix `(b)`, and `u = t_a⁻¹` is taken from that level (`t_a` sends `b` to `a`). The brief's "u = t_b of that level" with base `a` would need `H_b = u⁻¹ H_a u` as a second step; both are one rebase per step. Since review item 2 these transient chains are not verified. A step is skipped without any rebuild when `a` is fixed by `H`, and it uses the current level when `b` is already its base point.
+7. **Membership.** Since review item 5, `contains` returns a status and the result in `*out`. It sifts a copy of `p` once, in a per-call scratch of `n` words, so an allocation failure is reported.
 8. **What `TRANSVERSAL_IMAGE` checks.** No transporter is stored, so condition 6 checks the verifier's own reconstruction `t_b = s_0 … s_(k-1)` against the stored edges. Once the edges have passed condition 4, no data mutation can make it fail. It pins the product side, as the brief intends. The ten mutations therefore do not include it.
 
 ## Construction policies as implemented (brief §2.2, plan WP2.3)
@@ -51,13 +52,12 @@ Files changed:
 1. **Normalisation.** Identities and exact duplicates of an earlier input are dropped, and first occurrences keep their order. Each kept input `i` gets the record `INPUT i`; indices refer to the original input list. Each kept input is sifted from the root.
 2. **Base extension.** A residue that fixes every base point and is not the identity appends its least moved point.
 3. **Insertion level.** The level at which the residue's sift stopped, i.e. the deepest level whose prefix it fixes (or the new level of rule 2). The generator joins `S_0..S_j` (reading 3).
-4. **Rebuild and closure.** After an insertion at level `j`, the orbits, Schreier vectors and `orbit_pos` of levels `0..j` are recomputed. Those are the levels whose generator lists changed; see the conflict below. The closure then sifts the Schreier generators `t_b s t_(b^s)⁻¹`:
+4. **Rebuild and closure.** After an insertion at level `j`, the orbits, Schreier vectors and `orbit_pos` of levels `0..j` are extended by the new generator. Those are the levels whose generator lists changed; see the conflict below. The queue traversal continues from the existing tree and keeps every stored edge (review item 3). The closure then sifts the Schreier generators `t_b s t_(b^s)⁻¹` that have not been checked yet:
    - level by level from `j` down to `0` (deepest first), each level in orbit order then generator order, through the levels below;
+   - per orbit position, `schreier_done` counts the generators already checked; after an insertion of `s`, exactly the pairs (new point, any generator) and (any point, `s`) are new;
    - a Schreier generator that is a tree edge (`b^s` was discovered from `b` through `s`) is the identity by construction; it counts as a candidate but is not sifted;
-   - a nonidentity residue is inserted (rules 2 and 3), and the pass restarts at its insertion level, the deepest affected level;
-   - the closure ends when a pass finishes level 0 without inserting.
-
-   Every pass starts with an insertion, so the number of passes equals the number of insertions.
+   - a nonidentity residue is inserted (rules 2 and 3), and the closure restarts at its insertion level, the deepest affected level;
+   - the closure ends when level 0 is finished without inserting.
 5. **Strict growth.** Only the nonidentity remainder of a sift is inserted. The sift stopped at level `j` because the residue's image of `b_j` lies outside `b_j^(K_j)`. Hence the residue is not in `K_j`, and `K_j` grows strictly.
 6. **Provenance.** Records are made only for inserted generators. An inserted Schreier residue is recorded as follows:
    - `t_b` is built by left multiplication of the generator records along its tree path;
@@ -85,21 +85,21 @@ Files changed:
 
 ## Measured counters (no timings)
 
-From `test_chain` (printed on every run):
+From `test_chain` (printed on every run), after the review fixes (incremental Schreier checks). The values before the review are in "Review fixes" below.
 
-| Set | Groups | Candidates | Sifts | Insertions | Passes | Dense compositions |
-|---|---|---|---|---|---|---|
-| T1, greedy generators | 40 | 366 | 244 | 62 | 62 | 567 |
-| T2, 200 seeded random sets, `n ≤ 8`, 1–3 generators each a uniform permutation or a single random cycle | 200 | 11945 | 8865 | 572 | 572 | 40904 |
-| `Sym(12)` from `(0 1)` and the 12-cycle | 1 | 1895 | 1693 | 18 | 18 | 8228 |
+| Set | Groups | Candidates | Sifts | Insertions | Dense compositions |
+|---|---|---|---|---|---|
+| T1, greedy generators | 40 | 278 | 199 | 62 | 489 |
+| T2, 200 seeded random sets, `n ≤ 8`, 1–3 generators each a uniform permutation or a single random cycle | 200 | 7530 | 6241 | 574 | 36576 |
+| `Sym(12)` from `(0 1)` and the 12-cycle | 1 | 1001 | 935 | 18 | 8422 |
 
 Provenance DAG sizes, from `test_provenance` (its T2 set is 200 seeded sets of 1–3 uniform random permutations):
 
-| Set | Chains | Nodes | Insertions | Largest DAG | max nodes / (insertions · n) |
-|---|---|---|---|---|---|
-| T1 | 40 | 135 | 62 | 12 | 1.000 |
-| T2 (uniform) | 200 | 1879 | 563 | 45 | 1.167 |
-| `Sym(12)` and the 64-cycle | 2 | 68 | 19 | 66 | 0.306 |
+| Set | Chains | Nodes | Insertions | Largest DAG | max nodes / (insertions · n) | Max live rows in verification |
+|---|---|---|---|---|---|---|
+| T1 | 40 | 135 | 62 | 12 | 1.000 | 4 |
+| T2 (uniform) | 200 | 1955 | 561 | 55 | 1.167 | 14 |
+| `Sym(12)` and the 64-cycle | 2 | 68 | 19 | 66 | 0.306 | 6 |
 
 The test asserts two bounds:
 
@@ -118,7 +118,6 @@ The test asserts two bounds:
   - The chain stores at most two dense rows per strong generator, and there are at most `63 · depth` insertions with `depth ≤ 63` beyond a rebase prefix.
   - Levels hold `4n` words each.
   - The sizes exercised (`n ≤ 64` in tests, `n ≤ 34` end to end) make sparse support a performance question, which belongs to M5. Spec §9.3's examples (`n = 100,000`, cached transversals) are also performance budgets.
-- **`canon_bsgs_stats` passes.** Passes equal insertions by construction (policy 4), so the counter carries no extra information under these policies. It is kept for M5, where other policies may differ.
 
 ## Suspected conflicts (spec, brief, model)
 
@@ -165,11 +164,55 @@ The model has no Schreier construction, so §9.1 itself is checked only against 
 - The coset enumerator and least element with constraints (S4). Canonical `Group(H)` bytes (S4). Multi-limb orders: groups beyond `uint64` are `CAPACITY_LIMIT` until S4.
 - Randomised construction.
 - Performance work on construction, compact Schreier trees, dense transporter caches and sparse permutations (M5). The rebase copies a level's strong generators and rebuilds without reusing existing levels (reuse is optional in §9.2).
-- The tuple minimum allocates its scratch per call (a shared immutable group cannot hold per-call state) and verifies every rebased chain. That is up to `n` verified rebuilds per G-stage or leaf call. It is acceptable at the sizes of the e2e tiers, and a candidate for M5.
+- The tuple minimum allocates its scratch per call (a shared immutable group cannot hold per-call state) and rebuilds the stabiliser chain once per step whose `b` is not the current base point. That is up to `n` unverified rebuilds per G-stage or leaf call: the known S3 cost, acceptable at the sizes of the e2e tiers, and M5 work.
 - `equal` and `subgroup_of` by mutual sifting (plan WP2.5): nothing in S3 needs them.
 
 ## Timing and environment
 
-- `make check` without sanitizers: 15.9 s wall-clock. This is `review_checks.py`, the 31 Python tests with the chain backend (about 7.4 s), then the 14 tests of `test_e2e.py` again with the explicit backend (about 7.7 s). `test_chain` takes about 0.5 s; under ASan/UBSan it takes about 1.7 s.
-- The CMake sanitizer build (`-DCANON_SANITIZE=ON`) passes all 21 ctest entries. `test_e2e` takes about 56 s and `test_e2e_explicit` about 53 s.
+- `make check` without sanitizers, after the review fixes: 15.6 s wall-clock. This is `review_checks.py`, the 31 Python tests with the chain backend (about 7.4 s), then the 14 tests of `test_e2e.py` again with the explicit backend (about 7.4 s). Under ASan/UBSan `test_chain` takes about 2.2 s.
+- The CMake sanitizer build (`-DCANON_SANITIZE=ON`) passes all 21 ctest entries. `test_e2e` takes about 53 s and `test_e2e_explicit` about 51 s.
 - As in S1 and S2, the local clang has no ASan runtime, so the clang check is a plain build: `make CC=clang BUILD=build/clang`, zero warnings, all 18 C tests pass.
+
+## Review fixes
+
+The S3 review found no correctness defect in the chain and raised ten findings. All ten are fixed. The nesting check stays, as the review accepted it. Every §4 command was run again: all S1/S2 C tests, both e2e tiers under both backends (byte identical with the model), the sanitizer builds, clang and ctest pass.
+
+1. **Immutable context.** `canon_context_set_group_backend` is removed; it mutated a context that §17 declares immutable and shareable.
+   - The backend is now a creation-time option: `canon_context_options { canon_backend backend; }` and `canon_context_create_with_options(defaults, options, out)`, provisional until M4.
+   - NULL options mean the defaults (the chain). An unknown backend is `INVALID_INPUT` with `*out = NULL`.
+   - `canon_context_create` is unchanged and calls it with NULL options.
+   - The CLI, `test_search_subset.c` (the two explicit-backend assertions) and `test_chain.c` use the new call.
+2. **No verification of transient chains.** `canon_bsgs_rebase` takes a `verify` flag.
+   - `canon_group_create` still verifies the group's chain.
+   - Tests rebase with `verify = true` and check that `false` gives an unverified chain with the same order and depth.
+   - The tuple minimum passes `false`: its rebuilt chains are transient and correct by construction of the deterministic closure.
+   - The remaining cost is up to `n` rebuilds per `tuple_min` call (see "Left out"), which is M5 work.
+3. **Incremental Schreier checks.** After an insertion the orbits of the changed levels are extended (`level_extend`, existing tree kept) instead of recomputed. Each orbit position records how many of its level's generators have had their Schreier generator checked (`schreier_done`, construction bookkeeping in the level block; the verifier does not read it). The closure sifts only the unchecked pairs: (new point, any generator) and (any point, new generator).
+   - A check stays valid because old transporters do not change and the group of the levels below only grows. The correctness argument is in the comment on `closure()`.
+   - Every Schreier pair is now examined exactly once over the whole construction (candidates).
+   - `Sym(12)`: candidates 1895 → 1001, sifts 1693 → 935 (−45 %), same 18 insertions. Dense compositions 8228 → 8422: extended trees are slightly deeper than trees rebuilt from scratch.
+   - T2: candidates 11945 → 7530, sifts 8865 → 6241. T1: candidates 366 → 278, sifts 244 → 199.
+   - Every chain still agrees exactly with the explicit backend on order, membership, `tuple_min` and orbit ids. The verifier accepts every chain, and the e2e tiers are byte identical.
+   - T2 insertions moved from 572 to 574: different Schreier trees give different residues, so a few groups need one more strong generator. This does not affect any output.
+4. **Bounded provenance evaluation.** `canon_prov_eval_all`, which materialised a row for every record, is replaced by `canon_prov_check(prov, inputs, targets, expected, count, &match, &peak_rows)`.
+   - It validates every record structurally.
+   - It evaluates only the records reachable from the generator and inverse records, in node order.
+   - It frees each row at its last use through a row pool, and reports the peak.
+   - The verifier uses it. `test_provenance.c` asserts `peak ≤ 2g + 3` (g strong generators) on T1, T2, `Sym(12)` and the 64-cycle. Measured peak: 14 rows on T2, against 55 records in its largest DAG.
+5. **`contains` reports allocation failure.** The ops signature is now `canon_status contains(const canon_group *, const uint32_t *p, bool *out)`.
+   - The chain sifts a copy of `p` once in a per-call `n`-word scratch. The point-by-point evaluation and its 63-level stack bound are gone.
+   - The explicit backend is unchanged in substance.
+   - Tests call it through a helper that checks the status. No public API used `contains`.
+6. **One growth helper.** `canon_grow_array(void **data, uint32_t *cap, uint32_t count, uint32_t min_cap, size_t elem_bytes)` in `src/arena/alloc.h` grows by saturating doubling (`canon_u32_grow`), allocates through `canon_alloc_array`, copies and frees.
+   - It returns `CAPACITY_LIMIT` for `count == UINT32_MAX` and leaves everything unchanged on failure.
+   - It replaces the growth code of the permutation table, the provenance records, the level generator lists and the parallel `gen_node`/`inv_node` arrays (both are grown, then the shared capacity is committed).
+   - It also serves the level array (new entries become terminal levels) and the verifier's row pool.
+7. **Orbit ids.** The dead path-halving pass in `canon_bsgs_orbit_ids` is deleted. The comment now states the invariant: `parent[x] ≤ x`, and points are processed in increasing order, so a non-root's parent already holds its class rank.
+8. **`admits` hook.** `canon_group_ops` gains `canon_status admits(const canon_group *, const canon_capacity *)`.
+   - The explicit backend admits iff `|G| ≤ max_group_order`. The chain always admits in S3.
+   - `canon_problem_create` calls it. `canon_group_is_explicit` is deleted; tests identify backends with `canon_group_chain_of`.
+   - `test_group_explicit.c` and `test_chain.c` test both hooks.
+9. **Input de-duplication in O(k log k) comparisons.** Row indices are sorted by image array with `canon_stable_sort` and `canon_perm_lex_compare`. Equal rows are then adjacent and, by stability, in input order, so the first of each run is the first occurrence. Identities are dropped, and the kept inputs are processed in their original order (policy 1 unchanged).
+10. **No `passes` counter.** It equalled the insertion count under these policies. It is removed from `canon_bsgs_stats`, the accumulation and the printed columns.
+
+**Disagreements.** None with the findings. One judgement call, on item 3: the review asked to "sift only the Schreier generators that are new". I also kept the bookkeeping across interrupted levels. A level left in the middle by an insertion keeps the pairs it had already checked, because their elements lie in the grown lower group. Without this, the pairs before the interruption would be sifted again on the next visit.

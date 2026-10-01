@@ -8,9 +8,10 @@
  * Status of this header: slices S1, S2 and S3 (docs/slices/S1.md, S2.md, S3.md).  Implemented:
  * the version functions, the context and capacity descriptor, retain/release for every handle
  * below, groups (S3: a verified stabiliser chain by default; the S1 explicit enumeration
- * backend stays selectable), canon_group_order, subset objects, coloured directed multigraph
- * objects and the simple undirected graph wrapper (S2), problems for CANONICAL_IMAGE under profile P1 with
- * encoding CDAG-2 and order CDAG-BYTE-1, workspaces, canon_solve, the result accessors and
+ * backend stays selectable through canon_context_options), canon_group_order, subset
+ * objects, coloured directed multigraph objects and the simple undirected graph wrapper (S2),
+ * problems for CANONICAL_IMAGE under profile P1 with encoding CDAG-2 and order CDAG-BYTE-1,
+ * workspaces, canon_solve, the result accessors and
  * canon_result_encode.  Every other entry point is a stub returning CANON_UNSUPPORTED_ACTION
  * until its slice lands (canon_object_create from a stream: S5; canon_solve_batch: S8;
  * canon_result_verify_witness: S4; checkpoints: M6).  ALL argument lists are PROVISIONAL
@@ -122,7 +123,8 @@ typedef struct canon_capacity {
     uint64_t max_output_bytes; /* canonical stream bytes */
 } canon_capacity;
 
-/* spec 17: create a context holding the capacity defaults.  `defaults` may be NULL; a NULL
+/* spec 17: create an immutable context holding the capacity defaults and the default options
+ * (canon_context_create_with_options).  `defaults` may be NULL; a NULL
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26.
  * Handles created from a context copy what they need and do not keep it alive. */
@@ -140,9 +142,18 @@ typedef enum canon_backend {
     CANON_BACKEND_EXPLICIT = 1
 } canon_backend;
 
-/* Select the backend for groups created from this context afterwards (existing groups are
- * unaffected).  CANON_INVALID_INPUT for a NULL context or an unknown backend value. */
-canon_status canon_context_set_group_backend(canon_context *ctx, canon_backend backend);
+/* Creation-time context options (slice S3; PROVISIONAL until M4).  A context is immutable
+ * after creation (spec 17: "immutable contexts/registries/groups can be shared"), so every
+ * choice it carries is fixed here. */
+typedef struct canon_context_options {
+    canon_backend backend; /* group backend for canon_group_create; default CANON_BACKEND_CHAIN */
+} canon_context_options;
+
+/* spec 17: as canon_context_create, with options.  `options` may be NULL (every option at its
+ * default).  CANON_INVALID_INPUT for NULL `out` or an unknown backend value. */
+canon_status canon_context_create_with_options(const canon_capacity *defaults,
+                                               const canon_context_options *options,
+                                               canon_context **out);
 
 /* ---- Retain/release (spec 17: opaque handles; releasing a failed or partial handle is always
  * valid; release of NULL is a no-op; retain of NULL is a no-op).
@@ -170,7 +181,7 @@ void canon_result_release(canon_result *result);
  * `degree` uint32 images (flat array, p[v] = v^p).  Identity and repeated generators are
  * allowed; zero generators give the trivial group.  CANON_CAPACITY_LIMIT when degree exceeds
  * the context's max_n; CANON_INVALID_INPUT when a generator is not a bijection of
- * {0..degree-1}.  With the context's backend (canon_context_set_group_backend):
+ * {0..degree-1}.  With the context's backend (canon_context_options):
  * CANON_BACKEND_CHAIN (default, S3) builds a verified stabiliser chain (spec 9.1) and returns
  * CANON_CAPACITY_LIMIT only when |G| exceeds 2^64 - 1 (the order is exact in uint64 in this
  * release; slice S4's multi-limb orders lift this), or CANON_INTERNAL_ERROR if the independent

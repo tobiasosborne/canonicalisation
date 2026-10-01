@@ -12,6 +12,6 @@
 - `chain_backend.h`/`chain_backend.c`: `canon_group_ops` over a verified chain; the default backend of `canon_group_create`.
 - `reference.h`/`reference.c`: the direct Schreier recursion of §9.1 (ordered base `0..n-1`), for tests only.
 
-The explicit backend remains as the test oracle (`canon_group_is_explicit`). Tests: `tests/c/test_group_explicit.c`, `test_chain.c`, `test_verify.c`, `test_provenance.c`, `test_reference_schreier.c`.
+The explicit backend remains as the test oracle. Since the S3 review, `canon_group_ops.contains` reports allocation failure (`canon_status`, result in `*out`) and `admits(group, capacity)` lets each backend state its own capacity limit. Tests: `tests/c/test_group_explicit.c`, `test_chain.c`, `test_verify.c`, `test_provenance.c`, `test_reference_schreier.c`.
 
 **What may live here.** C17 sources and internal headers for this module only, no third-party code and no dependencies beyond the C standard library. Each rule implemented must cite its spec section in a comment (see `CLAUDE.md`). Golden constants must be derived from the rules, never copied (spec §20).

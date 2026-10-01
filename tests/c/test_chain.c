@@ -23,6 +23,23 @@
 
 #define MAXN 64u
 
+/* spec 9.1 membership through the ops (S3 review item 5: contains reports allocation
+ * failure) */
+static bool in(const canon_group *g, const uint32_t *p)
+{
+    bool r = false;
+    CHECK(g->ops->contains(g, p, &r) == CANON_COMPLETE);
+    return r;
+}
+
+/* membership in a bare chain */
+static bool chain_in(const canon_bsgs *c, const uint32_t *p)
+{
+    bool r = false;
+    CHECK(canon_bsgs_contains(c, p, &r) == CANON_COMPLETE);
+    return r;
+}
+
 static int eq(const uint32_t *a, const uint32_t *b, uint32_t n)
 {
     return n == 0 || memcmp(a, b, n * sizeof *a) == 0;
@@ -46,16 +63,14 @@ static void add_stats(canon_bsgs_stats *acc, const canon_bsgs_stats *s)
     acc->sifts += s->sifts;
     acc->compositions += s->compositions;
     acc->insertions += s->insertions;
-    acc->passes += s->passes;
 }
 
 static void print_stats(const char *what, uint32_t groups, const canon_bsgs_stats *s)
 {
-    printf("%s (%u groups): candidates %llu, sifts %llu, insertions %llu, passes %llu, "
+    printf("%s (%u groups): candidates %llu, sifts %llu, insertions %llu, "
            "dense compositions %llu\n",
            what, groups, (unsigned long long)s->candidates, (unsigned long long)s->sifts,
-           (unsigned long long)s->insertions, (unsigned long long)s->passes,
-           (unsigned long long)s->compositions);
+           (unsigned long long)s->insertions, (unsigned long long)s->compositions);
 }
 
 /* ---- the side of every product (spec 3: p[v] = v^p, (pq)[v] = q[p[v]]) ---- */
@@ -174,7 +189,13 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
     }
     const canon_bsgs *c = canon_group_chain_of(ch);
     CHECK(c != NULL && c->verified);
-    CHECK(canon_group_chain_of(ex) == NULL && canon_group_is_explicit(ex));
+    CHECK(canon_group_chain_of(ex) == NULL);
+    /* S3 review item 8: the chain admits every descriptor; the explicit table only up to its
+     * order */
+    canon_capacity tight = {0, 1, 0, 0};
+    CHECK(ch->ops->admits(ch, &tight) == CANON_COMPLETE);
+    CHECK(ex->ops->admits(ex, &tight) ==
+          (ex->ops->order(ex) <= 1 ? CANON_COMPLETE : CANON_CAPACITY_LIMIT));
     add_stats(stats, &c->stats);
     /* the verifier accepts the chain again from the original inputs */
     {
@@ -195,9 +216,9 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
             p[v] = v;
         }
         for (;;) {
-            bool in = ex->ops->contains(ex, p);
-            CHECK(ch->ops->contains(ch, p) == in);
-            members += in;
+            bool member = in(ex, p);
+            CHECK(in(ch, p) == member);
+            members += member;
             int i = (int)n - 2;
             while (i >= 0 && p[i] > p[i + 1]) {
                 --i;
@@ -223,9 +244,9 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
     uint32_t nonmembers = 0;
     for (uint32_t k = 0; k < 2000 && nonmembers < 200; ++k) {
         random_perm(p, n);
-        bool in = ex->ops->contains(ex, p);
-        CHECK(ch->ops->contains(ch, p) == in);
-        nonmembers += !in;
+        bool member = in(ex, p);
+        CHECK(in(ch, p) == member);
+        nonmembers += !member;
     }
 
     /* tuple_min: t and the orbit ids of G_M, on random lists of every length 0..n */
@@ -250,17 +271,23 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
         uint32_t plen = 1 + (uint32_t)(check_rng() % n);
         random_list(prefix, plen, n, 0);
         canon_bsgs rb;
-        CHECK(canon_bsgs_rebase(c, 0, prefix, plen, &rb) == CANON_COMPLETE);
+        /* with and without verification: the same chain, verified only when asked */
+        canon_bsgs quiet;
+        CHECK(canon_bsgs_rebase(c, 0, prefix, plen, false, &quiet) == CANON_COMPLETE);
+        CHECK(!quiet.verified);
+        CHECK(canon_bsgs_rebase(c, 0, prefix, plen, true, &rb) == CANON_COMPLETE);
+        CHECK(quiet.order == rb.order && quiet.depth == rb.depth);
+        canon_bsgs_free(&quiet);
         CHECK(rb.verified && rb.order == order && rb.depth >= plen);
         for (uint32_t i = 0; i < plen && i < rb.depth; ++i) {
             CHECK(rb.levels[i].base_point == prefix[i]);
         }
         for (uint32_t k = 0; k < 300; ++k) {
             random_perm(p, n);
-            CHECK(canon_bsgs_contains(&rb, p) == ex->ops->contains(ex, p));
+            CHECK(chain_in(&rb, p) == in(ex, p));
         }
         for (uint32_t k = 0; k < count; ++k) {
-            CHECK(canon_bsgs_contains(&rb, gens + (size_t)k * n));
+            CHECK(chain_in(&rb, gens + (size_t)k * n));
         }
         canon_bsgs_free(&rb);
     }
@@ -366,7 +393,7 @@ static void sym12(void)
             canon_perm_compose(w, gens + (check_rng() % 2) * n, tmp, n);
             memcpy(w, tmp, sizeof w);
         }
-        CHECK(g->ops->contains(g, w));
+        CHECK(in(g, w));
     }
     /* tuple_min of an increasing full list is the identity; of any full list, L^t = (0..11) */
     uint32_t L[12], t[12], orb[12];
@@ -434,13 +461,13 @@ static void cycle64(void)
         w[v] = v;
     }
     for (uint32_t k = 0; k < n; ++k) {
-        CHECK(g->ops->contains(g, w));
+        CHECK(in(g, w));
         canon_perm_compose(w, cyc, tmp, n);
         memcpy(w, tmp, sizeof w);
     }
     w[0] = 1;
     w[1] = 0; /* a transposition (w was the identity again) */
-    CHECK(!g->ops->contains(g, w));
+    CHECK(!in(g, w));
     const uint32_t L[1] = {5};
     uint32_t orb[64];
     CHECK(g->ops->tuple_min(g, L, 1, t, orb) == CANON_COMPLETE);
@@ -478,16 +505,29 @@ static void capacity_and_api(void)
     /* canon_group_order and the backend option */
     uint64_t order = 0;
     CHECK(canon_group_order(NULL, &order) == CANON_INVALID_INPUT);
-    CHECK(canon_context_set_group_backend(NULL, CANON_BACKEND_CHAIN) == CANON_INVALID_INPUT);
-    CHECK(canon_context_set_group_backend(ctx, (canon_backend)7) == CANON_INVALID_INPUT);
+    /* the backend is a creation-time option of an immutable context (S3 review item 1) */
+    canon_context *ectx = (canon_context *)&order;
+    canon_context_options opt = {(canon_backend)7};
+    CHECK(canon_context_create_with_options(NULL, &opt, &ectx) == CANON_INVALID_INPUT);
+    CHECK(ectx == NULL);
+    CHECK(canon_context_create_with_options(NULL, &opt, NULL) == CANON_INVALID_INPUT);
+    opt.backend = CANON_BACKEND_EXPLICIT;
+    CHECK(canon_context_create_with_options(NULL, &opt, &ectx) == CANON_COMPLETE);
     const uint32_t s3[6] = {1, 0, 2, 1, 2, 0};
     canon_group *a = NULL, *b = NULL;
     CHECK(canon_group_create(ctx, 3, s3, 2, &a) == CANON_COMPLETE);
     CHECK(canon_group_chain_of(a) != NULL);
     CHECK(canon_group_order(a, NULL) == CANON_INVALID_INPUT);
-    CHECK(canon_context_set_group_backend(ctx, CANON_BACKEND_EXPLICIT) == CANON_COMPLETE);
-    CHECK(canon_group_create(ctx, 3, s3, 2, &b) == CANON_COMPLETE);
-    CHECK(canon_group_is_explicit(b));
+    CHECK(canon_group_create(ectx, 3, s3, 2, &b) == CANON_COMPLETE);
+    CHECK(canon_group_chain_of(b) == NULL); /* the explicit backend */
+    canon_context_release(ectx);
+    /* NULL options are the defaults: the chain */
+    CHECK(canon_context_create_with_options(NULL, NULL, &ectx) == CANON_COMPLETE);
+    canon_group *d = NULL;
+    CHECK(canon_group_create(ectx, 3, s3, 2, &d) == CANON_COMPLETE);
+    CHECK(canon_group_chain_of(d) != NULL);
+    canon_group_release(d);
+    canon_context_release(ectx);
     uint64_t oa = 0, ob = 0;
     CHECK(canon_group_order(a, &oa) == CANON_COMPLETE && canon_group_order(b, &ob) ==
                                                             CANON_COMPLETE);
@@ -496,13 +536,12 @@ static void capacity_and_api(void)
     canon_group_release(b);
     /* invalid generators and degree 0 */
     const uint32_t bad[2] = {1, 1};
-    CHECK(canon_context_set_group_backend(ctx, CANON_BACKEND_CHAIN) == CANON_COMPLETE);
     CHECK(canon_group_create(ctx, 2, bad, 1, &a) == CANON_INVALID_INPUT && a == NULL);
     CHECK(canon_group_create(ctx, 0, NULL, 3, &a) == CANON_COMPLETE);
     CHECK(canon_group_order(a, &oa) == CANON_COMPLETE && oa == 1);
     uint32_t dummy = 0;
     CHECK(a->ops->tuple_min(a, NULL, 0, &dummy, &dummy) == CANON_COMPLETE);
-    CHECK(a->ops->contains(a, NULL));
+    CHECK(in(a, NULL));
     canon_group_release(a);
     canon_context_release(ctx);
 }

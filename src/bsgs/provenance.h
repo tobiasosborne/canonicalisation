@@ -17,6 +17,7 @@
 #ifndef CANON_SRC_BSGS_PROVENANCE_H
 #define CANON_SRC_BSGS_PROVENANCE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "canon/canon.h"
@@ -53,13 +54,17 @@ canon_status canon_prov_inverse(canon_provenance *p, uint32_t node, uint32_t *id
  * node is added (both NONE gives NONE). */
 canon_status canon_prov_product(canon_provenance *p, uint32_t j, uint32_t k, uint32_t *id);
 
-/* spec 9.1 "each generator's derivation from the original input": evaluate every node, in
- * node order, into `values` (count * inputs->n entries, row i = the array denoted by node i),
- * reading INPUT entries from `inputs`.  Returns CANON_INVALID_INPUT if a node is malformed
- * (unknown kind, an operand that is not an earlier node, or an input index out of range), so
- * that a corrupted record is reported and never read out of bounds.  `values` must hold
- * count * n entries (the caller checks that product). */
-canon_status canon_prov_eval_all(const canon_provenance *p, const canon_perm_table *inputs,
-                                 uint32_t *values);
+/* spec 9.1 "each generator's derivation from the original input": re-derive the arrays of
+ * the `count` nodes targets[k] and compare each with expected[k] (inputs->n entries);
+ * *match = all equal.  Only the nodes reachable from the targets are evaluated, in node order
+ * (a topological order), reading INPUT entries from `inputs`, and each row is released after
+ * its last use (S3 review item 4); *peak_rows receives the largest number of rows live at once.
+ * Returns CANON_INVALID_INPUT if any record is malformed (unknown kind, an operand that is not
+ * an earlier node, an input index out of range, a target that is not a node, or a non-bijective
+ * input or operand), so a corrupted record is reported and never read out of bounds;
+ * CANON_CAPACITY_LIMIT / CANON_RESOURCE_LIMIT when scratch cannot be allocated. */
+canon_status canon_prov_check(const canon_provenance *p, const canon_perm_table *inputs,
+                              const uint32_t *targets, const uint32_t *const *expected,
+                              uint32_t count, bool *match, uint32_t *peak_rows);
 
 #endif /* CANON_SRC_BSGS_PROVENANCE_H */
