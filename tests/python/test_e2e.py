@@ -71,6 +71,12 @@ class T1SubsetTier(unittest.TestCase):
                 for mask in range(1 << n):
                     atoms = frozenset(a for a in range(n) if mask >> a & 1)
                     trace, data, witness = rc.p1(n, group, "subset", atoms)
+                    # spec 3 deterministic witness: the least g in G with x^g = c.  By tree
+                    # equivariance (spec 7.2) the leaves attaining the least key carry exactly
+                    # the coset Aut_G(x) t, so the least leaf witness reported in S1 is it.
+                    image = rc.act_object("subset", atoms, witness)
+                    self.assertEqual(witness, min(g for g in group
+                                                  if rc.act_object("subset", atoms, g) == image))
                     expected = ["0001", "COMPLETE", trace.hex(), data.hex(),
                                 witness_field(n, witness)]
                     records = {}

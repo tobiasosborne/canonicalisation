@@ -205,8 +205,12 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * *degree = 0 if not produced.  For degree 0 a produced witness is a non-NULL pointer with
  * *degree = 0.  S1 reports the least LEAF witness attaining the minimal (trace, bytes) key, as
  * spec 7.4's preamble prescribes for the golden cases ("minimise among the witnesses that
- * actually attain that key").  It is not yet the spec 3 deterministic witness (least image
- * array over all of Aut_G(x) t), which needs the complete stabiliser (slice S4). */
+ * actually attain that key").  S1 does not compute Aut_G(x), which the spec 3 deterministic
+ * witness (least image array over all g with x^g = c, i.e. over Aut_G(x) t) is defined by.
+ * For the UNPRUNED tree the two coincide: by tree equivariance (spec 7.2, t_(L^a) = a^-1 t_L)
+ * the leaves attaining the least key carry exactly the coset Aut_G(x) t, and this is checked
+ * over the whole T1 tier by tests/python/test_e2e.py.  Once pruning lands (S7) the leaf set
+ * shrinks and the deterministic witness needs the complete stabiliser (S4). */
 const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degree);
 /* spec 4.3: the canonical CDAG-2 bytes, only when image_canonical && encoding_complete; else
  * NULL and *length = 0. */
