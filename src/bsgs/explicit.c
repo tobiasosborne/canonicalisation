@@ -19,6 +19,9 @@
 typedef struct explicit_group {
     uint64_t order;  /* number of rows */
     uint32_t *table; /* order * degree entries, rows sorted lexicographically */
+    struct explicit_group *lift; /* S6, spec 8.4: the lifted group's table on degree + 2
+                                    points for a signed group (its own lift is NULL); NULL
+                                    for an unsigned group */
 } explicit_group;
 
 static const uint32_t *row_of(const explicit_group *e, uint32_t degree, size_t i)
@@ -110,6 +113,7 @@ static void explicit_destroy(void *impl)
 {
     explicit_group *e = impl;
     if (e != NULL) {
+        explicit_destroy(e->lift);
         free(e->table);
         free(e);
     }
@@ -122,13 +126,12 @@ static uint64_t explicit_order(const canon_group *group)
 }
 
 /* spec 9.1: exact membership, here by binary search in the sorted table (no allocation). */
-static bool table_contains(const canon_group *group, const uint32_t *p)
+static bool table_contains(const explicit_group *e, uint32_t degree, const uint32_t *p)
 {
-    const explicit_group *e = group->impl;
     size_t lo = 0, hi = (size_t)e->order;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
-        int c = canon_perm_lex_compare(row_of(e, group->degree, mid), p, group->degree);
+        int c = canon_perm_lex_compare(row_of(e, degree, mid), p, degree);
         if (c == 0) {
             return true;
         }
@@ -143,7 +146,7 @@ static bool table_contains(const canon_group *group, const uint32_t *p)
 
 static canon_status explicit_contains(const canon_group *group, const uint32_t *p, bool *out)
 {
-    *out = table_contains(group, p);
+    *out = table_contains(group->impl, group->degree, p);
     return CANON_COMPLETE;
 }
 
@@ -343,13 +346,125 @@ static canon_status explicit_enumerate(const canon_group *group, canon_coset_vis
     return st;
 }
 
-static const canon_group_ops explicit_ops = {explicit_destroy,   explicit_order,
-                                             explicit_contains,  explicit_tuple_min,
-                                             explicit_admits,    explicit_enumerate};
+/* Sort the `count` rows of `table` (row_words words each, `degree` of them used)
+ * lexicographically (S1 brief 4.2), so table order is image-array order.  On success *table is
+ * replaced by the sorted copy. */
+static canon_status sort_rows(uint32_t **table, size_t count, uint32_t degree, size_t row_words)
+{
+    if (count > SIZE_MAX / 16) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    canon_status st = CANON_COMPLETE;
+    size_t *idx = canon_alloc_array(count, sizeof *idx, &st);
+    size_t *scratch = canon_alloc_array(count, sizeof *scratch, &st);
+    uint32_t *sorted = idx != NULL && scratch != NULL
+                           ? canon_alloc_array(count * row_words, sizeof *sorted, &st)
+                           : NULL;
+    if (sorted != NULL) {
+        for (size_t i = 0; i < count; ++i) {
+            idx[i] = i;
+        }
+        row_order order = {*table, degree};
+        canon_stable_sort(idx, count, sizeof *idx, scratch, row_cmp, &order);
+        for (size_t i = 0; i < count && degree > 0; ++i) {
+            memcpy(sorted + i * row_words, *table + idx[i] * row_words, row_words * sizeof *sorted);
+        }
+        free(*table);
+        *table = sorted;
+    }
+    free(idx);
+    free(scratch);
+    return st;
+}
 
-canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
-                                         size_t generator_count, uint64_t max_order,
-                                         canon_group **out)
+/* spec 8.4 (slice S6): chi(g) by membership of the two extensions of g in the lift's sorted
+ * table (src/bsgs/group.h contract), by binary search, as for contains. */
+static canon_status explicit_character(const canon_group *group, const uint32_t *g,
+                                       uint32_t *scratch, int *sign)
+{
+    *sign = 0;
+    const explicit_group *e = group->impl;
+    if (e->lift == NULL) {
+        return CANON_UNSUPPORTED_ACTION; /* an unsigned group has no character */
+    }
+    const uint32_t n = group->degree, m = n + 2u; /* fits: checked at creation (spec 11.1) */
+    canon_status st = CANON_COMPLETE;
+    uint32_t *own = NULL;
+    if (scratch == NULL) {
+        scratch = own = canon_alloc_array(m, sizeof *own, &st);
+        if (own == NULL) {
+            return st;
+        }
+    }
+    st = CANON_INVALID_INPUT; /* neither extension is in the lift: g is not in G */
+    for (int s = 1; s >= -1; s -= 2) {
+        canon_group_lift_element(g, n, s, scratch);
+        if (table_contains(e->lift, m, scratch)) {
+            *sign = s;
+            st = CANON_COMPLETE;
+            break;
+        }
+    }
+    free(own);
+    return st;
+}
+
+static canon_status explicit_conjugate(const canon_group *group, const uint32_t *g,
+                                       canon_group **out);
+
+static const canon_group_ops explicit_ops = {
+    explicit_destroy, explicit_order,     explicit_contains,  explicit_tuple_min,
+    explicit_admits,  explicit_enumerate, explicit_character, explicit_conjugate};
+
+/* spec 3.1 (slice S6): g^-1 G g as a new table: every row h becomes q with q[g[v]] = g[h[v]]
+ * (spec 2.1 "g^-1 p g": the cycles of h relabelled through g), and the rows are sorted again.
+ * Conjugation is a bijection of Sym(n), so the rows stay distinct and the order is |G|.  The
+ * result is unsigned. */
+static canon_status explicit_conjugate(const canon_group *group, const uint32_t *g,
+                                       canon_group **out)
+{
+    *out = NULL;
+    const explicit_group *e = group->impl;
+    const uint32_t n = group->degree;
+    const size_t row_words = n > 0 ? (size_t)n : 1;
+    canon_status st = CANON_COMPLETE;
+    size_t words = 0;
+    if (!canon_size_mul((size_t)e->order, row_words, &words)) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+    }
+    explicit_group *c = canon_alloc_array(1, sizeof *c, &st);
+    uint32_t *table = canon_alloc_array(words, sizeof *table, &st);
+    if (c == NULL || table == NULL) {
+        free(c);
+        free(table);
+        return st;
+    }
+    for (size_t i = 0; i < (size_t)e->order; ++i) {
+        const uint32_t *h = row_of(e, n, i);
+        uint32_t *q = table + i * row_words;
+        for (uint32_t v = 0; v < n; ++v) {
+            q[g[v]] = g[h[v]];
+        }
+    }
+    st = sort_rows(&table, (size_t)e->order, n, row_words);
+    if (st != CANON_COMPLETE) {
+        free(c);
+        free(table);
+        return st;
+    }
+    c->order = e->order;
+    c->table = table;
+    c->lift = NULL;
+    st = canon_group_alloc(&explicit_ops, n, c, out); /* spec 17: count from canon_group_alloc */
+    if (st != CANON_COMPLETE) {
+        explicit_destroy(c);
+    }
+    return st;
+}
+
+/* Close <generators> into a sorted table (the S1 construction), bounded by max_order. */
+static canon_status build_table(uint32_t degree, const uint32_t *generators, size_t generator_count,
+                                uint64_t max_order, explicit_group **out)
 {
     *out = NULL;
     if (generator_count > 0 && degree > 0 && generators == NULL) {
@@ -447,33 +562,9 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
     tmp = NULL;
 
     /* Sort the rows lexicographically (S1 brief 4.2), so table order is image-array order. */
-    {
-        if (count > SIZE_MAX / 16) {
-            st = CANON_CAPACITY_LIMIT;
-            goto fail;
-        }
-        size_t *idx = malloc(count * sizeof *idx);
-        size_t *scratch = malloc(count * sizeof *scratch);
-        uint32_t *sorted = malloc(count * row_words * sizeof *sorted);
-        if (idx == NULL || scratch == NULL || sorted == NULL) {
-            free(idx);
-            free(scratch);
-            free(sorted);
-            st = CANON_RESOURCE_LIMIT;
-            goto fail;
-        }
-        for (size_t i = 0; i < count; ++i) {
-            idx[i] = i;
-        }
-        row_order order = {table, degree};
-        canon_stable_sort(idx, count, sizeof *idx, scratch, row_cmp, &order);
-        for (size_t i = 0; i < count && degree > 0; ++i) {
-            memcpy(sorted + i * row_words, table + idx[i] * row_words, row_words * sizeof *sorted);
-        }
-        free(idx);
-        free(scratch);
-        free(table);
-        table = sorted;
+    st = sort_rows(&table, count, degree, row_words);
+    if (st != CANON_COMPLETE) {
+        goto fail;
     }
 
     explicit_group *e = malloc(sizeof *e);
@@ -483,17 +574,86 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
     }
     e->order = (uint64_t)count;
     e->table = table;
-    /* spec 17: the handle and its reference count come from canon_group_alloc. */
-    st = canon_group_alloc(&explicit_ops, degree, e, out);
-    if (st != CANON_COMPLETE) {
-        explicit_destroy(e); /* frees table too */
-        return st;
-    }
+    e->lift = NULL;
+    *out = e;
     return CANON_COMPLETE;
 
 fail:
     free(set.slots);
     free(tmp);
     free(table);
+    return st;
+}
+
+canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
+                                         size_t generator_count, uint64_t max_order,
+                                         canon_group **out)
+{
+    *out = NULL;
+    explicit_group *e = NULL;
+    canon_status st = build_table(degree, generators, generator_count, max_order, &e);
+    if (st == CANON_COMPLETE) {
+        /* spec 17: the handle and its reference count come from canon_group_alloc. */
+        st = canon_group_alloc(&explicit_ops, degree, e, out);
+        if (st != CANON_COMPLETE) {
+            explicit_destroy(e); /* frees table too */
+        }
+    }
+    return st;
+}
+
+canon_status canon_group_explicit_create_signed(uint32_t degree, const uint32_t *generators,
+                                                size_t generator_count, const int8_t *signs,
+                                                uint64_t max_order, canon_group **out)
+{
+    *out = NULL;
+    if (generator_count > 0 && signs == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    if (degree > UINT32_MAX - 2u) {
+        /* spec 11.1: "n+2 <= 2^32-1, checked before constructing its two sign points" */
+        return CANON_CAPACITY_LIMIT;
+    }
+    explicit_group *e = NULL;
+    canon_status st = build_table(degree, generators, generator_count, max_order, &e);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    /* spec 8.4: the lifted group on Omega u {+,-}.  Its projection onto G (restriction to
+     * Omega) is onto with kernel K, the lift's elements fixing every point of Omega, so
+     * |lift| = |G| |K| >= |G|, and chi exists iff K = 1 iff |lift| = |G|.  The closure is
+     * therefore bounded by |G|: if it would exceed |G| rows (CAPACITY_LIMIT of the bounded
+     * closure) the orders differ and the signs are inconsistent; otherwise |lift| = |G|.  So
+     * the lift never needs more rows than G.  So that CAPACITY_LIMIT of that closure can only
+     * mean "more than |G| rows", every size it can reach (at most 2|G| rows of degree + 2 words
+     * and a hash set of at most 4|G| slots) is checked to fit first. */
+    size_t bytes = 0;
+    if (!canon_size_mul3((size_t)e->order, (size_t)degree + 2u, 4u * sizeof(uint32_t), &bytes) ||
+        !canon_size_mul3((size_t)e->order, 4u, sizeof(size_t), &bytes)) {
+        explicit_destroy(e);
+        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+    }
+    uint32_t *lifted = canon_group_lift_generators(degree, generators, generator_count, signs, &st);
+    if (lifted != NULL) {
+        st = build_table(degree + 2u, lifted, generator_count, e->order, &e->lift);
+        if (st == CANON_CAPACITY_LIMIT) {
+            st = CANON_INVALID_INPUT; /* spec 8.4: "Reject inconsistent signs" */
+        } else if (st == CANON_COMPLETE && e->lift->order != e->order) {
+            st = CANON_INTERNAL_ERROR; /* |lift| >= |G| and the closure stopped at |G| */
+        }
+        free(lifted);
+    }
+    if (st == CANON_COMPLETE) {
+        st = canon_group_alloc(&explicit_ops, degree, e, out);
+        if (st == CANON_COMPLETE) {
+            e = NULL; /* owned by the handle */
+            st = canon_group_set_signs(*out, generators, generator_count, signs);
+            if (st != CANON_COMPLETE) {
+                canon_group_unshare(*out);
+                *out = NULL;
+            }
+        }
+    }
+    explicit_destroy(e);
     return st;
 }

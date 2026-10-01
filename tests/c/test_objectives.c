@@ -49,7 +49,7 @@ static canon_result *solve(const canon_group *g, const canon_object *x, const ca
     const canon_profile profile =
         objective == CANON_OBJECTIVE_CANONICAL_IMAGE ? CANON_PROFILE_P1 : CANON_PROFILE_NO_TREE;
     canon_capacity cap = {0, 0, max_nodes, 0, 0, 0, 0};
-    canon_problem_options opts = {mode};
+    canon_problem_options opts = {mode, NULL};
     canon_problem *p = NULL;
     canon_workspace *ws = NULL;
     canon_result *r = NULL;
@@ -375,7 +375,8 @@ static void validation(void)
     CHECK(canon_object_create_graph(ctx_chain, 2, NULL, NULL, NULL, 0, &graph) == CANON_COMPLETE);
     static int sentinel;
     canon_problem *p = (canon_problem *)(void *)&sentinel; /* must become NULL */
-    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC}, bad = {(canon_witness_mode)7};
+    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL},
+                                bad = {(canon_witness_mode)7, NULL};
 #define CREATE(group_, x_, y_, obj_, prof_, ord_, opts_)                                           \
     canon_problem_create_with_options(ctx_chain, group_, x_, y_, obj_, prof_,                      \
                                       CANON_ENCODING_CDAG_2, ord_, NULL, opts_, &p)

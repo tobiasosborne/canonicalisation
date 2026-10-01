@@ -5,7 +5,9 @@
  * same operations.  This header deliberately contains no backend details.
  *
  * Slice S3 changed `contains` to report allocation failure and added `admits` (review items 5
- * and 8).  Slice S4 adds `enumerate` (spec 8.1).
+ * and 8).  Slice S4 adds `enumerate` (spec 8.1).  Slice S6 adds `character` (spec 8.4: chi(g)
+ * of a signed group, validated by the lifted group) and `conjugate` (spec 3.1: rho^-1 G rho for
+ * the labeling objective), and the signed generators of a signed group (canon_group_signs).
  *
  * Convention (spec section 3): permutations are dense image arrays p[v] = v^p of length
  * `degree`; lists act on the right, L^g = (g[L[0]], g[L[1]], ...).
@@ -20,6 +22,7 @@
 #include "arena/refcount.h"
 #include "canon/canon.h"
 #include "coset/coset.h"
+#include "perm/perm.h"
 
 typedef struct canon_group_ops {
     /* Free the backend state `impl` (called once, when the last reference is released; the
@@ -55,7 +58,36 @@ typedef struct canon_group_ops {
      * Both visit the same nodes in the same order, so they consume the same sequence and
      * reach CAPACITY_LIMIT at the same point. */
     canon_status (*enumerate)(const canon_group *group, canon_coset_visitor *visitor);
+    /* spec 8.4 (slice S6): *sign = chi(g) in {-1, +1} for a member g of a signed group, read
+     * from the backend's lifted group L on degree + 2 points (canon_group_lift_element): chi(g)
+     * = +1 iff the lift of g with sign +1 (both markers fixed) is in L, -1 iff the lift with
+     * sign -1 (markers swapped) is.  L projects onto G, and the elements of L over g are
+     * exactly these two extensions, so g is in G iff one of them is in L; by the validation at
+     * creation (|L| = |G|) at most one is.  g must be a bijection of {0..degree-1} (the caller
+     * validates).  `scratch` is NULL (per-call allocation) or canon_group_character_words(
+     * degree) words owned by the caller (no allocation; the hot path of the signed consumer).
+     * CANON_UNSUPPORTED_ACTION for an unsigned group, CANON_INVALID_INPUT if g is not in G
+     * (*sign = 0 on every failure), CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT when scratch
+     * cannot be allocated. */
+    canon_status (*character)(const canon_group *group, const uint32_t *g, uint32_t *scratch,
+                              int *sign);
+    /* spec 3.1 (slice S6): *out = a new unsigned group handle of the same backend for
+     * g^-1 G g, the conjugate by the permutation g of {0..degree-1}: as a set,
+     * {g^-1 h g : h in G}, where (g^-1 h g)[g[v]] = g[h[v]] (spec 3: g^-1 acts first).  The
+     * chain backend relabels its verified chain (canon_bsgs_conjugate, no rebuild); the
+     * explicit backend conjugates and re-sorts its element table.  On failure *out is NULL;
+     * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
+    canon_status (*conjugate)(const canon_group *group, const uint32_t *g, canon_group **out);
 } canon_group_ops;
+
+/* spec 8.4 (slice S6): the generators of a signed group as given and their signs chi(g_i), kept
+ * by the handle for the generator fast path of spec 7.3 ("Signed mode in this case tests chi on
+ * generators").  Shared by both backends; each backend keeps its own lift for `character`. */
+typedef struct canon_group_signs {
+    canon_perm_table gens; /* the input generators in input order (degree n; rows not read for
+                              n = 0) */
+    int8_t *signs;         /* gens.count entries, each -1 or +1 */
+} canon_group_signs;
 
 /* The opaque public handle (spec section 17).  Create it only with canon_group_alloc, which
  * establishes the reference-count invariant (one reference, owned by the creator); the fields
@@ -66,6 +98,8 @@ struct canon_group {
     const canon_group_ops *ops;
     uint32_t degree;
     void *impl;                   /* backend state, freed by ops->destroy */
+    canon_group_signs *signs;     /* S6: NULL for an unsigned group; owned, freed with the
+                                     handle (canon_group_set_signs) */
     canon_refcount *refs;         /* = &refs_storage */
     void *block;                  /* = this handle's allocation */
     canon_refcount refs_storage;  /* the count itself; access only through refs */
@@ -76,6 +110,34 @@ struct canon_group {
  * it). */
 canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void *impl,
                                canon_group **out);
+
+/* spec 8.4 (slice S6): give a handle that was just allocated (and not yet shared) its signed
+ * generators: copies the `count` generators of degree `degree` (flat image arrays, not read for
+ * degree 0) and their signs.  On failure the handle is unchanged (signs NULL).
+ * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
+canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, size_t count,
+                                   const int8_t *signs);
+
+/* spec 8.4 (slice S6): the lift of g with sign s: "each generator acts on Omega as given and
+ * swaps the last two points iff its sign is -1".  out (n + 2 entries) receives g on {0..n-1}
+ * and, on the markers n (+) and n + 1 (-), the identity for s = +1 or the swap for s = -1.
+ * Products: lift(g, s) lift(h, t) = lift(gh, st) ("swaps compose by sign multiplication"), so
+ * the map is a homomorphism wherever chi is.  n + 2 must fit uint32 (the caller checks, spec
+ * 11.1). */
+void canon_group_lift_element(const uint32_t *g, uint32_t n, int sign, uint32_t *out);
+
+/* spec 8.4, 11.1 (slice S6): the lifted generators of a signed group as one flat array of
+ * count * (n + 2) images (canon_group_lift_element of generator i with sign signs[i]; for
+ * n = 0 the generators are not read).  Returns the array (free with free()), or NULL with
+ * *status set: CANON_CAPACITY_LIMIT when n + 2 does not fit uint32 ("the initial
+ * lifted-character validator additionally requires n+2 <= 2^32-1, checked before constructing
+ * its two sign points") or a size does not fit, CANON_RESOURCE_LIMIT on allocation failure. */
+uint32_t *canon_group_lift_generators(uint32_t n, const uint32_t *gens, size_t count,
+                                      const int8_t *signs, canon_status *status);
+
+/* Words of caller scratch that `character` accepts for a group of degree n: 2 (n + 2) (the
+ * lifted element and the sift residue).  False if the count does not fit size_t. */
+bool canon_group_character_words(uint32_t n, size_t *words);
 
 /* Add a reference through a const handle (spec 17: immutable groups can be shared). */
 void canon_group_share(const canon_group *group);

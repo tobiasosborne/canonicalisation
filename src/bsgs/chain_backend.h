@@ -24,6 +24,18 @@
 canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generators,
                                       size_t generator_count, canon_group **out);
 
+/* spec 8.4 (slice S6): as canon_group_chain_create, for a signed group: signs[i] in {-1, +1} is
+ * chi(generators[i]) (the caller checks the values; signs may be NULL only when generator_count
+ * is 0).  The signs are validated by the lifted group on degree + 2 points, kept as a second
+ * verified chain for `character`: CANON_INVALID_INPUT unless |lift| = |G| (spec 8.4 "Reject
+ * inconsistent signs"); CANON_CAPACITY_LIMIT when degree + 2 does not fit uint32 (spec 11.1,
+ * checked before anything else is built) or the lift's order exceeds uint64 (which, |G| fitting,
+ * happens only for inconsistent signs with |G| >= 2^63: the count-bit limit decides first).
+ * The handle keeps the generators and signs (canon_group_signs). */
+canon_status canon_group_chain_create_signed(uint32_t degree, const uint32_t *generators,
+                                             size_t generator_count, const int8_t *signs,
+                                             canon_group **out);
+
 /* The verified chain behind a group created by canon_group_chain_create, or NULL for a group
  * of another backend (tests and diagnostics). */
 const canon_bsgs *canon_group_chain_of(const canon_group *group);

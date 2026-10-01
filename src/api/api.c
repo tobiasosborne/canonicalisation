@@ -1,9 +1,10 @@
-/* Slice S1-S5 public entry points (spec sections 3, 3.2, 4.1, 4.2, 8, 11.1, 17): context,
+/* Slice S1-S6 public entry points (spec sections 3, 3.1, 3.2, 4.1, 4.2, 8, 11.1, 17): context,
  * capacity descriptor and options (S3: the group backend), retain/release handles, groups and
  * their order (S3), subset and graph objects (S2), objects imported from CDAG-2 streams and
  * the stream validator (S5), problems with targets and options (S4), workspaces, solve for the
  * canonical image and (S4) the enumeration objectives, results, result_encode and
- * result_verify_witness (S4).  Entry points of later slices remain in src/api/stubs.c. */
+ * result_verify_witness (S4), signed groups and the labeling-coset and signed objectives (S6).
+ * Entry points of later slices remain in src/api/stubs.c. */
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,6 +21,7 @@
 #include "encoding/group_stream.h"
 #include "encoding/simple_upper.h"
 #include "object/subset.h"
+#include "perm/perm.h"
 #include "search/objectives.h"
 #include "search/p1_tree.h"
 
@@ -60,6 +62,7 @@ struct canon_problem {
     const canon_group *group;   /* shared, retained */
     const canon_object *object; /* shared, retained */
     const canon_object *target; /* S4: transporter target, shared, retained; else NULL */
+    uint32_t *rho;              /* S6: owned copy of the labeling rho (labeling only); else NULL */
     canon_witness_mode witness_mode; /* S4 */
     canon_objective objective;
     canon_profile profile;
@@ -88,6 +91,9 @@ struct canon_result {
     size_t group_len;
     uint8_t *key; /* S4: SIMPLE-UPPER-1 key of the minimum; NULL if none */
     size_t key_len;
+    uint32_t *labeling; /* S6: lambda = rho t (one spare entry for n = 0); NULL if none */
+    uint32_t *rho;      /* S6: the problem's rho, for canon_result_verify_witness; else NULL */
+    int sign;           /* S6: +1/-1 nonzero, 0 certified zero (SIGNED_CANONICAL_IMAGE) */
     canon_objective objective;
     /* S4, for canon_result_verify_witness: the problem's immutable inputs, retained (owned
      * references, not borrowed pointers); NULL in a status-only result. */
@@ -212,6 +218,7 @@ void canon_problem_release(canon_problem *problem)
         canon_group_unshare(problem->group);
         object_unshare(problem->object);
         object_unshare(problem->target);
+        free(problem->rho);
         free(problem);
     }
 }
@@ -247,6 +254,8 @@ void canon_result_release(canon_result *result)
         free(result->witness);
         free(result->group_bytes);
         free(result->key);
+        free(result->labeling);
+        free(result->rho);
         canon_group_unshare(result->group);
         object_unshare(result->object);
         object_unshare(result->target);
@@ -276,6 +285,61 @@ canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint3
     }
     /* S3 brief 2.5: the chain is limited only by its uint64 order, not by max_group_order. */
     return canon_group_chain_create(degree, generators, generator_count, out);
+}
+
+canon_status canon_group_create_signed(canon_context *ctx, uint32_t degree,
+                                       const uint32_t *generators, size_t generator_count,
+                                       const int8_t *signs, canon_group **out)
+{
+    if (out == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *out = NULL;
+    if (ctx == NULL ||
+        (generator_count > 0 && ((degree > 0 && generators == NULL) || signs == NULL))) {
+        return CANON_INVALID_INPUT;
+    }
+    if (degree > ctx->defaults.max_n) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: degree limit of the descriptor */
+    }
+    if (degree > UINT32_MAX - 2u) {
+        /* spec 11.1: "The initial lifted-character validator additionally requires
+         * n+2 <= 2^32-1, checked before constructing its two sign points" */
+        return CANON_CAPACITY_LIMIT;
+    }
+    for (size_t i = 0; i < generator_count; ++i) {
+        if (signs[i] != 1 && signs[i] != -1) {
+            return CANON_INVALID_INPUT; /* spec 8.4: chi : G -> {+-1} */
+        }
+    }
+    /* spec 8.4: the backend validates the signs by the lifted group and keeps it */
+    if (ctx->backend == CANON_BACKEND_EXPLICIT) {
+        return canon_group_explicit_create_signed(degree, generators, generator_count, signs,
+                                                  ctx->defaults.max_group_order, out);
+    }
+    return canon_group_chain_create_signed(degree, generators, generator_count, signs, out);
+}
+
+canon_status canon_group_character(const canon_group *group, const uint32_t *g, int *sign_out)
+{
+    if (sign_out != NULL) {
+        *sign_out = 0;
+    }
+    if (group == NULL || g == NULL || sign_out == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    if (group->signs == NULL) {
+        return CANON_UNSUPPORTED_ACTION; /* spec 8.4: an unsigned group has no character */
+    }
+    /* a member of G is a bijection of the domain; validate before any group operation */
+    const int bijective = canon_perm_validate(g, group->degree);
+    if (bijective < 0) {
+        return CANON_RESOURCE_LIMIT;
+    }
+    if (bijective == 0) {
+        return CANON_INVALID_INPUT;
+    }
+    return group->ops->character(group, g, NULL, sign_out); /* INVALID_INPUT if g is not in G */
 }
 
 canon_status canon_group_order(const canon_group *group, uint64_t *out)
@@ -463,8 +527,15 @@ static bool combination_supported(canon_objective objective, canon_profile profi
         /* no deterministic witness for these (S4 brief 2; canon.h) */
         return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1 &&
                mode == CANON_WITNESS_ANY;
+    case CANON_OBJECTIVE_CANONICAL_LABELING_COSET:
+    case CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE:
+        /* S6: spec 4.3 "canonical and signed image objectives use P1"; spec 8.2 "Canonical
+         * labeling coset: Run §7 on target coordinates".  The complete coset A lambda and the
+         * nonzero route already carry A; a deterministic witness is not offered (S6 notes). */
+        return profile == CANON_PROFILE_P1 && order == CANON_ORDER_CDAG_BYTE_1 &&
+               mode == CANON_WITNESS_ANY;
     default:
-        return false; /* labeling cosets and signed images: S6; constraints: later */
+        return false; /* constraints: later */
     }
 }
 
@@ -507,8 +578,23 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     if (!combination_supported(objective, profile, encoding, order, mode)) {
         return CANON_UNSUPPORTED_ACTION;
     }
+    /* spec 8.4: the signed objective needs a character; an unsigned group has none */
+    if (objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE && group->signs == NULL) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
     if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
+    }
+    /* spec 3.1: "rho : Omega -> D_n a bijection", required exactly for the labeling coset */
+    const uint32_t *rho = options != NULL ? options->rho : NULL;
+    if ((objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET) != (rho != NULL)) {
+        return CANON_INVALID_INPUT;
+    }
+    if (rho != NULL) {
+        const int bijective = canon_perm_validate(rho, object->root.n);
+        if (bijective <= 0) {
+            return bijective < 0 ? CANON_RESOURCE_LIMIT : CANON_INVALID_INPUT;
+        }
     }
     /* spec 3 table: the transporters relate x to a second object y on the same domain */
     if (needs_target(objective) != (target != NULL) ||
@@ -554,10 +640,24 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     switch (objective) {
     case CANON_OBJECTIVE_CANONICAL_IMAGE:
     case CANON_OBJECTIVE_LEX_MIN_IMAGE:
+    case CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE:
+    case CANON_OBJECTIVE_CANONICAL_LABELING_COSET:
         /* The stream length of x^g equals that of x for every g: a subset image has as many
          * members; a graph image has the same colour multiset, arc count, label bytes and
-         * multiplicities (hence Nat lengths), since the action only renumbers vertices. */
+         * multiplicities (hence Nat lengths), since the action only renumbers vertices.  The
+         * argument holds for every permutation, not only for elements of G, so it also covers
+         * the labeling's c = x^lambda (S6); a nested object's bound depends only on n and the
+         * orders of its group leaves, which conjugation preserves.  A signed zero is the
+         * single byte 00, shorter than any stream (spec 4.3). */
         st = canon_root_stream_size(&object->root, &out_bytes);
+        if (st == CANON_COMPLETE && objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET) {
+            /* spec 9.4: plus Group(A) || Perm(lambda0), A <= G (S6) */
+            uint64_t coset = 0;
+            if (!canon_group_bytes_bound(object->root.n, group->ops->order(group), true, &coset) ||
+                !canon_u64_add(out_bytes, coset, &out_bytes)) {
+                st = CANON_CAPACITY_LIMIT;
+            }
+        }
         /* spec 4.4: "return the selected graph in CDAG-2 plus its order key"; the key is
          * 4 + ceil(n(n-1)/16) bytes exactly (S4 review item 3) */
         if (st == CANON_COMPLETE && order == CANON_ORDER_SIMPLE_UPPER_1 &&
@@ -587,6 +687,18 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     canon_problem *pr = malloc(sizeof *pr);
     if (pr == NULL) {
         return CANON_RESOURCE_LIMIT;
+    }
+    pr->rho = NULL;
+    if (rho != NULL) {
+        /* spec 17: builders copy data */
+        pr->rho = canon_alloc_array(object->root.n, sizeof *pr->rho, &st);
+        if (pr->rho == NULL) {
+            free(pr);
+            return st;
+        }
+        if (object->root.n > 0) {
+            memcpy(pr->rho, rho, (size_t)object->root.n * sizeof *pr->rho);
+        }
     }
     canon_ref_init(&pr->refs);
     /* spec 17: the problem retains its immutable inputs.  The handles are shared, not mutated:
@@ -654,6 +766,8 @@ typedef struct answer {
     canon_result_flags flags;
     const canon_buf *trace, *bytes, *group, *key; /* NULL: not produced */
     const uint32_t *witness;                      /* NULL: not produced */
+    const uint32_t *labeling;                     /* S6: lambda; NULL: not produced */
+    int sign;                                     /* S6: signed objective only */
 } answer;
 
 static const canon_buf *if_set(bool set, const canon_buf *b)
@@ -697,6 +811,15 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
             memcpy(r->witness, a->witness, (size_t)n * sizeof *r->witness);
         }
     }
+    if (ok && a->labeling != NULL) {
+        /* S6: lambda, and rho for canon_result_verify_witness (owned copies) */
+        ok = (r->labeling = canon_alloc_array(n, sizeof *r->labeling, &alloc)) != NULL &&
+             (r->rho = canon_alloc_array(n, sizeof *r->rho, &alloc)) != NULL;
+        if (ok && n > 0) {
+            memcpy(r->labeling, a->labeling, (size_t)n * sizeof *r->labeling);
+            memcpy(r->rho, problem->rho, (size_t)n * sizeof *r->rho);
+        }
+    }
     if (!ok) {
         canon_result_release(r);
         *out = new_result(CANON_RESOURCE_LIMIT);
@@ -704,6 +827,7 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     }
     r->degree = n;
     r->flags = a->flags;
+    r->sign = a->sign;
     r->objective = problem->objective;
     /* spec 17 verify_witness needs G, x and the target after the problem may be released:
      * the result retains them (owned references to immutable handles). */
@@ -746,6 +870,31 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
     return finish_result(problem, st, &a, out);
 }
 
+/* spec 3.1, 8.2, 8.4 (S6): the labeling coset and the signed canonical image
+ * (src/search/objectives.c), both running P1 in the workspace's P1 search. */
+static canon_status solve_p1_objective(canon_workspace *ws, const canon_problem *problem,
+                                       canon_result **out)
+{
+    canon_obj_search *s = &ws->obj;
+    canon_obj_outcome o;
+    const uint64_t quota = problem->capacity.max_search_nodes;
+    canon_status st =
+        problem->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET
+            ? canon_obj_labeling(s, &ws->search, problem->group, &problem->object->root,
+                                 problem->rho, quota, &o)
+            : canon_obj_signed(s, &ws->search, problem->group, &problem->object->root, quota, &o);
+    answer a;
+    memset(&a, 0, sizeof a);
+    a.flags = o.flags;
+    a.trace = if_set(o.p1, &ws->search.best_trace);
+    a.bytes = if_set(o.p1, &ws->search.best_bytes);
+    a.group = if_set(o.group, &s->group);
+    a.witness = o.witness ? s->best : NULL;
+    a.labeling = o.labeling ? s->lambda : NULL;
+    a.sign = o.sign;
+    return finish_result(problem, st, &a, out);
+}
+
 /* spec 8: the enumeration objectives (src/search/objectives.c). */
 static canon_status solve_enumeration(canon_workspace *ws, const canon_problem *problem,
                                       canon_result **out)
@@ -781,6 +930,10 @@ canon_status canon_solve(canon_workspace *workspace, const canon_problem *proble
      * canon_problem_create_with_options; a problem is immutable, so they are not re-checked. */
     if (problem->objective == CANON_OBJECTIVE_CANONICAL_IMAGE) {
         return solve_canonical(workspace, problem, out);
+    }
+    if (problem->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET ||
+        problem->objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE) {
+        return solve_p1_objective(workspace, problem, out);
     }
     return solve_enumeration(workspace, problem, out);
 }
@@ -875,6 +1028,32 @@ const uint32_t *canon_result_transporter(const canon_result *result, uint32_t *d
     return canon_result_witness(result, degree);
 }
 
+/* spec 8.4, 4.3 (S6): the sign of a complete signed result. */
+canon_status canon_result_sign(const canon_result *result, int *sign_out)
+{
+    if (sign_out != NULL) {
+        *sign_out = 0;
+    }
+    if (result == NULL || sign_out == NULL ||
+        result->objective != CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE ||
+        result->status != CANON_COMPLETE ||
+        !(result->flags.zero_certified || result->flags.nonzero_certified)) {
+        return CANON_INVALID_INPUT;
+    }
+    *sign_out = result->flags.zero_certified ? 0 : result->sign;
+    return CANON_COMPLETE;
+}
+
+/* spec 3.1 (S6): lambda = rho t of a complete labeling-coset result. */
+const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degree)
+{
+    const bool ok = result != NULL && result->labeling != NULL && result->flags.witness_valid;
+    if (degree != NULL) {
+        *degree = ok ? result->degree : 0;
+    }
+    return ok ? result->labeling : NULL;
+}
+
 /* spec 17: "result_verify_witness checks membership and exact action, not canonicity". */
 canon_status canon_result_verify_witness(const canon_result *result, bool *valid)
 {
@@ -886,6 +1065,28 @@ canon_status canon_result_verify_witness(const canon_result *result, bool *valid
     const uint32_t *w = canon_result_witness(result, &degree);
     if (w == NULL || result->group == NULL || result->object == NULL) {
         return CANON_INVALID_INPUT; /* no witness to verify */
+    }
+    if (result->objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE) {
+        /* S6, spec 8.4: a zero certificate is "one checked membership/action/sign witness":
+         * a in G, x^a = x, chi(a) = -1; a nonzero result also checks chi(t) = s */
+        int sign = 0;
+        canon_status st = canon_result_sign(result, &sign);
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+        size_t len = 0;
+        const uint8_t *c = canon_result_bytes(result, &len); /* NULL for a zero: x itself */
+        return canon_obj_check_signed(result->group, &result->object->root, w, sign, c, len, valid);
+    }
+    if (result->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET) {
+        /* S6, spec 3.1: t in G', lambda = rho t, x^lambda = c */
+        size_t len = 0;
+        const uint8_t *c = canon_result_bytes(result, &len);
+        if (c == NULL || result->labeling == NULL || result->rho == NULL) {
+            return CANON_INVALID_INPUT;
+        }
+        return canon_obj_check_labeling(result->group, &result->object->root, result->rho, w,
+                                        result->labeling, c, len, valid);
     }
     if (result->target == NULL) {
         /* the image the witness is claimed to produce: the result's own bytes */
@@ -917,6 +1118,16 @@ canon_status canon_result_encode(const canon_result *result, canon_sink_fn sink,
     }
     size_t total = 0;
     const uint8_t *bytes = canon_result_bytes(result, &total);
+    /* spec 17: "result_encode returns canonical bytes only when the corresponding image is
+     * complete, or the signed 00 payload when zero is certified"; spec 4.3: "A certified zero
+     * has distinguished payload byte 00 under the signed objective and no monomial stream;
+     * ordinary CDAG streams begin 43" */
+    static const uint8_t zero_payload[1] = {0x00};
+    if (result->objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE &&
+        result->status == CANON_COMPLETE && result->flags.zero_certified) {
+        bytes = zero_payload;
+        total = sizeof zero_payload;
+    }
     if (bytes == NULL) {
         return CANON_INVALID_INPUT;
     }

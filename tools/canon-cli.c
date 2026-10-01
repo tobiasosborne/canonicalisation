@@ -1,5 +1,5 @@
-/* canon-cli: command-line driver for the canon library (slices S1 to S5,
- * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6, S5.md 1).
+/* canon-cli: command-line driver for the canon library (slices S1 to S6,
+ * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6, S5.md 1, S6.md 3.4).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
  *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."] [--arcs "s,t,labelhex,m;..."]
@@ -13,7 +13,14 @@
  *   canon-cli stabiliser OBJECT                STABILISER (0004);
  *   canon-cli transporter-coset OBJECT TARGET  TRANSPORTER_COSET (0006);
  *   canon-cli validate --stream HEX            canon_stream_validate (slice S5);
- * where for the S4 subcommands OBJECT is [--kind subset|graph|stream] with --atoms (subset),
+ *   canon-cli labeling --rho "r0,r1,..." OBJECT
+ *       CANONICAL_LABELING_COSET (0005) under profile P1 (slice S6): rho is the labeling
+ *       Omega -> D_n as exactly N comma-separated images (required);
+ *   canon-cli signed --signs "+-..." OBJECT
+ *       SIGNED_CANONICAL_IMAGE (0007) under profile P1 (slice S6): the group is built by
+ *       canon_group_create_signed with one sign per generator, '+' or '-', in generator order
+ *       (exactly as many as --gens lists; "" for no generators);
+ * where for the S4 and S6 subcommands OBJECT is [--kind subset|graph|stream] with --atoms (subset),
  * --colours/--arcs (graph) or --stream (S5), and TARGET is --target-atoms (subset),
  * --target-colours/--target-arcs (graph) or --target-stream (S5), each defaulting to the empty
  * subset, the arc-free, uncoloured graph or the empty stream (which is INVALID_INPUT).  The
@@ -29,12 +36,17 @@
  * minimum image's CDAG-2 stream; witness: comma-separated images of the witness (canonical
  * image, minimum, transporter hit), '-' if none or n = 0; group_hex: Group(A) (stabiliser),
  * Group(A) || Perm(r0) (nonempty transporter coset), the SIMPLE-UPPER-1 key (minimum under
- * that order), '-' otherwise.  `--gens ""` (the default) is the trivial group and `--atoms ""`
- * (the default) the empty subset.  Generators are image arrays p[v] = v^p (spec section 3),
- * separated by ';'; for N = 0 a generator is the empty string.  `--colours ""` (the default)
- * makes every vertex colour empty; otherwise it lists exactly N hex strings separated by ';'
- * (a hex string may be empty).  `--arcs` (default: no arcs) lists arcs
- * "source,target,labelhex,multiplicity" separated by ';' (labelhex may be empty; the
+ * that order), '-' otherwise.  Slice S6: labeling records carry the P1 trace on the target
+ * coordinates, c's stream, the labeling lambda = rho t as the witness and
+ * Group(A) || Perm(lambda0) as group_hex; signed records carry the P1 trace and c's stream with
+ * the witness "t;sign=+1" or "t;sign=-1" and group_hex Group(A) for a nonzero result, and the
+ * empty trace, bytes_hex "00" (spec 4.3), the witness "a;sign=0" (the odd automorphism) and
+ * group_hex '-' for a certified zero (the witness part is '-' for n = 0).  `--gens ""` (the
+ * default) is the trivial group and `--atoms ""` (the default) the empty subset.  Generators are
+ * image arrays p[v] = v^p (spec section 3), separated by ';'; for N = 0 a generator is the empty
+ * string.  `--colours ""` (the default) makes every vertex colour empty; otherwise it lists exactly
+ * N hex strings separated by ';' (a hex string may be empty).  `--arcs` (default: no arcs) lists
+ * arcs "source,target,labelhex,multiplicity" separated by ';' (labelhex may be empty; the
  * multiplicity is passed to the library as given, so 0 yields INVALID_INPUT).  `--stream` is
  * lowercase or uppercase hex without spaces (odd length or a non-hex character is a usage
  * error, each with its own message); a stream object without --stream, or a stream target
@@ -64,6 +76,8 @@ static int usage(const char *msg)
             "       canon-cli transporter OBJECT TARGET\n"
             "       canon-cli stabiliser OBJECT\n"
             "       canon-cli transporter-coset OBJECT TARGET\n"
+            "       canon-cli labeling --rho \"r0,r1,...\" OBJECT\n"
+            "       canon-cli signed --signs \"+-...\" OBJECT\n"
             "       OBJECT: --n N [--gens ...] [--kind subset|graph|stream] [--atoms ...]\n"
             "               [--colours ...] [--arcs ...] [--stream HEX]\n"
             "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
@@ -322,6 +336,9 @@ static const subcommand SUBCOMMANDS[] = {
     {"stabiliser", CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, -1, false, false},
     {"transporter-coset", CANON_OBJECTIVE_TRANSPORTER_COSET, CANON_PROFILE_NO_TREE, -1, true,
      false},
+    /* S6: spec 4.3 "canonical and signed image objectives use P1"; spec 8.2 labeling coset */
+    {"labeling", CANON_OBJECTIVE_CANONICAL_LABELING_COSET, CANON_PROFILE_P1, -1, false, false},
+    {"signed", CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, -1, false, false},
 };
 
 /* Parsed command line. */
@@ -331,6 +348,7 @@ typedef struct options {
     const char *atoms, *colours, *arcs;                      /* the object */
     const char *target_atoms, *target_colours, *target_arcs; /* the target */
     const char *stream, *target_stream;                      /* S5: CDAG-2 hex */
+    const char *rho, *signs;                                 /* S6: labeling, signed */
     int kind;                                                /* 0 subset, 1 graph, 2 stream */
     bool stream_given, target_stream_given;                  /* S5 review item 1 */
     uint64_t max_nodes;
@@ -352,7 +370,7 @@ static int parse_options(int argc, char **argv, options *o)
     }
     if (o->cmd == NULL) {
         return usage("expected a subcommand: p1-subset, p1-graph, p1-stream, validate, min, "
-                     "transporter, stabiliser or transporter-coset");
+                     "transporter, stabiliser, transporter-coset, labeling or signed");
     }
     const bool s4 = o->cmd->kind < 0;
     o->gens = o->atoms = o->colours = o->arcs = "";
@@ -402,6 +420,12 @@ static int parse_options(int argc, char **argv, options *o)
         } else if (o->cmd->target && strcmp(opt, "--target-arcs") == 0) {
             o->target_arcs = val;
             graph_opt = true;
+        } else if (o->cmd->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET &&
+                   strcmp(opt, "--rho") == 0) {
+            o->rho = val;
+        } else if (o->cmd->objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE &&
+                   strcmp(opt, "--signs") == 0) {
+            o->signs = val;
         } else if (s4 && strcmp(opt, "--kind") == 0) {
             if (strcmp(val, "subset") == 0) {
                 kind = 0;
@@ -453,6 +477,13 @@ static int parse_options(int argc, char **argv, options *o)
         } else {
             return usage("unknown option");
         }
+    }
+    /* S6: the labeling needs rho and a signed group its signs ("" = no generators) */
+    if (o->cmd->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET && o->rho == NULL) {
+        return usage("labeling requires --rho");
+    }
+    if (o->cmd->objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE && o->signs == NULL) {
+        return usage("signed requires --signs");
     }
     if (kind < 0) {
         kind = stream_opt ? 2 : (graph_opt ? 1 : 0);
@@ -543,6 +574,18 @@ static int build_object(canon_context *ctx, uint32_t n, int kind, const char *at
     return 0;
 }
 
+/* Print an image array as comma-separated decimals, '-' when absent or of degree 0. */
+static void put_array(const uint32_t *w, uint32_t degree)
+{
+    if (w == NULL || degree == 0) {
+        putchar('-'); /* FORMAT.md: no witness, or the n = 0 witness, is written '-' */
+        return;
+    }
+    for (uint32_t v = 0; v < degree; ++v) {
+        printf(v == 0 ? "%lu" : ",%lu", (unsigned long)w[v]);
+    }
+}
+
 /* Print the seven-field record of a COMPLETE result; returns the exit status. */
 static int print_result(const char *id, canon_objective objective, const canon_result *result)
 {
@@ -553,18 +596,24 @@ static int print_result(const char *id, canon_objective objective, const canon_r
     putchar('\t');
     canon_status enc = CANON_COMPLETE;
     size_t bytes_len = 0;
-    if (canon_result_bytes(result, &bytes_len) != NULL) {
+    int sign = 0;
+    const bool is_signed = canon_result_sign(result, &sign) == CANON_COMPLETE; /* S6 */
+    /* spec 4.3: a certified signed zero encodes as the single byte 00 (S6) */
+    if (canon_result_bytes(result, &bytes_len) != NULL || (is_signed && sign == 0)) {
         enc = canon_result_encode(result, hex_sink, NULL);
     }
     putchar('\t');
     uint32_t degree = 0;
-    const uint32_t *w = canon_result_witness(result, &degree);
-    if (w == NULL || degree == 0) {
-        putchar('-'); /* FORMAT.md: no witness, or the n = 0 witness, is written '-' */
+    if (objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET) {
+        /* S6: the typed labeling lambda = rho t is the witness field (spec 3.1) */
+        const uint32_t *lambda = canon_result_labeling(result, &degree);
+        put_array(lambda, degree);
     } else {
-        for (uint32_t v = 0; v < degree; ++v) {
-            printf(v == 0 ? "%lu" : ",%lu", (unsigned long)w[v]);
-        }
+        const uint32_t *w = canon_result_witness(result, &degree);
+        put_array(w, degree);
+    }
+    if (is_signed) {
+        printf(";sign=%s", sign > 0 ? "+1" : sign < 0 ? "-1" : "0"); /* FORMAT.md, S6 */
     }
     putchar('\t');
     size_t group_len = 0, key_len = 0;
@@ -604,6 +653,21 @@ static int run_validate(const options *o)
         return 3;
     }
     return st == CANON_COMPLETE ? 0 : 3;
+}
+
+/* Parse --signs: one '+' or '-' per generator (S6).  Returns 0, or 2 on a usage error. */
+static int parse_signs(const char *arg, size_t gen_count, int8_t *signs)
+{
+    if (strlen(arg) != gen_count) {
+        return usage("--signs must give exactly one '+' or '-' per generator");
+    }
+    for (size_t i = 0; i < gen_count; ++i) {
+        if (arg[i] != '+' && arg[i] != '-') {
+            return usage("--signs expects '+' and '-' characters");
+        }
+        signs[i] = arg[i] == '-' ? -1 : 1;
+    }
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -646,6 +710,40 @@ int main(int argc, char **argv)
         p += len + (end != NULL ? 1 : 0);
     }
 
+    /* S6: the signs of a signed group and the labeling rho */
+    int8_t *signs = NULL;
+    uint32_t *rho = NULL;
+    /* rho lists exactly N images, so N is bounded by the argument's length before anything
+     * of size N is allocated */
+    if (o.rho != NULL && (*o.rho == '\0' ? 0u : count_char(o.rho, ',') + 1) != (size_t)n) {
+        free(gen);
+        return usage("--rho must list exactly N comma-separated images");
+    }
+    if (o.signs != NULL || o.rho != NULL) {
+        signs = malloc(gen_count > 0 ? gen_count : 1);
+        rho = malloc(n > 0 ? (size_t)n * sizeof *rho : 1);
+        if (signs == NULL || rho == NULL) {
+            free(signs);
+            free(rho);
+            free(gen);
+            fprintf(stderr, "canon-cli: out of memory\n");
+            return print_failure(o.id, objective, CANON_RESOURCE_LIMIT);
+        }
+        int urc = 0;
+        if (o.signs != NULL) {
+            urc = parse_signs(o.signs, gen_count, signs);
+        }
+        if (urc == 0 && o.rho != NULL && parse_list(o.rho, strlen(o.rho), rho, n) != (size_t)n) {
+            urc = usage("--rho must list exactly N comma-separated images");
+        }
+        if (urc != 0) {
+            free(signs);
+            free(rho);
+            free(gen);
+            return urc;
+        }
+    }
+
     canon_context *ctx = NULL;
     canon_group *group = NULL;
     canon_object *object = NULL, *target = NULL;
@@ -654,10 +752,11 @@ int main(int argc, char **argv)
     canon_result *result = NULL;
     canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0};
     const canon_context_options copts = {o.backend};
-    const canon_problem_options popts = {o.witness};
+    const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL};
     canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);
     if (st == CANON_COMPLETE) {
-        st = canon_group_create(ctx, n, gen, gen_count, &group);
+        st = o.signs != NULL ? canon_group_create_signed(ctx, n, gen, gen_count, signs, &group)
+                             : canon_group_create(ctx, n, gen, gen_count, &group);
     }
     int rc = 0;
     if (st == CANON_COMPLETE) {
@@ -694,6 +793,8 @@ int main(int argc, char **argv)
     canon_group_release(group);
     canon_context_release(ctx);
     free(gen);
+    free(signs);
+    free(rho);
     if (fflush(stdout) != 0 || ferror(stdout)) {
         return 3;
     }

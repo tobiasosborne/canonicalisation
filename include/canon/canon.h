@@ -5,7 +5,8 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 to S5 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md).
+ * Status of this header: slices S1 to S6 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
+ * S6.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
@@ -16,7 +17,10 @@
  * enumeration objectives LEX_MIN_IMAGE (orders CDAG-BYTE-1 and SIMPLE-UPPER-1),
  * TRANSPORTER_ONE, STABILISER and TRANSPORTER_COSET under profile NO_TREE, all with encoding
  * CDAG-2, workspaces, canon_solve, the result accessors, canon_result_encode and
- * canon_result_verify_witness (S4).  Every other entry point is a stub returning
+ * canon_result_verify_witness (S4), and (S6) signed groups (canon_group_create_signed,
+ * canon_group_character) with the objectives CANONICAL_LABELING_COSET and
+ * SIGNED_CANONICAL_IMAGE under profile P1 (canon_result_sign, canon_result_labeling, the signed
+ * zero payload 00 of canon_result_encode).  Every other entry point is a stub returning
  * CANON_UNSUPPORTED_ACTION until its slice lands (canon_solve_batch: S8; checkpoints: M6).
  * ALL argument lists are PROVISIONAL until M4 and will be frozen there together with the
  * section 17 client vectors.
@@ -204,6 +208,35 @@ void canon_result_release(canon_result *result);
 canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint32_t *generators,
                                 size_t generator_count, canon_group **out);
 
+/* spec 8.4 (slice S6; PROVISIONAL until M4): build an immutable signed group, the generators as
+ * for canon_group_create with signs[i] = chi(g_i) in {-1, +1} (signs may be NULL only when
+ * generator_count is 0; zero generators give the trivial group with the trivial character).
+ * "Arbitrary signs attached to generators are not automatically a well-defined character", so
+ * the signs are validated by the lifted group on degree + 2 points (each generator acts on
+ * {0..degree-1} as given and swaps the last two points iff its sign is -1): chi exists iff the
+ * subgroup of the lift fixing every point of {0..degree-1} is trivial, i.e. iff |lift| = |G|
+ * (the projection onto G is onto, so |lift| = |G| times the order of that kernel).  The backend
+ * keeps the lift for canon_group_character.  Status, in this order: CANON_INVALID_INPUT for
+ * NULL ctx/out, NULL generators or signs with generator_count > 0; CANON_CAPACITY_LIMIT when
+ * degree exceeds the context's max_n or degree + 2 does not fit uint32 (spec 11.1, checked
+ * before anything is built); CANON_INVALID_INPUT for a sign other than -1 or +1, a generator
+ * that is not a bijection, or inconsistent signs (spec 8.4 "Reject inconsistent signs", e.g. an
+ * identity generator with sign -1, or one generator listed twice with both signs);
+ * CANON_CAPACITY_LIMIT and CANON_INTERNAL_ERROR otherwise as for canon_group_create (the chain
+ * backend also refuses a lift whose order exceeds uint64, which can only happen for
+ * inconsistent signs with |G| >= 2^63; the explicit backend bounds the lift's table by |G|
+ * rows).  A signed group serves every objective; only SIGNED_CANONICAL_IMAGE reads the signs. */
+canon_status canon_group_create_signed(canon_context *ctx, uint32_t degree,
+                                       const uint32_t *generators, size_t generator_count,
+                                       const int8_t *signs, canon_group **out);
+
+/* spec 8.4 (slice S6): *sign_out = chi(g) in {-1, +1} for a member g (an image array of length
+ * degree) of a signed group, read from the lift: chi(g) = +1 iff g extended by fixing both sign
+ * points is in the lift, -1 iff g extended by swapping them is.  CANON_INVALID_INPUT for NULL
+ * arguments, a g that is not a bijection of {0..degree-1}, or a g not in G;
+ * CANON_UNSUPPORTED_ACTION for an unsigned group; *sign_out = 0 on every failure (when given). */
+canon_status canon_group_character(const canon_group *group, const uint32_t *g, int *sign_out);
+
 /* spec 9.2: the exact order |G| in *out.  Capacity: every group handle has an order that fits
  * uint64 (canon_group_create refuses larger groups with CANON_CAPACITY_LIMIT).
  * CANON_INVALID_INPUT for NULL arguments. */
@@ -327,6 +360,10 @@ typedef enum canon_witness_mode {
 /* Problem options (slice S4; PROVISIONAL until M4). */
 typedef struct canon_problem_options {
     canon_witness_mode witness_mode;
+    /* S6, spec 3.1: the labeling rho : Omega -> D_n as an image array of length degree
+     * (rho[v] = v^rho, a bijection; copied by the problem).  Required for
+     * CANONICAL_LABELING_COSET, must be NULL otherwise. */
+    const uint32_t *rho;
 } canon_problem_options;
 
 /* spec 17, 3, 8 (slice S4): as canon_problem_create, plus an optional second object `target`
@@ -338,18 +375,28 @@ typedef struct canon_problem_options {
  *                               and labels, no loops, one unit arc each way per edge);
  *   TRANSPORTER_ONE (0x0003), STABILISER (0x0004), TRANSPORTER_COSET (0x0006)
  *                               profile NO_TREE (spec 4.3: "Profile tag 0x0000 means NO_TREE
- *                               for coset-enumeration objectives"), order CDAG-BYTE-1.
+ *                               for coset-enumeration objectives"), order CDAG-BYTE-1;
+ *   CANONICAL_LABELING_COSET (0x0005), SIGNED_CANONICAL_IMAGE (0x0007) (S6)
+ *                               profile P1 (spec 4.3: "canonical and signed image objectives
+ *                               use P1"; spec 8.2: the labeling coset runs spec 7), order
+ *                               CDAG-BYTE-1, witness mode CANON_WITNESS_ANY.
  * The target is required for TRANSPORTER_ONE and TRANSPORTER_COSET and must be NULL
- * otherwise; it must have the object's kind and degree.  The problem retains it.
+ * otherwise; it must have the object's kind and degree.  The problem retains it.  The labeling
+ * options->rho is required for CANONICAL_LABELING_COSET and must be NULL otherwise; the problem
+ * copies it.  SIGNED_CANONICAL_IMAGE needs a signed group (canon_group_create_signed); the
+ * other objectives ignore a group's signs.
  * Validation, in this order: CANON_INVALID_INPUT for NULL ctx/group/object/out or an unknown
  * witness mode; CANON_UNSUPPORTED_ACTION for a combination not listed above (including a
- * deterministic witness for TRANSPORTER_ONE or STABILISER); CANON_INVALID_INPUT for a degree
- * mismatch, a missing, superfluous or mismatched target; CANON_UNSUPPORTED_ACTION for
- * SIMPLE-UPPER-1 on an object outside the spec 4.4 class; CANON_CAPACITY_LIMIT as for
- * canon_problem_create, where the output size is the exact stream length for CANONICAL_IMAGE
- * and LEX_MIN_IMAGE (plus, under SIMPLE-UPPER-1, the exact key length 4 + ceil(n(n-1)/16)
- * bytes) and a conservative bound derived from n and |G| for the Group payloads of
- * STABILISER and TRANSPORTER_COSET (spec 11.1: "a conservative input-derived bound"). */
+ * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
+ * SIGNED_CANONICAL_IMAGE) or SIGNED_CANONICAL_IMAGE on an unsigned group; CANON_INVALID_INPUT
+ * for a degree mismatch, a missing, superfluous or mismatched target, or a missing, superfluous
+ * or non-bijective rho; CANON_UNSUPPORTED_ACTION for SIMPLE-UPPER-1 on an object outside the
+ * spec 4.4 class; CANON_CAPACITY_LIMIT as for canon_problem_create, where the output size is
+ * the exact stream length for CANONICAL_IMAGE, LEX_MIN_IMAGE and SIGNED_CANONICAL_IMAGE (plus,
+ * under SIMPLE-UPPER-1, the exact key length 4 + ceil(n(n-1)/16) bytes; a signed zero is the
+ * single byte 00), and a conservative bound derived from n and |G| for the Group payloads of
+ * STABILISER and TRANSPORTER_COSET and, added to the stream length, of
+ * CANONICAL_LABELING_COSET (spec 11.1: "a conservative input-derived bound"). */
 canon_status canon_problem_create_with_options(canon_context *ctx, const canon_group *group,
                                                const canon_object *object,
                                                const canon_object *target,
@@ -373,6 +420,12 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out);
  *   STABILISER: subgroup_verified, stabiliser_complete;
  *   TRANSPORTER_COSET: witness_valid, subgroup_verified, stabiliser_complete (nonempty), or
  *   transport_exhausted (proved empty);
+ *   CANONICAL_LABELING_COSET (S6): image_canonical, witness_valid, subgroup_verified,
+ *   stabiliser_complete, encoding_complete;
+ *   SIGNED_CANONICAL_IMAGE (S6): zero_certified and witness_valid (a certified zero), or
+ *   nonzero_certified, image_canonical, witness_valid, subgroup_verified, stabiliser_complete,
+ *   encoding_complete (the nonzero route always completes the stabiliser A, spec 8.4
+ *   SIGN-COVER);
  * CANON_CAPACITY_LIMIT when the solve's reference traversals exceed max_search_nodes (spec
  * 11.1: P1 NODE tokens plus coset-enumeration visits), with a result that has no trace, no
  * bytes, no witness and all flags false; CANON_RESOURCE_LIMIT on allocation failure (a result
@@ -401,15 +454,24 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
- * for the coset in deterministic mode the least element r0 of A g). */
+ * for the coset in deterministic mode the least element r0 of A g).
+ * CANONICAL_LABELING_COSET (S6): t, the element of G' = rho^-1 G rho found by P1 on the target
+ * coordinates D_n (x^rho)^t = c; the labeling itself is canon_result_labeling.
+ * SIGNED_CANONICAL_IMAGE (S6): for a nonzero result the P1 witness t, x^t = c, with
+ * [x] = chi(t) [c]; for a certified zero the verified odd automorphism a (a in G, x^a = x,
+ * chi(a) = -1), the one-sided zero certificate of spec 8.4. */
 const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degree);
 /* spec 4.3: the canonical CDAG-2 bytes, only when encoding_complete and either image_canonical
- * (CANONICAL_IMAGE) or minimum_proved (LEX_MIN_IMAGE: the stream of the minimum image under
- * either order, spec 4.4 "return the selected graph in CDAG-2 plus its order key"); else NULL
- * and *length = 0. */
+ * (CANONICAL_IMAGE, CANONICAL_LABELING_COSET: c = x^lambda, and a nonzero
+ * SIGNED_CANONICAL_IMAGE: the canonical monomial c) or minimum_proved (LEX_MIN_IMAGE: the stream
+ * of the minimum image under either order, spec 4.4 "return the selected graph in CDAG-2 plus
+ * its order key"); else NULL and *length = 0.  A certified signed zero has no stream (spec 4.3:
+ * "no monomial stream"); canon_result_encode writes its payload 00. */
 const uint8_t *canon_result_bytes(const canon_result *result, size_t *length);
-/* spec 9.4: the canonical Group(A) bytes (STABILISER) or Group(A) || Perm(r0)
- * (TRANSPORTER_COSET, A g the complete solution set, r0 its least element); NULL and
+/* spec 9.4: the canonical Group(A) bytes (STABILISER; S6: a nonzero SIGNED_CANONICAL_IMAGE,
+ * the complete-stabiliser evidence) or Group(A) || Perm(r0) (TRANSPORTER_COSET, A g the
+ * complete solution set, r0 its least element; S6: CANONICAL_LABELING_COSET, A lambda the
+ * complete set of labelings taking x to c, spec 3.1, with lambda0 its least element); NULL and
  * *length = 0 unless subgroup_verified && stabiliser_complete (an empty coset has neither flag,
  * only transport_exhausted, and no payload). */
 const uint8_t *canon_result_group_bytes(const canon_result *result, size_t *length);
@@ -421,6 +483,19 @@ const uint8_t *canon_result_order_key(const canon_result *result, size_t *length
  * empty: transport_exhausted) or the solve did not complete. */
 const uint32_t *canon_result_transporter(const canon_result *result, uint32_t *degree);
 
+/* spec 8.4, 4.3 (slice S6): the coefficient sign of a SIGNED_CANONICAL_IMAGE result:
+ * *sign_out = +1 or -1 for a nonzero result ([x] = sign [c]) and 0 for a certified zero
+ * ([x] = 0).  CANON_INVALID_INPUT (*sign_out = 0 when given) for NULL arguments, another
+ * objective or an incomplete result. */
+canon_status canon_result_sign(const canon_result *result, int *sign_out);
+
+/* spec 3.1 (slice S6): the typed labeling lambda = rho t : Omega -> D_n (rho first, then t) of
+ * a complete CANONICAL_LABELING_COSET result, as an image array of length *degree, with
+ * x^lambda = c and lambda in G rho (lambda is not in general an element of G); NULL and
+ * *degree = 0 otherwise.  For degree 0 a produced labeling is a non-NULL pointer with
+ * *degree = 0. */
+const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degree);
+
 /* spec section 17: per-input statuses, input order preserved regardless of scheduling.
  * STUB until slice S8: returns CANON_UNSUPPORTED_ACTION. */
 canon_status canon_solve_batch(canon_workspace *workspace, const canon_problem *const *problems,
@@ -430,13 +505,19 @@ canon_status canon_solve_batch(canon_workspace *workspace, const canon_problem *
  * canonicity".  *valid = true iff the witness is a permutation of the domain, lies in G (the
  * group backend's membership test) and sends the problem's object x to c, compared as CDAG-2
  * streams by re-acting: c is the result's bytes (CANONICAL_IMAGE, LEX_MIN_IMAGE) or the target
- * (TRANSPORTER_ONE, TRANSPORTER_COSET).  CANON_COMPLETE when a verdict was reached;
+ * (TRANSPORTER_ONE, TRANSPORTER_COSET).  S6: for CANONICAL_LABELING_COSET the witness t must
+ * satisfy lambda = rho t, rho t rho^-1 must lie in G (t in G' = rho^-1 G rho) and x^lambda = c;
+ * for a nonzero SIGNED_CANONICAL_IMAGE additionally chi(t) = the result's sign; for a certified
+ * zero the certificate a must lie in G, fix x (x^a = x by streams) and be odd (chi(a) = -1).
+ * CANON_COMPLETE when a verdict was reached;
  * CANON_INVALID_INPUT (*valid = false) for NULL arguments or a result without a witness;
  * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT when scratch cannot be allocated. */
 canon_status canon_result_verify_witness(const canon_result *result, bool *valid);
 
 /* spec sections 17, 4.3: stream the canonical bytes to `sink` in one or more ordered chunks,
- * only when canon_result_bytes has them (signed zero `00` arrives with S6).
+ * only when canon_result_bytes has them, or (S6) the single byte 00 for a certified signed zero
+ * (spec 17: "or the signed 00 payload when zero is certified"; spec 4.3: "A certified zero has
+ * distinguished payload byte 00 under the signed objective").
  * CANON_COMPLETE after the last byte is accepted; CANON_INVALID_INPUT for NULL arguments or a
  * result without canonical bytes; CANON_OUTPUT_ERROR when the sink fails (see canon_sink_fn;
  * pause is deferred to S8).  The result is never modified. */
