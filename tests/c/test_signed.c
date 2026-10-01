@@ -14,7 +14,8 @@
  *    the cross-feed s(C(x)) = +1 (spec 20); verify_witness accepts every result;
  *  - tampered certificates (not a member, not fixing x, even, not a bijection) and a tampered
  *    nonzero witness are rejected;
- *  - graphs, validation, quota, output bound, encode and the sign accessor. */
+ *  - graphs, validation, quota, output bound, encode and the sign accessor;
+ *  - counters of the consumer on T1 (printed for docs/slices/S6-notes.md). */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -595,6 +596,75 @@ static void graphs_and_errors(void)
     canon_group_release(u);
 }
 
+/* Counters of the signed consumer on every T1 group, character and subset (chain backend;
+ * printed for docs/slices/S6-notes.md). */
+static void counters(void)
+{
+    uint64_t cases = 0, fast = 0, zeros = 0, visits = 0, hits = 0, chis = 0, p1 = 0, builds = 0;
+    for (uint32_t n = 0; n <= 4; ++n) {
+        t1_sym s;
+        t1_sym_init(&s, n);
+        t1_group groups[T1_MAX_GROUPS];
+        const uint32_t ng = t1_subgroups(&s, groups);
+        for (uint32_t gi = 0; gi < ng; ++gi) {
+            const t1_group *grp = &groups[gi];
+            uint32_t gen_index[24];
+            for (uint32_t k = 0; k < grp->gen_count; ++k) {
+                gen_index[k] = 0;
+                for (uint32_t e = 0; e < s.count; ++e) {
+                    if (n == 0 || memcmp(s.elem[e], grp->gens + k * n, n * sizeof(uint32_t)) == 0) {
+                        gen_index[k] = e;
+                        break;
+                    }
+                }
+            }
+            for (uint32_t bits = 0; bits < (1u << grp->gen_count); ++bits) {
+                int chi[24];
+                if (!consistent_table(&s, grp, gen_index, bits, chi)) {
+                    continue;
+                }
+                int8_t signs[8];
+                for (uint32_t k = 0; k < grp->gen_count; ++k) {
+                    signs[k] = (bits >> k & 1u) ? -1 : 1;
+                }
+                canon_group *g = signed_group(0, n, grp->gens, grp->gen_count, signs);
+                for (uint32_t mask = 0; mask < (1u << n); ++mask) {
+                    uint32_t atoms[4], k = 0;
+                    for (uint32_t a = 0; a < n; ++a) {
+                        if (mask >> a & 1u) {
+                            atoms[k++] = a;
+                        }
+                    }
+                    canon_root x;
+                    memset(&x, 0, sizeof x);
+                    x.kind = CANON_ROOT_SUBSET;
+                    x.n = n;
+                    CHECK(canon_subset_init(&x.u.subset, n, atoms, k) == CANON_COMPLETE);
+                    canon_obj_outcome o;
+                    canon_obj_stats st;
+                    uint32_t w[4];
+                    run_internal(g, &x, &o, &st, w);
+                    cases += 1;
+                    fast += st.fast_path;
+                    zeros += o.flags.zero_certified;
+                    visits += st.nodes;
+                    hits += st.hits;
+                    chis += st.characters;
+                    p1 += st.p1_nodes;
+                    builds += st.stab_builds;
+                    canon_subset_free(&x.u.subset);
+                }
+                canon_group_release(g);
+            }
+        }
+    }
+    printf("T1 signed consumer (%llu runs): fast path %llu, zero %llu, enumeration visits %llu, "
+           "stabiliser hits %llu, chi evaluations %llu, P1 nodes %llu, verified A rebuilds %llu\n",
+           (unsigned long long)cases, (unsigned long long)fast, (unsigned long long)zeros,
+           (unsigned long long)visits, (unsigned long long)hits, (unsigned long long)chis,
+           (unsigned long long)p1, (unsigned long long)builds);
+}
+
 int main(void)
 {
     const canon_context_options chain = {CANON_BACKEND_CHAIN}, expl = {CANON_BACKEND_EXPLICIT};
@@ -605,6 +675,7 @@ int main(void)
     t1_tier();
     tampered();
     graphs_and_errors();
+    counters();
     canon_context_release(ctx_of[0]);
     canon_context_release(ctx_of[1]);
     return check_finish("test_signed");
