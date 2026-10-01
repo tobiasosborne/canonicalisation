@@ -6,6 +6,6 @@
 
 **Milestones.** perm/bsgs/coset: M2. object/encoding: M3. partition/refine/search/symmetry/api: M4. arena/metrics: M5. scheduler/checkpoint: M6. cpu_dispatch: M8.
 
-**Current state.** Slice S1 (`docs/slices/S1.md`) implements the subset canonical-image path in `perm`, `bsgs` (explicit backend), `object` (subset), `encoding` (wire primitives, subset stream), `partition`, `refine`, `search`, `api`, `arena/checked.h`, `arena/refcount.h` and `util/sort` (shared stable sort); each module README says what exists. Other modules are placeholders.
+**Current state.** Slice S1 (`docs/slices/S1.md`) implements the subset canonical-image path in `perm`, `bsgs` (explicit backend), `object` (subset), `encoding` (wire primitives, subset stream), `partition`, `refine`, `search`, `api`, `arena/checked.h`, `arena/refcount.h` and `util/sort` (shared stable sort); each module README says what exists. Slice S2 (`docs/slices/S2.md`) adds coloured directed multigraphs: `object` (graph import and action, root-object dispatch), `encoding` (`Nat`, graph stream, `SIMPLE-UPPER-1` key), `refine` (the O stage with sparse signatures) and `search`/`api` generalised to a root object. Other modules are placeholders.
 
 **What may live here.** C17 only, no dependencies. Public declarations belong in `include/canon/`; headers here are internal.

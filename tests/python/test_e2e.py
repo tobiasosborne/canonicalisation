@@ -1,4 +1,4 @@
-"""End-to-end test of the slice S1 C path (docs/slices/S1.md section 5).
+"""End-to-end test of the slice S1 and S2 C paths (docs/slices/S1.md section 5, S2.md section 4).
 
 Drives tools/canon-cli (located through the CANON_CLI environment variable, else
 build/make/canon-cli) and compares its refs/compare/FORMAT.md records with the finite Python
@@ -6,20 +6,39 @@ model in checks/review_checks.py over the exhaustive T1 subset tier: every subgr
 for n <= 4 and every subset, with two generating sets per group (the full element list and the
 greedy generating sequence of review_checks.run_v2), which must also agree with each other
 (metamorphic test, spec section 5).  Also runs every subset entry of refs/vectors/golden.json
-and checks the spec 11.1 node quota.  Standard library only.  Without a built CLI the tests
-skip, unless CANON_REQUIRE_CLI=1, which makes them fail.
+and checks the spec 11.1 node quota.
+
+Slice S2 adds the graph tiers, compared field by field with
+review_checks.p1(n, group, "graph", (colours, arcs)):
+  G1 (exhaustive): n <= 2, every subgroup, every multiplicity vector in {0,1,2}^(n*n) (loops
+     included), colours all empty and distinct (bytes([a % 2])): the loop of
+     review_checks.run_v2;
+  G2 (sampled): n = 3 and 4, every subgroup, 40 seeded random digraphs per group with
+     multiplicities in {0,1,2}, labels from {"", "a"}, colours from {"", "c"};
+both with the full element list and the greedy generating sequence, which must agree; the
+CLI receives the arcs shuffled, with some multiplicities split into duplicate arcs (spec 4.1,
+5: insertion order and duplicate storage have no meaning).  Every graph stream the CLI emits
+must parse with tools/hexdump_stream.py.  Also the spec 7.4 graph entry of golden.json and a
+--max-nodes capacity case.
+
+Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
+makes them fail.
 """
 import json
 import os
 import pathlib
+import random
 import subprocess
 import sys
 import unittest
-from itertools import permutations
+from itertools import permutations, product
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "checks"))
 import review_checks as rc  # noqa: E402  (no side effects on import)
+
+sys.path.insert(0, str(ROOT / "tools"))
+import hexdump_stream as hs  # noqa: E402  (no side effects on import)
 
 GOLDEN = json.loads((ROOT / "refs" / "vectors" / "golden.json").read_text(encoding="utf-8"))
 CLI = pathlib.Path(os.environ.get("CANON_CLI") or (ROOT / "build" / "make" / "canon-cli"))
@@ -41,6 +60,33 @@ def run_cli(n, gens, atoms, case_id="e2e", max_nodes=None):
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
+
+
+def run_graph_cli(n, gens, colours, arcs, case_id="e2e", max_nodes=None):
+    """canon-cli p1-graph; colours is a tuple of n byte strings, arcs (s, t, label, m)."""
+    colour_arg = "" if all(c == b"" for c in colours) else ";".join(c.hex() for c in colours)
+    arc_arg = ";".join(f"{a},{b},{label.hex()},{m}" for a, b, label, m in arcs)
+    args = [str(CLI), "p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
+            "--colours", colour_arg, "--arcs", arc_arg, "--id", case_id]
+    if max_nodes is not None:
+        args += ["--max-nodes", str(max_nodes)]
+    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    lines = proc.stdout.splitlines()
+    fields = lines[0].split("\t") if len(lines) == 1 else None
+    return proc.returncode, fields, proc
+
+
+def scramble_arcs(arcs, rng):
+    """Representation change with no meaning (spec 4.1, 5): split some multiplicities into
+    duplicate arcs and shuffle the insertion order."""
+    out = []
+    for a, b, label, m in arcs:
+        if m >= 2 and rng.random() < 0.5:
+            out += [(a, b, label, 1), (a, b, label, m - 1)]
+        else:
+            out.append((a, b, label, m))
+    rng.shuffle(out)
+    return out
 
 
 def greedy_generators(group, n):
@@ -121,6 +167,120 @@ class GoldenSubsetCases(CliTestCase):
                                           case["expected_trace_hex"],
                                           case["expected_stream_hex"],
                                           witness_field(n, case["expected_witness"])])
+
+
+class GraphTiers(CliTestCase):
+    """Slice S2 graph tiers G1 and G2 (docs/slices/S2.md section 4)."""
+
+    def check_graph(self, n, group, generating_sets, colours, arcs, case_id, rng):
+        trace, data, witness = rc.p1(n, group, "graph", (colours, arcs))
+        # spec 3 deterministic witness: the least g in G with x^g = c (S1 notes, reading 1).
+        self.assertEqual(witness, min(g for g in group if rc.graph_bytes(
+            n, rc.act_object("graph", (colours, arcs), g)) == data))
+        expected = ["0001", "COMPLETE", trace.hex(), data.hex(), witness_field(n, witness)]
+        records = {}
+        for label, gens in generating_sets.items():
+            cid = f"{case_id}-{label}"
+            with self.subTest(cid):
+                code, fields, proc = run_graph_cli(n, gens, colours, scramble_arcs(arcs, rng),
+                                                   cid)
+                self.assertEqual(code, 0, proc.stderr)
+                self.assertIsNotNone(fields, proc.stdout)
+                self.assertEqual(fields[0], cid)
+                self.assertEqual(fields[1:], expected)
+                # S2 definition of done: every emitted graph stream parses strictly.
+                parsed = hs.parse_stream(bytes.fromhex(fields[4]))
+                self.assertEqual((parsed["n"], parsed["q"]), (n, 1))
+                records[label] = fields[1:]
+        # Metamorphic (spec 5): generator choice must not change any field.
+        self.assertEqual(records.get("full"), records.get("greedy"))
+        return len(records)
+
+    def test_g1_exhaustive(self):
+        # Exactly the n <= 2 graph loop of review_checks.run_v2.
+        rng = random.Random(20261001)
+        cases = 0
+        for n in range(3):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                generating_sets = {"full": sorted(group), "greedy": greedy_generators(group, n)}
+                for multiplicities, distinct in product(product(range(3), repeat=n * n),
+                                                        (False, True)):
+                    colours = tuple(bytes([a % 2]) if distinct else b"" for a in range(n))
+                    arcs = tuple((a, b, b"", multiplicities[a * n + b])
+                                 for a in range(n) for b in range(n)
+                                 if multiplicities[a * n + b])
+                    case_id = "g1-n%d-g%d-m%s-c%d" % (n, gi, "".join(map(str, multiplicities)),
+                                                     distinct)
+                    cases += self.check_graph(n, group, generating_sets, colours, arcs,
+                                              case_id, rng)
+        # (1 + 1 * 3 + 2 * 81) multiplicity vectors x 2 colourings x 2 generating sets.
+        self.assertEqual(cases, 2 * 2 * (1 + 3 + 2 * 81))
+
+    def test_g2_sampled(self):
+        cases = 0
+        for n in (3, 4):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                generating_sets = {"full": sorted(group), "greedy": greedy_generators(group, n)}
+                for k in range(40):
+                    rng = random.Random(1000003 * n + 1009 * gi + k)
+                    density = rng.choice((0.25, 0.5, 1.0))
+                    arcs = tuple((a, b, label, rng.choice((1, 2)))
+                                 for a in range(n) for b in range(n) for label in (b"", b"a")
+                                 if rng.random() < density * 2 / 3)
+                    colours = tuple(rng.choice((b"", b"c")) for _ in range(n))
+                    case_id = f"g2-n{n}-g{gi}-r{k}"
+                    cases += self.check_graph(n, group, generating_sets, colours, arcs,
+                                              case_id, rng)
+        self.assertEqual(cases, 2 * 40 * (6 + 30))
+
+    def test_golden_graph(self):
+        graph_cases = [c for c in GOLDEN["p1_cases"] if c["object"]["kind"] == "graph"]
+        self.assertEqual(len(graph_cases), 1)
+        for case in graph_cases:
+            with self.subTest(case["id"]):
+                n, obj = case["n"], case["object"]
+                colours = tuple(bytes.fromhex(c) for c in obj["vertex_colours_hex"])
+                arcs = [(a["source"], a["target"], bytes.fromhex(a["label_hex"]),
+                         a["multiplicity"]) for a in obj["arcs"]]
+                code, fields, proc = run_graph_cli(n, case["group_generators"], colours, arcs,
+                                                   case["id"])
+                self.assertEqual(code, 0, proc.stderr)
+                self.assertEqual(fields, [case["id"], "%04x" % case["objective_tag"], "COMPLETE",
+                                          case["expected_trace_hex"],
+                                          case["expected_stream_hex"],
+                                          witness_field(n, case["expected_witness"])])
+                hs.parse_stream(bytes.fromhex(fields[4]))
+
+    def test_graph_node_quota(self):
+        # spec 11.1: the arc-free graph on two vertices under Sym(2) has three NODE tokens.
+        code, fields, _ = run_graph_cli(2, [(1, 0)], (b"", b""), [], "gquota", max_nodes=1)
+        self.assertEqual(code, 3)
+        self.assertEqual(fields, ["gquota", "0001", "CAPACITY_LIMIT", "", "", "-"])
+        code, fields, _ = run_graph_cli(2, [(1, 0)], (b"", b""), [], "gquota3", max_nodes=3)
+        self.assertEqual((code, fields[2]), (0, "COMPLETE"))
+
+    def test_graph_invalid_and_usage(self):
+        # spec 4.1: zero multiplicities and out-of-domain vertices are invalid input.
+        for arcs in ([(0, 1, b"", 0)], [(0, 2, b"", 1)]):
+            code, fields, _ = run_graph_cli(2, [], (b"", b""), arcs, "gbad")
+            self.assertEqual((code, fields[2], fields[3:]), (3, "INVALID_INPUT", ["", "", "-"]))
+        for args in (["p1-graph", "--n", "2", "--colours", "00"],          # not N colours
+                     ["p1-graph", "--n", "2", "--colours", "0;00"],        # odd hex
+                     ["p1-graph", "--n", "2", "--colours", "zz;00"],       # not hex
+                     ["p1-graph", "--n", "2", "--arcs", "0,1,,"],          # empty multiplicity
+                     ["p1-graph", "--n", "2", "--arcs", "0,1,1"],          # three fields
+                     ["p1-graph", "--n", "2", "--arcs", "0,1,,1,5"],       # five fields
+                     ["p1-graph", "--n", "2", "--arcs", "0,1,x,1"],        # label not hex
+                     ["p1-graph", "--n", "2", "--atoms", "0"],             # subset option
+                     ["p1-subset", "--n", "2", "--arcs", "0,1,,1"],        # graph option
+                     ["p1-graph", "--n", "1", "--id", "#c"]):
+            with self.subTest(args):
+                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
+                                      check=False)
+                self.assertEqual(proc.returncode, 2)
+                self.assertEqual(proc.stdout, "")
 
 
 class CliStatuses(CliTestCase):
