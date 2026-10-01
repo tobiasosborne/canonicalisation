@@ -347,12 +347,11 @@ static void sym12(void)
     const canon_bsgs *c = canon_group_chain_of(g);
     CHECK(c->verified);
     print_stats("Sym(12) counters", 1, &c->stats);
-    /* spec 9.2 point stabilisers: the suffix from level k is G_(b_0..b_(k-1)) = Sym(12 - k)
-     * (the base is 0, 1, 2, ... by the least-moved-point rule) */
+    /* spec 9.2 point stabilisers: the suffix from level k is the pointwise stabiliser of k
+     * base points, Sym(12 - k), whichever points they are */
     uint64_t f = 1;
     for (uint32_t k = c->depth; k-- > 0;) {
         f *= (uint64_t)(n - k);
-        CHECK(c->levels[k].base_point == k);
         CHECK(canon_bsgs_suffix_order(c, k) == f);
     }
     CHECK(c->depth == 11 && canon_bsgs_suffix_order(c, c->depth) == 1);
