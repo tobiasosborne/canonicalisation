@@ -257,8 +257,9 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
     if (degree > 0 && generator_count > SIZE_MAX / degree) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: products checked */
     }
-    /* spec 4.1, 9.1: generators must be bijections of the domain. */
-    for (size_t i = 0; i < generator_count; ++i) {
+    /* spec 4.1, 9.1: generators must be bijections of the domain.  On degree 0 every
+     * generator is the empty permutation and is not read (generators may be NULL). */
+    for (size_t i = 0; i < generator_count && degree > 0; ++i) {
         int ok = canon_perm_validate(generators + i * (size_t)degree, degree);
         if (ok < 0) {
             return CANON_RESOURCE_LIMIT;
@@ -294,7 +295,7 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
     /* spec 9.1 (reference construction, here by explicit closure): breadth first in discovery
      * order, generators in input order. */
     for (size_t i = 0; i < count; ++i) {
-        for (size_t j = 0; j < generator_count; ++j) {
+        for (size_t j = 0; j < generator_count && degree > 0; ++j) {
             canon_perm_compose(table + i * row_words, generators + j * (size_t)degree, tmp,
                                degree); /* tmp = row_i * gen_j, row_i acts first */
             uint64_t h = hash_row(tmp, degree);

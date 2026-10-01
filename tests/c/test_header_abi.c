@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 #include "canon/canon.h"
-#include "perm/perm.h" /* internal header: compile check only (declarations, no definitions) */
+#include "perm/perm.h" /* internal header: compile check only */
 
 _Static_assert(sizeof(canon_objective) == 2, "objective tags are uint16 (spec section 3)");
 _Static_assert(sizeof(canon_schema) == 2 && sizeof(canon_action) == 2, "U16 fields (spec 4.1)");
