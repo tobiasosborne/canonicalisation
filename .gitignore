@@ -21,3 +21,9 @@ review_sources/**
 __pycache__/
 *.py[cod]
 .lake/
+
+# Build outputs and Lean build state.
+build/
+*.o
+*.a
+lean/.lake/

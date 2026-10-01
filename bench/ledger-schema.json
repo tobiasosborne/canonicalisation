@@ -1,0 +1,39 @@
+{
+  "$comment": "Schema-like description of ONE timing record (spec section 19, section 12.4). One JSON object per line in a ledger file. Types are JSON types; 'enum' lists the allowed values.",
+  "title": "canon benchmark ledger record",
+  "type": "object",
+  "required": ["instance_id", "family", "n", "N", "m", "objective", "profile", "encoding", "order", "mode",
+               "T_seconds", "L_seconds", "bound_category", "bound_equation", "delta", "rho", "delta_frac",
+               "hardware_pin", "censored"],
+  "properties": {
+    "instance_id": {"type": "string", "description": "Stable identifier of the instance (family, parameters, seed)."},
+    "family": {"type": "string", "description": "Benchmark family of spec section 19, e.g. sparse-regular, grid-subset, tensor-monomial."},
+    "n": {"type": "integer", "minimum": 0, "description": "Number of atoms (degree)."},
+    "N": {"type": "integer", "minimum": 0, "description": "Number of base vertices including any auxiliaries (N = n for profile P1)."},
+    "m": {"type": "integer", "minimum": 0, "description": "Input size parameter: arcs/tuples/stored references as defined for the family."},
+    "objective": {"type": "integer", "minimum": 1, "maximum": 9, "description": "Objective tag, spec section 3 (1 = CANONICAL_IMAGE ... 9 = CONSTRAINT_ENUM)."},
+    "profile": {"type": "integer", "description": "Profile tag: 0 NO_TREE, 1 P1."},
+    "encoding": {"type": "integer", "description": "Encoding ID: 2 = CDAG-2."},
+    "order": {"type": "integer", "description": "Order ID: 1 = CDAG-BYTE-1, 2 = SIMPLE-UPPER-1."},
+    "mode": {"type": "string", "enum": ["cold", "warm", "amortised"], "description": "Setup cost accounting: cold includes group build/verification, warm reuses them, amortised divides over a batch."},
+    "T_seconds": {"type": "number", "minimum": 0, "description": "Measured end-to-end time, including import, group build, output."},
+    "L_seconds": {"type": "number", "minimum": 0, "description": "The stated lower bound in seconds."},
+    "bound_category": {"type": "string", "enum": ["U", "A", "H", "E"], "description": "U problem/contract, A specified-algorithm work, H hardware model, E calibrated engineering estimate (never a lower bound)."},
+    "bound_equation": {"type": "string", "description": "The equation or reference (e.g. docs/performance-lower-bounds.md section) that produced L."},
+    "delta": {"type": "number", "description": "Delta = T - L, seconds."},
+    "rho": {"type": "number", "description": "rho = T / L."},
+    "delta_frac": {"type": "number", "description": "delta = (T - L) / L."},
+    "hardware_pin": {
+      "type": "object",
+      "required": ["cpu", "clock_policy", "memory", "compiler", "flags"],
+      "properties": {
+        "cpu": {"type": "string"},
+        "clock_policy": {"type": "string", "description": "Governor, turbo/boost and SMT state."},
+        "memory": {"type": "string", "description": "Type, speed, channels, capacity."},
+        "compiler": {"type": "string", "description": "Name and exact version."},
+        "flags": {"type": "string", "description": "Exact compiler flags."}
+      }
+    },
+    "censored": {"type": "boolean", "description": "True if the run hit a time/memory limit; T_seconds is then a lower bound on the true time. Censored cases are kept, never dropped."}
+  }
+}
