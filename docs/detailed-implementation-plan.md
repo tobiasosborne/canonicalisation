@@ -17,6 +17,32 @@ Status words used below: **frozen** (spec v2.0 fixes it), **decided** (chosen he
 7. **Git.** Explicit paths only; never `git add -A`. Push to `main` only when asked. Blind reference implementations are sealed by recorded commit hash and never edited afterwards except through the divergence protocol (§3.7 below).
 8. **Status and flags.** Every result carries `canon_status` and the nine independent flags of spec §3.2. A false flag means unproved. No code path may set `image_canonical` without the coverage evidence its objective requires.
 
+## 0a. Delivery process: vertical slices (decided 1 October 2026)
+
+The milestones above are gates. Delivery is organised as **vertical slices**: each slice carries one thin, end-to-end path from public API to canonical bytes and tests, across however many `src/` modules it needs, rather than completing one module at a time. Rules:
+
+1. **Foundation before proofs.** Lean work (M1, §4 below) is deferred until the foundation slices S1–S6 have landed. Theorem statements stay recorded in the `lean/` docstrings; nothing in S1–S6 waits on a proof. The M1 gate still precedes the "mathematical reference complete" review.
+2. **Implementer and reviewer are separate.** An Opus agent implements each slice from a written brief. The slice ends with a code review by a different agent or session against the brief, the cited spec sections and the tests; findings are fixed before the next slice starts. A slice is not landed until its review is closed.
+3. **Every slice is green end to end.** `make test`, `make check`, the CMake build with sanitizers and CI all pass at the end of each slice. No slice leaves a failing or skipped test.
+4. **Backends are swappable behind interfaces.** Early slices may use deliberately simple backends (explicit group enumeration, no pruning) behind the interfaces of §2; later slices replace the backend and must reproduce identical bytes on the accumulated test corpus. Capacity limits make the simple backends deterministic (§11.1), never approximate.
+5. **End-to-end oracle from S1.** Each slice extends `tools/canon-cli` (emits `refs/compare/FORMAT.md` records) and the Python driver `tests/python/test_e2e.py`, which compares the C path against the Python model in `checks/review_checks.py` over the exhaustive T1 tier and against `refs/vectors/golden.json`. This is the running regression corpus for backend swaps.
+6. **M0 adjustment.** The production C path is not blind with respect to `checks/review_checks.py`. The blind reference for the M0 gate is therefore **ref-b in Julia**, commissioned after S6 from an author who has not seen `src/`, `checks/` or `tools/`. A sealed snapshot of the unpruned C path serves as ref-a. Until ref-b exists, the Python model is a cross-check, not a blind reference, and semantics are not frozen.
+
+### Slice schedule
+
+| Slice | End-to-end path | Modules touched | Backend simplifications allowed | Lands plan WPs |
+|---|---|---|---|---|
+| **S1** | Subset under a small group → P1 canonical image → CDAG-2 bytes, trace, witness, status and flags, through the public API and `canon-cli`; T1 agreement with the Python model on all 40 subgroups of `Sym(n)`, `n ≤ 4`, all subsets | perm, group (explicit backend), object (subset), encoding (wire primitives, subset stream), partition, refine (initial key, G stage), search (unpruned tree, leaf map), api, tools, tests | Groups as explicit element lists under a capacity on order; no decoder; no pruning | 2.1, parts of 3.1, 3.5, 4.1–4.3, 4.6 |
+| **S2** | Coloured directed multigraph → P1 with the O stage → graph stream; the §7.4 one-arc case; T1 digraphs with multiplicities `≤ 2` for `n ≤ 2`; `SIMPLE-UPPER-1` key | object (graph, CSR/CSC, labels), refine (O stage), encoding (graph record, Nat) | as S1 | 3.4, 4.2 |
+| **S3** | Verified stabiliser chain replaces explicit enumeration: build, independent verifier, sift, order, rebase, tuple minimum, pointwise-stabiliser orbits; byte identity with S1/S2 corpus; T2 random groups up to `n ≤ 8` | bsgs | Provenance DAG may start as input/inverse/product records without compaction | 2.2–2.5 |
+| **S4** | Coset enumerator and the enumeration objectives: `LEX_MIN_IMAGE` (both orders), `TRANSPORTER_ONE`, `STABILISER`, `TRANSPORTER_COSET`; oracle agreement on T1/T2; canonical `Group(H)` bytes for the stabiliser answer | coset, search (consumers), encoding (Group/Perm records) | Greedy generators by constrained descent; no pruning | 2.6, 2.7, 4.4 (part) |
+| **S5** | Nested objects: tuples, sets, multisets, literals, permutation/subgroup/coset leaves; extensional normalisation; CDAG-2 decoder and validator; `canon_object_create` from a stream; sharing tests to depth 60 | object (dag), encoding (decoder, validator) | none | 3.2, 3.3, 3.6 |
+| **S6** | Labeling cosets and signed images: typed λ = ρt, complete `Aλ`, χ validation by the lifted group, zero certificate, nonzero via complete stabiliser, sign covariance tests, cross-feed `s_A(C_B(x))·s_A(x)=s_B(x)` | search (objectives 0x0005, 0x0007), api | none | 4.4 (rest) |
+| **S7** | Certificate v0 and the independent checker; first prune (node-stabilising automorphism) with its checker rule; mutation rejection | symmetry, checker | checker uses its own slow refinement | 4.5, 4.7 |
+| **S8** | Capacity admission, live-memory ledger, metrics, fault injection, fuzz targets; `solve_batch`; output sink pause/fail | arena, metrics, api | none | 4.8, 5.1, 5.2 |
+
+After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruption) and M1 follow; M5 benchmarks and M6 concurrency are scheduled only after M0 closes.
+
 ## 1. Layout to milestone map
 
 | Path | Milestone | Governing spec sections | Contents when complete |
@@ -365,8 +391,7 @@ The milestone plan's ranges are not re-estimated here. Within them, the decided 
 
 ## 15. Immediate next actions
 
-1. Extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2) and write the case input schema.
-2. Write the case input schema and the blind-reference brief as `refs/BRIEF.md`; the brief must be self-contained and must not link to `checks/review_checks.py`.
-3. Write the exhaustive oracle (WP0.3) and the T1 generator (WP0.6); run them against the Python P1 model in `checks/review_checks.py` as a smoke test of the harness only, recording that this is not a blind reference.
-4. Commission ref-a (C17) and ref-b (Julia) with the brief; seal on completion.
-5. In parallel, write `lean/ASSUMPTIONS.md` and the theorem statements of §4 in prose, so that M1 can start the day mathlib is approved for fetching.
+1. Implement slice S1 from its brief (`docs/slices/S1.md`); review; land.
+2. S2 through S8 in order, each with its brief under `docs/slices/` and a closing review.
+3. After S6: extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2), write the case input schema and the blind brief `refs/BRIEF.md`, and commission ref-b in Julia.
+4. After S8 and the M0 gate: `lean/ASSUMPTIONS.md` and M1.
