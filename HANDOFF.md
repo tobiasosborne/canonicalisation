@@ -1,82 +1,98 @@
-# Handoff: canonicalisation specification v2.0, public repository
+# Handoff: canonicalisation, foundation slices S1–S5 on `main`
 
-**State on 1 October 2026.** The design documents are complete at specification v2.0 and published as [tobiasosborne/canonicalisation](https://github.com/tobiasosborne/canonicalisation) under AGPL-3.0-or-later. The repository is now scaffolded (build, public header, module layout, blind-reference harness, golden vectors, Lean skeleton, CI) and has a [detailed implementation plan](docs/detailed-implementation-plan.md). Delivery is by vertical slices with an Opus implementer and a closing code review per slice (detailed plan §0a); Lean work is deferred until the foundation slices land. Slices S1 (subset canonical image, explicit group backend, public API, CLI, end-to-end test against the Python model) S2 (coloured directed multigraphs, the O stage with sparse signatures, Nat encoding, simple-undirected wrapper, SIMPLE-UPPER-1 key) S3 (deterministic Schreier–Sims chain with fixed policies, independent verifier, provenance, rebase, tuple minimum; explicit backend kept as oracle) S4 (§8.1 coset enumerator, constrained least-element descent, minimum/transporter/stabiliser/transporter-coset objectives, canonical Group and coset bytes, deterministic witness, verify_witness, seven-field FORMAT) and S5 (record arena, extensional normalisation and height numbering, strict CDAG-2 decoder, canonical-form validator, action on nested objects and group leaves, root-kind detection, `canon_object_create` from a stream) have landed and been reviewed; see `docs/slices/S1.md` to `S5.md` and their notes. **`main` is kept at the branch head after each landing.** No Lean proofs or benchmarks exist. Read [README.md](README.md) first for what the project is. This file records state, decisions, constraints and the next steps for whoever continues.
+**State on 1 October 2026 (end of the first implementation session).** Specification v2.0 is the normative document. The repository is scaffolded, has a [milestone plan](docs/implementation-plan.md) and a [detailed work-package plan](docs/detailed-implementation-plan.md), and is being implemented in **vertical slices** (detailed plan §0a): a written brief under `docs/slices/`, an Opus implementer, a separate high-effort code review, fixes, then landing on the working branch and fast-forwarding `main`. Slices **S1–S5 are landed, reviewed and on `main`**. The **S6 brief is ready** (`docs/slices/S6.md`) and an implementation run was started at the end of the session; any S6 commits on the working branch beyond `main` are **unreviewed** until a "Land slice S6" commit says otherwise. The **S7 brief is a draft for the maintainer's review** (`docs/slices/S7.md`): it carries the first pruning lemma and the certificate format and must not be implemented before that review. No Lean proofs, benchmarks or performance work exist, by decision. Read [README.md](README.md) first for what the project is; this file records state, decisions, constraints and next steps.
 
-## User intent and standing constraints
+## What works now (all through the public API and `tools/canon-cli`)
 
-- **Goal.** An exact, native C canonicalisation library with broad finite permutation-group coverage and excellent performance. Correctness and complexity come first. Performance is reported as gaps to explicitly justified lower bounds, on realistic commodity hardware (the model is a Ryzen 9 9950X, DDR5-5600 and an RTX 5080), with the best legal data representations.
-- **Evidence.** Literature ground truth is **local primary sources, preferably TeX**, with provenance. Web summaries, including TensorGR's web-sourced literature claims, are leads only. Source code and manufacturer documents support implementation and hardware claims respectively; they are not measurements.
-- **Machine load.** The user's machine has CPU contention. Keep processing light: no calibration benchmarks, dependency builds, mathlib unpacking or broad filesystem scans. Use targeted reads and bounded checks, at `nice -n 19` when running anything non-trivial.
-- **Delegation.** The user authorises subagents, including other model families (GPT/Codex via `codex exec`, model `gpt-6-astra` at `xhigh` is the configured default). Review delegated output skeptically before committing it.
-- **Git.** Commit when a task is complete. Stage explicit paths and never use `git add -A` at the root. Since 1 October 2026 the user has asked that everything be merged to `main` unless there is a compelling reason not to: push each landed slice to `main` (fast-forward) as well as to the working branch.
+| Capability | Slice | Evidence |
+|---|---|---|
+| P1 canonical image of a subset | S1 | 539 cases: every subgroup of Sym(n), n ≤ 4, every subset, two generating sets, byte-identical with the Python model |
+| P1 canonical image of a coloured directed multigraph (O stage, Nat encoding, simple-undirected wrapper, SIMPLE-UPPER-1 key) | S2 | 664 exhaustive and 2880 sampled digraphs; every stream parsed by the strict dumper |
+| Deterministic Schreier–Sims chain with fixed policies, independent verifier (written before the constructor), provenance, rebase, §7.2 tuple minimum; explicit-enumeration backend kept as oracle | S3 | Byte identity between backends on every tier; 200 random groups; Sym(12), a 64-cycle; ten certificate mutations rejected |
+| §8.1 coset enumerator, constrained least-element descent, `LEX_MIN_IMAGE` (both orders), `TRANSPORTER_ONE`, `STABILISER`, `TRANSPORTER_COSET`, canonical `Group(H)` and coset bytes, deterministic witness, `verify_witness` | S4 | Every objective against brute force on T1 and random groups to degree 7, both backends; enumerator visits exactly G, each element once |
+| Nested objects: arena, extensional normalisation and height numbering, strict CDAG-2 decoder, canonical-form validator, action on nested objects with permutation, subgroup and coset leaves (stored verified chains, conjugated), import from streams | S5 | 280 random nested objects against a Python oracle, both backends; imported subsets and graphs identical to built ones; every decoder rule tested |
+
+Still stubs: `CANONICAL_LABELING_COSET` and `SIGNED_CANONICAL_IMAGE` (S6), `CONSTRAINT_*`, `solve_batch`, checkpoints; the checker prints a placeholder.
+
+## Process (follow it; it has caught an error in every brief so far)
+
+1. Write or revise the brief `docs/slices/Sk.md` (scope, API, design with spec citations, tests, definition of done).
+2. Launch an Opus implementer with the brief, the earlier briefs and notes, the spec sections, and the standing rules (below). It commits with explicit paths on the working branch and does not push.
+3. Verify independently: `rm -rf build && make && make SANITIZE=1 BUILD=build/san test && make check && cmake -S . -B build/cm -DCANON_SANITIZE=ON && cmake --build build/cm && ctest --test-dir build/cm`.
+4. Run `/code-review high <base>..HEAD`; send every finding to the implementer; verify the fix commit the same way.
+5. Record the brief's errors the implementer found in the detailed plan; update README, HANDOFF and CLAUDE.md; commit; push the branch and fast-forward `main` (`git push origin HEAD:main`).
+
+Each slice has cost about 0.5–0.75 M subagent tokens and 40–60 minutes wall-clock including review and fixes. Reviews have found no mathematical defect so far; findings have been contract gaps, hot-path waste, lifetime hazards and duplication, all fixed within the slice.
+
+## Standing constraints
+
+- **Goal.** An exact, native C canonicalisation library with broad finite permutation-group coverage and excellent performance; correctness and complexity first; performance reported as gaps to justified lower bounds.
+- **Evidence.** Local primary sources with provenance (`review_sources/SOURCES.json`); web summaries are leads only; nothing third-party is redistributed.
+- **Machine load.** Light: `nice -n 19` for anything non-trivial; no downloads, dependency builds or mathlib fetches without the user's go-ahead. The sanitizer `ctest` run now takes about five minutes because of the Python end-to-end tiers; keep sample sizes in check.
+- **Code rules** (`CLAUDE.md`, `CONTRIBUTING.md`): C17, no dependencies, the strict warning set with `-Werror`, sanitizer-clean; cite the spec section at every implemented rule; no golden constants in `src/` or `tools/`; one checked allocator and growth helper (`src/arena/alloc.h`), checked arithmetic (`src/arena/checked.h`), the shared stable sort (`src/util/sort.{h,c}`), atomic refcounts, grow-only workspace scratch, no borrowed pointers after a run, immutable contexts, backend-agnostic API through `canon_group_ops`.
+- **Git.** Explicit paths only; never `git add -A`. The user has asked (1 October 2026) that everything be merged to `main`: fast-forward `main` after each landing. Implementers sign their commits with their own model's attribution.
 
 ## Repository layout
 
 | Path | Content |
 |---|---|
-| [docs/specification.md](docs/specification.md) | Architecture/implementation specification v2.0 (the normative document) |
+| [docs/specification.md](docs/specification.md) | Architecture/implementation specification v2.0 (normative) |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | Milestones M0–M8, H0/H1, gates, obligations ledger, effort judgments |
-| [docs/performance-lower-bounds.md](docs/performance-lower-bounds.md) | Hardware model, U/A/H bound taxonomy, envelopes, small-instance regime (§6.7) |
-| [reviews/referee-report.md](reviews/referee-report.md) | Referee report on v1.0: 18 findings and release gates (historical) |
-| [reviews/review-response.md](reviews/review-response.md) | Maps findings 1–18 and TensorGR T1–T14 to v2.0 decisions and open obligations |
-| [reviews/algorithm-literature-review.md](reviews/algorithm-literature-review.md), [reviews/formalisation-literature-review.md](reviews/formalisation-literature-review.md) | Primary-source audits |
-| [reviews/tensorgr-learnings.md](reviews/tensorgr-learnings.md) | Lessons from [TensorGR.jl](https://github.com/tobiasosborne/TensorGR.jl) (commit `b492891`) |
-| [docs/detailed-implementation-plan.md](docs/detailed-implementation-plan.md) | Work packages per milestone, internal C interfaces, decided policies, test matrices, sequencing, risks |
-| [checks/review_checks.py](checks/review_checks.py) | Finite sanity checks (about 0.6 s) |
-| [review_sources/](review_sources/README.md) | Provenance only: `SOURCES.json` inventory plus `fetch_sources.py` verify/rebuild |
-| `include/canon/canon.h`, `src/`, `checker/` | Public header with §3.2 statuses, §3 objective tags, frozen IDs, §17 opaque handles and the S1 API (context, capacity descriptor, subset builder, result accessors; signatures provisional until M4); one `src/` directory per spec §5 module, S1–S5 code in perm, bsgs (chain, verify, provenance, explicit), coset, object (subset, graph, dag), encoding (including the CDAG-2 encoder, decoder and validator), partition, refine, search, api, arena, util; independent checker stub |
-| `docs/slices/` | Per-slice briefs (`S1.md` to `S6.md`) and implementation notes (`S1-notes.md` to `S5-notes.md`: spec readings taken, deviations, review fixes, what was left out) |
-| [refs/](refs/README.md) | M0 blind protocol, `SEALS.md`, `compare/FORMAT.md`, `compare/compare.py` (with `--plant`), `vectors/golden.json` (spec §7.4 transcribed and test-verified) |
-| `tests/`, `tools/`, `bench/`, `lean/` | C and Python tests; strict CDAG-2 dumper; ledger schema; Lean skeleton (docstrings only, not built) |
-| [CLAUDE.md](CLAUDE.md), [CONTRIBUTING.md](CONTRIBUTING.md), `.github/workflows/ci.yml` | Rules for agents and contributors; CI runs gcc and clang builds with and without sanitizers, ctest, the finite checks and the Python tests |
+| [docs/detailed-implementation-plan.md](docs/detailed-implementation-plan.md) | Work packages, internal interfaces, decided policies, §0a slice process and schedule, WP0.9 external oracle tier, corrections found during slices |
+| `docs/slices/` | Briefs `S1.md`–`S7.md` (S7 is a draft) and notes `S1-notes.md`–`S5-notes.md` (spec readings, deviations, review fixes, counters, what was left out) |
+| [docs/performance-lower-bounds.md](docs/performance-lower-bounds.md) | Hardware model, U/A/H bound taxonomy, envelopes |
+| `reviews/` | Referee report on v1.0, response, literature audits, TensorGR learnings |
+| `include/canon/canon.h` | Public header: statuses, objective tags, frozen IDs, opaque handles, the S1–S5 API (provisional until M4) |
+| `src/<module>/` | perm, bsgs (chain, verify, provenance, conjugate, explicit), coset (descent, enumerator), object (subset, graph, dag, root dispatch), encoding (wire, Nat, streams, Group/Perm, SIMPLE-UPPER-1, CDAG-2 encoder/decoder/validator), partition, refine (P1 stages), search (P1 tree, objectives), api, arena, util; scheduler, checkpoint, metrics, symmetry, cpu_dispatch are READMEs only |
+| `checker/` | Independent checker stub (shares no code with `src/`; S7 fills it) |
+| `tools/` | `canon-cli` (every objective, both backends, FORMAT records, `validate`), `hexdump_stream.py` (strict CDAG-2 dumper) |
+| `tests/c/`, `tests/python/` | 26 C test programs; `test_e2e.py` tiers T1, G1, G2, S4 objectives, D1, under both backends; golden vectors; dumper and compare tests |
+| [refs/](refs/README.md) | M0 blind protocol, `SEALS.md` (empty), seven-field `FORMAT.md`, `compare.py` with `--plant`, `vectors/golden.json` (spec §7.4, test-verified) |
+| [checks/review_checks.py](checks/review_checks.py) | Finite sanity checks and the Python P1 model the e2e tiers compare against (not a blind reference) |
+| `review_sources/` | Provenance only |
+| `bench/`, `lean/` | Ledger schema placeholder; Lean skeleton (docstrings only, not built) |
+| `CLAUDE.md`, `CONTRIBUTING.md`, `.github/workflows/ci.yml` | Agent and contributor rules; CI: gcc and clang with and without sanitizers, ctest, finite checks, Python tests |
 
 ## History and baselines
 
-The Git history was rewritten before publication so that third-party files are not redistributed. The rewrite removed 141 third-party files (papers, TeX, a scan, vendor documents, isocert code, mathlib files) from both earlier commits. It changed nothing else.
-
 | Commit | Content |
 |---|---|
-| `7ad98cb` | Reviewed **v1.0 baseline**; spec SHA-256 `924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`. Referee line links are permalinks to this commit. Its pre-publication hash was `fb014c9`. |
-| `59cb67c` | v2.0 revision (pre-publication hash `3ec26b1`); referee report SHA-256 there `3b061b846e454957a8c7857e3a79b7552fdcb7c09bded7d9d2c4af186a2f38b8` |
-| `8896edc` | Reorganisation, provenance inventory, README, LICENSE, this handoff |
-| next | Repository scaffold and detailed implementation plan (branch `claude/jolly-lamport-jvbe9f`) |
+| `7ad98cb` | Reviewed **v1.0 baseline**; spec SHA-256 `924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`; referee permalinks point here (pre-publication `fb014c9`) |
+| `59cb67c` | v2.0 revision (pre-publication `3ec26b1`) |
+| `8896edc` | Reorganisation, provenance inventory, README, LICENSE |
+| `c473d49`, `e45e5b2`, `07dace4` | Scaffold; detailed plan; vertical-slice process and S1 brief |
+| `ce4bfa2`, `b794f23`, `d31e38e`, `880a052`, `0407fcd` | Review-fix commits closing S1, S2, S3, S4, S5 |
+| `9c07db7`, `24c715f`, `e2a0fb3`, `b127a86`, `5d7aa51` | "Land slice" doc commits for S1–S5 |
+| `563d799` | S7 draft brief |
 
-- **Backup.** The full pre-publication history, including the removed files, is kept locally in `~/Projects/canonicalisation-pre-publication-2026-09-30.bundle` (verified with `git bundle verify`). Never push it.
-- **Local copies.** The removed files remain on the local disk under `review_sources/`, git-ignored; `python3 review_sources/fetch_sources.py` reports 150/150 OK.
-- **Rewritten links.** In the reorganisation, the referee report's link targets were rewritten: absolute paths became relative ones, and v1.0 line links became baseline permalinks. Its text is otherwise unchanged, so its file hash now differs from the historical value above.
+The pre-publication history with third-party files is in `~/Projects/canonicalisation-pre-publication-2026-09-30.bundle` on the maintainer's machine; never push it. Local copies of the sources remain git-ignored under `review_sources/`.
 
-## v2.0 decisions (details in the review response)
+## Decisions taken during the slices (details in the notes and the detailed plan)
 
-1. **Profile P1 and wire grammar `CDAG-2`.** P1 (`0x0001`) is executable. `CDAG-2` (`0x0002`) is concrete, with a canonical DAG numbering that preserves sharing. Golden vectors are hand-verified.
-2. **Typed labeling cosets.** λ = ρt ∈ Gρ, with complete coset Aλ and explicit coordinate reconstruction.
-3. **Objective-specific completeness.** Each objective has its own complete reference algorithm built on disjoint coset enumeration. Image-only pruning never proves a full stabiliser.
-4. **Group encoding.** Exact symmetric-product detection comes first, otherwise greedy canonical generators (O(n² log n) entries). The cubic transversal format is diagnostic only.
-5. **Signed objective.** A verified odd automorphism certifies zero; a nonzero result needs complete-stabiliser evidence.
-6. **Runtime.** Deterministic capacity admission, a full live-memory ledger, the mutex-linearised coverage state machine, R1–R3, and the `CALLER_THREADS` / `CORE_POOL` modes.
-7. **Accounting and proof layers.** The U/A/H versus E bound discipline, with Δ/ρ/δ reporting. Assurance layers are separate milestones.
+1. **Backends.** The chain is the default; the explicit table is a creation-time context option and the oracle in C tests; `max_group_order` applies to the explicit backend only.
+2. **Orders are `uint64`.** The chain refuses `|G| ≥ 2^64` with `CAPACITY_LIMIT`; §9.4 rule 1 is decided with overflow-detecting factorial products; `canon_nat` (multi-limb) is deferred to the slice that lifts the limit.
+3. **Quota.** `max_search_nodes` counts P1 `NODE` tokens plus enumeration `visit` calls, one quota per solve, so `CAPACITY_LIMIT` is a function of the input and descriptor.
+4. **Witness.** For the unpruned tree the least leaf witness attaining the key equals the §3 deterministic witness (checked on every tier, not assumed); `witness_mode = DETERMINISTIC` computes it from the complete stabiliser.
+5. **Constrained descent.** Constraints first, then minimisation (the brief had it interleaved; S4 showed the counterexample).
+6. **Output size.** Exact stream length for subsets, graphs and nested objects with tags 01–06; the §9.4 bound for subgroup and coset leaves, whose payload length is not invariant under conjugation (S5 counterexample: C₄ on 4 points).
+7. **Group leaves.** Verified chains are stored in the arena and conjugated with `canon_bsgs_conjugate` on the action path, never rebuilt per tree node.
+8. **Costs accepted for now (M5 work):** one chain rebuild per step of `tuple_min` and of the coset descent; transient chains in the §9.4 writers; the sanitizer e2e runtime.
 
-## Open items and next steps
+## Open items, in order
 
-1. **Engineering appendix decision (user's call).** v2.0 compressed some v1.0 engineering guidance: the per-kernel traffic table, the calibration/dispatch table, task payload formats, the 20× grain-size target, physical renumbering, and the refinement value model. Either restore it as an appendix to the spec, adapted to v2.0 contracts, or record that it is deliberately dropped. v1.0 at `7ad98cb` holds the text.
-2. **H0.** Retrieve `leanprover/hex-graph-iso` and `leanprover/hex-perm-group` at full pinned commits, with SHA-256 manifests, and audit their scope, before any plan item depends on them. This needs network access and the user's go-ahead.
-3. **Next slice: S6** (labeling cosets and signed images; brief at `docs/slices/S6.md`), per the schedule in the detailed plan §0a. Each slice: brief under `docs/slices/`, Opus implements, separate review, fixes, land.
-4. **M0 (first implementation milestone).** Brief two blind, independent reference evaluators of P1/CDAG-2/API rules. They must share no code, and must show agreement beyond oracle range plus planted-corruption sensitivity. Retain both. The protocol, interchange format, comparison script and golden corpus are in `refs/`; per the detailed plan §0a item 6, the blind reference is ref-b in Julia, commissioned after S6 from an author who has not seen `src/`, `checks/` or `tools/`; a sealed snapshot of the unpruned C path serves as ref-a. Remaining steps: add the `group_hex` field to the format, write the case schema, the blind brief, the oracle and the case generator (detailed plan §3, §15).
-5. **Scaffold readings to confirm.** The scaffold made four readings of the spec that a v2.1 editorial pass should make explicit (detailed plan WP0.1): `Group(1)` has no stated degree; the DAG golden case's trace and witness are stated only by reference; `(0,2)^(pq)=(2,1)` is read as cycle conjugation; status names have no numeric values (the header assigns 0–7 in listed order). The §17 argument lists in `include/canon/canon.h` are provisional until M4. **Spec defect found in S3 (needs a v2.1 fix):** the §9.1 verifier list omits a nesting condition (each level's generator set contains the next level's); without it the listed checks accept a chain for `Sym(3)` of order 4 (detailed plan WP2.4 has the counterexample). The implementation checks nesting (`NOT_NESTED`).
-6. **Named obligations.** These stay open: SIGN-COVER, PROFILE-EQUIV, ADAPTER-FAITHFUL, GROUP-CERT, RUNTIME-REFINE and SOURCE-GATE (defined in the plan). McKay–Piperno Thm 5, Niehoff, SeQuant and dejavu remain unverified leads.
+1. **S6: labeling cosets and signed images.** Brief ready. If unreviewed S6 commits exist on the branch: verify, review, fix, land, fast-forward `main`, update this file.
+2. **S7 draft (maintainer's review required before implementation).** Three open points in `docs/slices/S7.md` §6: (a) whether the work quota may count explored nodes under a fixed prune policy until S8 ties the quota to the problem identity; (b) certificate v0 with a rebased chain per G stage (small checker, large certificates) versus a checker that owns Schreier–Sims; (c) whether implicit automorphism discovery from equal leaf keys is included.
+3. **S8:** capacity admission and live-memory ledger, metrics, `solve_batch`, sink pause/resume, fault injection and fuzzing (detailed plan §0a schedule).
+4. **External oracle tier (detailed plan WP0.9), needs the user's go-ahead for acquisition:** GAP with the `images` package first, SymPy second, nauty third, xperm with the tensor wrapper; each pinned in `SOURCES.json`; none checks P1 traces or bytes.
+5. **M0 blind reference:** ref-b in Julia after S6, from an author who has not seen `src/`, `checks/` or `tools/`; the case schema and blind brief (`refs/BRIEF.md`) are still to be written; a sealed snapshot of the unpruned C path is ref-a.
+6. **Deferred features:** `CONSTRAINT_ONE/ENUM`; the signed labeling orientation σ_ρ (§3.1); relations record `0a` and nested graph records (`UNSUPPORTED_ACTION` today); `canon_nat`; public cancellation; partial results on interruption.
+7. **Spec v2.1 editorial items.** (a) **Defect:** the §9.1 verifier list needs a nesting condition, each level's generator set containing the next level's; without it a chain for Sym(3) of order 4 passes every listed check (detailed plan WP2.4). (b) `Group(1)` has no stated degree; (c) the DAG golden case's trace and witness are stated only by reference; (d) `(0,2)^(pq)=(2,1)` is read as cycle conjugation; (e) status names have no numeric values (the header assigns 0–7 in listed order); (f) `SIMPLE-UPPER-1` for n ≤ 1 has no padding byte; (g) `tools/hexdump_stream.py` and the decoder now reject overlapping rule-1 Group blocks.
+8. **Earlier open items unchanged:** the engineering-appendix decision (restore v1.0's engineering guidance or record it as dropped); H0 (retrieve the `hex` repositories at pinned commits, needs network); named obligations SIGN-COVER, PROFILE-EQUIV, ADAPTER-FAITHFUL, GROUP-CERT, RUNTIME-REFINE, SOURCE-GATE; Lean (M1) after the foundation slices.
 
-Do not start implementation or a new research cycle without the user's direction.
+Do not start S7 or a new research cycle without the user's direction.
 
 ## Validation record
 
-- **Finite checks.** `nice -n 19 python3 checks/review_checks.py` passes in about 0.6 s. It covers 40 subgroups at degrees 0–4 (3,536 leaf identities, 2,997 coset partitions, 2,059 normalisation cases, 361 graph-prefix cases). The v2 additions cover:
-  - 143 P1 subset transports and 494 P1 digraph transports;
-  - 307 labeling-coset cases;
-  - 95 signed cases;
-  - 16 golden/encoding/convention checks;
-  - 10 greedy-group sequences.
-
-  These are sanity checks, not proofs.
-- **Hand verification.** The coordinating review re-derived every golden case in spec §7.4 by hand: traces, bytes, witnesses, group and coset payloads, product conventions, labeling and sign examples. It also read the key proofs (coset splitting, zero iff odd stabiliser element, greedy-generator bound).
-- **Provenance tooling.** `python3 review_sources/fetch_sources.py` reports all 150 inventory entries OK locally. An offline test re-extracted all 100 archive members from the retained archives with matching SHA-256 values in 0.8 s. The network `--fetch` path for downloads has not been exercised.
-- **Link check.** All relative links in the documents resolve to tracked files or to inventory entries rebuilt by the fetch script.
-- **Scaffold (1 October 2026).** `make`, `make test`, `make SANITIZE=1 test`, and `cmake` with `CANON_SANITIZE=ON` plus `ctest` (3 tests) all pass with zero warnings under gcc 13; 17 Python unit tests pass; `compare.py --plant` detects a planted nibble flip. Lean files were not built (no toolchain here). clang with sanitizers was not run locally (no ASan runtime in this environment); CI covers it.
+- **Finite checks.** `nice -n 19 python3 checks/review_checks.py` passes (40 subgroups at degrees 0–4; 3,536 leaf identities; 2,997 coset partitions; 2,059 normalisation cases; 361 graph-prefix cases; 143 subset and 494 digraph P1 transports; 307 labeling cases; 95 signed cases; 16 golden checks; 10 greedy sequences). Sanity checks, not proofs; the file is unmodified since publication.
+- **Slices (state at `main` = `563d799`).** `make` and `make CC=clang`: zero diagnostics under `-Werror`. `make SANITIZE=1 test`: 26 C tests clean under ASan/UBSan (gcc; the local clang has no ASan runtime, CI covers it). `make check`: finite checks plus 46 Python tests under the chain backend and 26 under the explicit backend, about 41 s. CMake with `CANON_SANITIZE=ON` and `ctest`: 29 of 29, about five minutes. Every tier is byte-identical with the Python model under both backends; pruned paths do not exist yet.
+- **Hand verification and provenance.** As recorded at publication: every §7.4 golden case re-derived by hand; `fetch_sources.py` reports 150/150 OK on the maintainer's machine; all relative links resolve.
