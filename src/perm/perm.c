@@ -116,7 +116,7 @@ canon_status canon_perm_table_push(canon_perm_table *t, const uint32_t *p, uint3
         return CANON_CAPACITY_LIMIT; /* spec 11.1: row ids are uint32 */
     }
     if (t->count == t->cap) {
-        uint32_t new_cap = t->cap < 8u ? 8u : (t->cap > UINT32_MAX / 2u ? UINT32_MAX : t->cap * 2u);
+        uint32_t new_cap = canon_u32_grow(t->cap, 8u);
         size_t words = 0;
         if (!canon_size_mul((size_t)new_cap, (size_t)t->n, &words)) {
             return CANON_CAPACITY_LIMIT; /* spec 11.1: checked before allocation */

@@ -26,7 +26,7 @@ static canon_status append(canon_provenance *p, uint32_t kind, uint32_t a, uint3
         return CANON_CAPACITY_LIMIT; /* spec 11.1: node ids are uint32; NONE is reserved */
     }
     if (p->count == p->cap) {
-        uint32_t new_cap = p->cap < 16u ? 16u : (p->cap > UINT32_MAX / 2u ? UINT32_MAX : p->cap * 2u);
+        uint32_t new_cap = canon_u32_grow(p->cap, 16u);
         canon_status st = CANON_COMPLETE;
         canon_prov_node *grown = canon_alloc_array(new_cap, sizeof *grown, &st);
         if (grown == NULL) {
