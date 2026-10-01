@@ -5,9 +5,10 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slice S1 (docs/slices/S1.md).  Implemented: the version functions, the
- * context and capacity descriptor, retain/release for every handle below, groups (explicit
- * enumeration backend), subset objects, problems for CANONICAL_IMAGE under profile P1 with
+ * Status of this header: slices S1 and S2 (docs/slices/S1.md, S2.md).  Implemented: the version
+ * functions, the context and capacity descriptor, retain/release for every handle below, groups
+ * (explicit enumeration backend), subset objects, coloured directed multigraph objects and the
+ * simple undirected graph wrapper (S2), problems for CANONICAL_IMAGE under profile P1 with
  * encoding CDAG-2 and order CDAG-BYTE-1, workspaces, canon_solve, the result accessors and
  * canon_result_encode.  Every other entry point is a stub returning CANON_UNSUPPORTED_ACTION
  * until its slice lands (canon_object_create from a stream: S5; canon_solve_batch: S8;
@@ -165,6 +166,41 @@ canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint3
 canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
                                         const uint32_t *atoms, size_t count, canon_object **out);
 
+/* spec 4.1 arc record as input (slice S2): source, target, label bytes, positive multiplicity.
+ * `label` may be NULL when label_length == 0. */
+typedef struct canon_arc {
+    uint32_t source, target;
+    const uint8_t *label;
+    size_t label_length;
+    uint64_t multiplicity; /* must be > 0 (spec 4.1) */
+} canon_arc;
+
+/* spec 17 builder (copies data), spec 4.1 graph semantics (slice S2): a coloured directed
+ * multigraph with `degree` vertices; vertex v has colour colours[v] of colour_lengths[v] bytes
+ * (both arrays may be NULL when degree == 0; a NULL colours[v] with length 0 is the empty
+ * colour), and `arc_count` arcs (`arcs` may be NULL when arc_count == 0).  Duplicate
+ * (source, target, label) arcs are combined by exact addition; loops are allowed.  Status, in
+ * this order: CANON_INVALID_INPUT for NULL ctx/out or a NULL array that is required;
+ * CANON_CAPACITY_LIMIT for degree above the context's max_n; CANON_INVALID_INPUT for a vertex
+ * >= degree, a zero multiplicity, or a NULL colour/label pointer with a nonzero length;
+ * CANON_CAPACITY_LIMIT for a colour or label longer than 2^32 - 1 bytes (spec 4.1 U32
+ * lengths), more than 2^32 - 1 distinct arcs, or a combined multiplicity or total positive
+ * multiplicity that does not fit uint64 (the count-bit limit is 64 in this release, detailed
+ * plan 2.1; spec 11.1). */
+canon_status canon_object_create_graph(canon_context *ctx, uint32_t degree,
+                                       const uint8_t *const *colours, const size_t *colour_lengths,
+                                       const canon_arc *arcs, size_t arc_count, canon_object **out);
+
+/* spec 4.1 simple-undirected wrapper (slice S2): edges are unordered pairs {a, b}; loops
+ * (a == b) and vertices >= degree are CANON_INVALID_INPUT; duplicate edges (in either
+ * orientation) are coalesced; each edge becomes two opposite unit arcs with empty labels; all
+ * vertex colours are empty.  The core never silently makes a directed graph undirected: this
+ * is the only place the conversion happens.  `edges` may be NULL when edge_count == 0.  Degree
+ * above the context's max_n is CANON_CAPACITY_LIMIT (checked before the edges). */
+canon_status canon_object_create_simple_graph(canon_context *ctx, uint32_t degree,
+                                              const uint32_t (*edges)[2], size_t edge_count,
+                                              canon_object **out);
+
 /* spec section 17, 4.1: build an object from a CDAG-2 stream (copied by default).
  * STUB until slice S5: returns CANON_UNSUPPORTED_ACTION. */
 canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_action action,
@@ -173,13 +209,16 @@ canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_
 
 /* spec section 17, 3: bind group, object, objective, profile, encoding and order explicitly.
  * `capacity` may be NULL (all context defaults); a zero field selects the context default.
- * The problem retains the group and the object.  S1 validation, in this order:
+ * The problem retains the group and the object, which may be a subset or a graph (S2).
+ * Validation, in this order:
  * CANON_UNSUPPORTED_ACTION for an objective other than CANONICAL_IMAGE (0x0001), a profile
  * other than P1, an encoding other than CDAG-2 or an order other than CDAG-BYTE-1;
  * CANON_INVALID_INPUT for a degree mismatch between group and object; CANON_CAPACITY_LIMIT
  * when the degree exceeds max_n, the group order exceeds max_group_order, or the exact
- * canonical stream length (determined by the subset's size, spec 11.1) exceeds
- * max_output_bytes. */
+ * canonical stream length exceeds max_output_bytes (spec 11.1).  That length is a function of
+ * the input alone: for a subset it is determined by its size; for a graph by n, the colour
+ * multiset, the arc count, the label bytes and the multiplicities, none of which the action
+ * changes. */
 canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
                                   const canon_object *object, canon_objective objective,
                                   canon_profile profile, canon_encoding encoding, canon_order order,

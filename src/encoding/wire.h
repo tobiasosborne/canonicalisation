@@ -1,6 +1,7 @@
 /*
  * Internal header: CDAG-2 wire primitives (spec section 4.1) and the unsigned byte order of
- * spec section 4.3.  Implemented in slice S1 (docs/slices/S1.md section 4.4).
+ * spec section 4.3.  Implemented in slice S1 (docs/slices/S1.md section 4.4);
+ * the Nat writer in slice S2 (docs/slices/S2.md section 3.3).
  *
  * A canon_buf is a growable byte buffer.  Writers append exact big-endian fields and never dump
  * structs (spec section 17).  Every size computation is overflow-checked before allocation
@@ -40,6 +41,14 @@ canon_status canon_buf_put_u16(canon_buf *buf, uint16_t value);
 canon_status canon_buf_put_u32(canon_buf *buf, uint32_t value);
 /* spec section 4.1: B(s) = U32(len(s)) || s; a length that does not fit U32 is a capacity error. */
 canon_status canon_buf_put_b(canon_buf *buf, const uint8_t *bytes, size_t length);
+
+/* spec section 4.1: Nat(k) = U32(b) || big_endian_bytes(k, b) with the shortest b: b = 0 for
+ * k = 0, otherwise no leading zero byte.  Slice S2.  (The multi-limb canon_nat of detailed plan
+ * 2.1 is not needed yet: the count-bit limit of this release is 64, so every admitted count is a
+ * uint64_t.) */
+canon_status canon_buf_put_nat(canon_buf *buf, uint64_t k);
+/* spec section 4.1: the exact length of Nat(k), 4 + b with b as above (4..12). */
+uint32_t canon_nat_length(uint64_t k);
 
 /* spec section 4.3 (CDAG-BYTE-1) and 7.2 (trace order): unsigned byte lexicographic order with a
  * proper prefix smaller.  Returns -1, 0 or +1. */

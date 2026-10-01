@@ -1,15 +1,23 @@
-/* canon-cli: command-line driver for the canon library (slice S1, docs/slices/S1.md 4.9).
+/* canon-cli: command-line driver for the canon library (slices S1 and S2, docs/slices/S1.md
+ * 4.9, S2.md 3.6).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
  *                       [--max-nodes K] [--id CASE]
+ *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."]
+ *                       [--arcs "s,t,labelhex,m;..."] [--max-nodes K] [--id CASE]
  *
  * Prints one refs/compare/FORMAT.md record:
  *   CASE \t 0001 \t STATUS \t trace_hex \t bytes_hex \t witness
  * `--gens ""` (the default) is the trivial group and `--atoms ""` (the default) the empty
  * subset.  Generators are image arrays p[v] = v^p (spec section 3), separated by ';'; for
- * N = 0 a generator is the empty string.  `--max-nodes K` sets the spec 11.1 logical work quota
+ * N = 0 a generator is the empty string.  For p1-graph, `--colours ""` (the default) makes every
+ * vertex colour empty; otherwise it lists exactly N hex strings separated by ';' (a hex string
+ * may be empty).  `--arcs` (default: no arcs) lists arcs "source,target,labelhex,multiplicity"
+ * separated by ';' (labelhex may be empty; the multiplicity is passed to the library as given,
+ * so 0 yields INVALID_INPUT).  `--max-nodes K` sets the spec 11.1 logical work quota
  * (0 = the context default).  Exit status: 0 on COMPLETE, 3 on any other status, 2 on a usage
  * error.  Uses only the public header. */
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +30,9 @@ static int usage(const char *msg)
     fprintf(stderr,
             "canon-cli: %s\n"
             "usage: canon-cli p1-subset --n N [--gens \"a0,a1,...;b0,...\"] [--atoms \"x,y,...\"]\n"
-            "                 [--max-nodes K] [--id CASE]\n",
+            "                 [--max-nodes K] [--id CASE]\n"
+            "       canon-cli p1-graph --n N [--gens \"...\"] [--colours \"hex;hex;...\"]\n"
+            "                 [--arcs \"s,t,labelhex,m;...\"] [--max-nodes K] [--id CASE]\n",
             msg);
     return 2;
 }
@@ -79,6 +89,130 @@ static size_t count_char(const char *s, char c)
     return k;
 }
 
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+/* Decode the hex span [s, s+len) into out (room for len / 2 bytes); 0 on odd length or a
+ * non-hex character. */
+static int parse_hex(const char *s, size_t len, uint8_t *out)
+{
+    if (len % 2 != 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < len; i += 2) {
+        int hi = hex_digit(s[i]), lo = hex_digit(s[i + 1]);
+        if (hi < 0 || lo < 0) {
+            return 0;
+        }
+        out[i / 2] = (uint8_t)(hi * 16 + lo);
+    }
+    return 1;
+}
+
+/* Length of the span starting at s up to (not including) the next `sep` or the end. */
+static size_t span_len(const char *s, char sep)
+{
+    const char *end = strchr(s, sep);
+    return end != NULL ? (size_t)(end - s) : strlen(s);
+}
+
+/* A parsed graph: colour pointers/lengths into `pool`, arcs with labels into `pool`. */
+typedef struct graph_input {
+    const uint8_t **colours;
+    size_t *colour_lengths;
+    canon_arc *arcs;
+    size_t arc_count;
+    uint8_t *pool; /* decoded colour and label bytes */
+} graph_input;
+
+static void graph_input_free(graph_input *in)
+{
+    free(in->colours);
+    free(in->colour_lengths);
+    free(in->arcs);
+    free(in->pool);
+}
+
+/* Parse --colours and --arcs for degree n.  Returns 0 on success, 2 on a usage error (message
+ * printed), 3 on allocation failure. */
+static int parse_graph(uint32_t n, const char *colours_arg, const char *arcs_arg, graph_input *in)
+{
+    memset(in, 0, sizeof *in);
+    size_t slots = n > 0 ? (size_t)n : 1u;
+    size_t pool_bytes = strlen(colours_arg) / 2 + strlen(arcs_arg) / 2 + 1;
+    size_t arc_slots = *arcs_arg == '\0' ? 0 : count_char(arcs_arg, ';') + 1;
+    in->colours = calloc(slots, sizeof *in->colours);
+    in->colour_lengths = calloc(slots, sizeof *in->colour_lengths);
+    in->arcs = calloc(arc_slots > 0 ? arc_slots : 1u, sizeof *in->arcs);
+    in->pool = malloc(pool_bytes);
+    if (in->colours == NULL || in->colour_lengths == NULL || in->arcs == NULL ||
+        in->pool == NULL) {
+        return 3;
+    }
+    size_t used = 0;
+    /* Colours: "" = all empty; otherwise exactly n hex strings separated by ';'. */
+    if (*colours_arg != '\0') {
+        if (count_char(colours_arg, ';') + 1 != (size_t)n) {
+            return usage("--colours must list exactly N hex strings separated by ';'");
+        }
+        const char *p = colours_arg;
+        for (uint32_t v = 0; v < n; ++v) {
+            size_t len = span_len(p, ';');
+            if (!parse_hex(p, len, in->pool + used)) {
+                return usage("--colours expects hex strings");
+            }
+            in->colours[v] = in->pool + used;
+            in->colour_lengths[v] = len / 2;
+            used += len / 2;
+            p += len + 1;
+        }
+    }
+    /* Arcs: "s,t,labelhex,m" separated by ';'. */
+    const char *p = arcs_arg;
+    for (size_t i = 0; i < arc_slots; ++i) {
+        size_t len = span_len(p, ';');
+        const char *f[4];
+        size_t flen[4];
+        const char *q = p;
+        for (int k = 0; k < 4; ++k) {
+            const char *comma = memchr(q, ',', (size_t)(p + len - q));
+            f[k] = q;
+            flen[k] = comma != NULL ? (size_t)(comma - q) : (size_t)(p + len - q);
+            if ((k < 3) != (comma != NULL)) {
+                return usage("each arc must be \"source,target,labelhex,multiplicity\"");
+            }
+            q = comma != NULL ? comma + 1 : q;
+        }
+        uint64_t src = 0, dst = 0, mult = 0;
+        if (!parse_u64(f[0], flen[0], UINT32_MAX, &src) ||
+            !parse_u64(f[1], flen[1], UINT32_MAX, &dst) ||
+            !parse_u64(f[3], flen[3], UINT64_MAX, &mult) ||
+            !parse_hex(f[2], flen[2], in->pool + used)) {
+            return usage("arc fields: decimal source, target, multiplicity; hex label");
+        }
+        in->arcs[i].source = (uint32_t)src;
+        in->arcs[i].target = (uint32_t)dst;
+        in->arcs[i].label = in->pool + used;
+        in->arcs[i].label_length = flen[2] / 2;
+        in->arcs[i].multiplicity = mult;
+        used += flen[2] / 2;
+        p += len + 1;
+    }
+    in->arc_count = arc_slots;
+    return 0;
+}
+
 static const char *status_name(canon_status st)
 {
     switch (st) { /* spec 3.2 status names, as in refs/compare/FORMAT.md */
@@ -129,10 +263,12 @@ static int print_failure(const char *id, canon_status st)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2 || strcmp(argv[1], "p1-subset") != 0) {
-        return usage("expected the subcommand p1-subset");
+    if (argc < 2 || (strcmp(argv[1], "p1-subset") != 0 && strcmp(argv[1], "p1-graph") != 0)) {
+        return usage("expected the subcommand p1-subset or p1-graph");
     }
-    const char *n_arg = NULL, *gens = "", *atoms_arg = "", *id = "p1-subset";
+    const bool graph = strcmp(argv[1], "p1-graph") == 0;
+    const char *n_arg = NULL, *gens = "", *atoms_arg = "", *id = argv[1];
+    const char *colours_arg = "", *arcs_arg = "";
     uint64_t max_nodes = 0;
     for (int i = 2; i < argc; i += 2) {
         if (i + 1 >= argc) {
@@ -143,8 +279,12 @@ int main(int argc, char **argv)
             n_arg = val;
         } else if (strcmp(opt, "--gens") == 0) {
             gens = val;
-        } else if (strcmp(opt, "--atoms") == 0) {
+        } else if (!graph && strcmp(opt, "--atoms") == 0) {
             atoms_arg = val;
+        } else if (graph && strcmp(opt, "--colours") == 0) {
+            colours_arg = val;
+        } else if (graph && strcmp(opt, "--arcs") == 0) {
+            arcs_arg = val;
         } else if (strcmp(opt, "--max-nodes") == 0) {
             if (!parse_u64(val, strlen(val), UINT64_MAX, &max_nodes)) {
                 return usage("--max-nodes expects an unsigned decimal");
@@ -202,6 +342,21 @@ int main(int argc, char **argv)
         free(atoms);
         return usage("--atoms expects comma-separated unsigned decimals");
     }
+    graph_input gin;
+    memset(&gin, 0, sizeof gin);
+    if (graph) {
+        int prc = parse_graph(n, colours_arg, arcs_arg, &gin);
+        if (prc != 0) {
+            graph_input_free(&gin);
+            free(gen);
+            free(atoms);
+            if (prc == 3) {
+                fprintf(stderr, "canon-cli: out of memory\n");
+                return print_failure(id, CANON_RESOURCE_LIMIT);
+            }
+            return prc;
+        }
+    }
 
     canon_context *ctx = NULL;
     canon_group *group = NULL;
@@ -214,7 +369,10 @@ int main(int argc, char **argv)
     if (st == CANON_COMPLETE) {
         st = canon_group_create(ctx, n, gen, gen_count, &group);
     }
-    if (st == CANON_COMPLETE) {
+    if (st == CANON_COMPLETE && graph) {
+        st = canon_object_create_graph(ctx, n, gin.colours,
+                                       gin.colour_lengths, gin.arcs, gin.arc_count, &object);
+    } else if (st == CANON_COMPLETE) {
         st = canon_object_create_subset(ctx, n, atoms, atom_count, &object);
     }
     if (st == CANON_COMPLETE) {
@@ -257,6 +415,7 @@ int main(int argc, char **argv)
     canon_object_release(object);
     canon_group_release(group);
     canon_context_release(ctx);
+    graph_input_free(&gin);
     free(gen);
     free(atoms);
     if (fflush(stdout) != 0 || ferror(stdout)) {
