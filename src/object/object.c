@@ -117,6 +117,20 @@ void canon_root_image_clear(canon_root_image *img)
     }
 }
 
+bool canon_root_equal(const canon_root *a, const canon_root *b)
+{
+    if (a->kind != b->kind || a->n != b->n) {
+        return false;
+    }
+    switch (a->kind) {
+    case CANON_ROOT_SUBSET:
+        return canon_subset_equal(&a->u.subset, &b->u.subset);
+    case CANON_ROOT_GRAPH:
+        return canon_graph_equal(&a->u.graph, &b->u.graph);
+    }
+    return false;
+}
+
 canon_status canon_root_stream_write(const canon_root *x, canon_buf *out)
 {
     switch (x->kind) {

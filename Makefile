@@ -32,14 +32,14 @@ LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c \
            src/coset/least.c src/coset/enumerate.c src/partition/partition.c \
            src/util/sort.c \
-           src/refine/p1.c src/search/p1_tree.c
+           src/refine/p1.c src/search/p1_tree.c src/search/objectives.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
 UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition test_search_subset \
              test_nat test_graph test_graph_stream test_signature test_simple_upper \
              test_search_graph test_chain test_reference_schreier test_verify test_provenance \
-             test_coset_least test_enumerate test_group_stream
+             test_coset_least test_enumerate test_group_stream test_objectives
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli

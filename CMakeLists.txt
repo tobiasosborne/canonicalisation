@@ -38,7 +38,7 @@ add_library(canon STATIC
   src/bsgs/group.c src/bsgs/explicit.c src/bsgs/provenance.c src/bsgs/chain.c
   src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c
   src/coset/least.c src/coset/enumerate.c src/partition/partition.c
-  src/util/sort.c src/refine/p1.c src/search/p1_tree.c)
+  src/util/sort.c src/refine/p1.c src/search/p1_tree.c src/search/objectives.c)
 target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
 
@@ -64,7 +64,7 @@ add_test(NAME test_header_abi COMMAND test_header_abi)
 foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_search_subset
           test_nat test_graph test_graph_stream test_signature test_simple_upper
           test_search_graph test_chain test_reference_schreier test_verify test_provenance
-          test_coset_least test_enumerate test_group_stream)
+          test_coset_least test_enumerate test_group_stream test_objectives)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)

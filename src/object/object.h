@@ -55,6 +55,11 @@ canon_status canon_root_act_into(const canon_root *x, const uint32_t *g, canon_r
  * (canon_graph_image_clear), so the storage refers to no object; capacities are kept. */
 void canon_root_image_clear(canon_root_image *img);
 
+/* spec 4.2 extensional equality of two roots (slice S4: the transporter and stabiliser
+ * consumers of spec 8.2 test x^r = y and x^r = x this way rather than by comparing streams):
+ * same kind, same degree, and equal normalised content (src/object/subset.h, graph.h). */
+bool canon_root_equal(const canon_root *a, const canon_root *b);
+
 /* spec 4.1, 4.2: append the complete CDAG-2 stream of x (all or nothing). */
 canon_status canon_root_stream_write(const canon_root *x, canon_buf *out);
 
