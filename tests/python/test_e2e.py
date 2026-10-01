@@ -94,6 +94,14 @@ GOLDEN = json.loads((ROOT / "refs" / "vectors" / "golden.json").read_text(encodi
 CLI = pathlib.Path(os.environ.get("CANON_CLI") or (ROOT / "build" / "make" / "canon-cli"))
 # Slice S3: the group backend under test ("" = the CLI default, the chain).
 BACKEND = os.environ.get("CANON_BACKEND", "")
+# Slice S6 review item 8: CANON_E2E_FAST=1 (set by CMake for the sanitizer build) runs the
+# large tiers on seeded subsets; `make check` runs them in full.
+FAST = os.environ.get("CANON_E2E_FAST") == "1"
+
+
+def sampled(i, every):
+    """True for every case in full mode, for one case in `every` in fast mode."""
+    return not FAST or i % every == 0
 if BACKEND not in ("", "chain", "explicit"):
     raise SystemExit(f"CANON_BACKEND must be chain or explicit, not {BACKEND!r}")
 
@@ -284,7 +292,7 @@ class GraphTiers(CliTestCase):
             symmetric = tuple(permutations(range(n)))
             for gi, group in enumerate(rc.subgroups(symmetric, n)):
                 generating_sets = {"full": sorted(group), "greedy": greedy_generators(group, n)}
-                for k in range(40):
+                for k in range(12 if FAST else 40):
                     rng = random.Random(1000003 * n + 1009 * gi + k)
                     density = rng.choice((0.25, 0.5, 1.0))
                     arcs = tuple((a, b, label, rng.choice((1, 2)))
@@ -294,7 +302,7 @@ class GraphTiers(CliTestCase):
                     case_id = f"g2-n{n}-g{gi}-r{k}"
                     cases += self.check_graph(n, group, generating_sets, colours, arcs,
                                               case_id, rng)
-        self.assertEqual(cases, 2 * 40 * (6 + 30))
+        self.assertEqual(cases, 2 * (12 if FAST else 40) * (6 + 30))
 
     def test_golden_graph(self):
         graph_cases = [c for c in GOLDEN["p1_cases"] if c["object"]["kind"] == "graph"]
@@ -604,6 +612,8 @@ class EnumerationObjectives(CliTestCase):
             for gi, group in enumerate(rc.subgroups(symmetric, n)):
                 gens = greedy_generators(group, n)
                 for mask in range(1 << n):
+                    if mask != 0 and not sampled(mask + gi, 4):
+                        continue  # fast mode: a quarter, always the empty set (Group(G))
                     x = frozenset(a for a in range(n) if mask >> a & 1)
                     h = symmetric[(31 * gi + 7 * mask) % len(symmetric)]
                     y = rc.act_object("subset", x, h)
@@ -615,7 +625,8 @@ class EnumerationObjectives(CliTestCase):
                     with_solution += bool(b.solutions)
                     if not x:
                         group_bytes_checked.add((n, gi))  # Stab(empty) = G: Group(G) bytes
-        self.assertEqual(cases, 1 + 2 + 8 + 48 + 480)
+        if not FAST:
+            self.assertEqual(cases, 1 + 2 + 8 + 48 + 480)
         self.assertEqual(len(group_bytes_checked), 40)  # every T1 group's Group(G) bytes
         self.assertTrue(0 < with_solution < cases)
 
@@ -644,7 +655,8 @@ class EnumerationObjectives(CliTestCase):
                                             if rng.random() < 0.5))
                     cid = "s4g1-n%d-g%d-m%s-c%d" % (n, gi, "".join(map(str, multiplicities)),
                                                    distinct)
-                    self.check_case(n, group, gens, "graph", x, y, cid)
+                    if sampled(cases, 4):
+                        self.check_case(n, group, gens, "graph", x, y, cid)
                     cases += 1
         self.assertEqual(cases, 2 * (1 + 3 + 2 * 81))
 
@@ -652,7 +664,7 @@ class EnumerationObjectives(CliTestCase):
         # 30 seeded random groups on n <= 6 points (1-3 generators, each a uniform permutation,
         # a transposition or a cycle), each with random subsets and random digraphs
         cases = 0
-        for k in range(30):
+        for k in range(8 if FAST else 30):
             rng = random.Random(77000 + k)
             n = rng.randint(1, 6)
             gens = []
@@ -682,7 +694,7 @@ class EnumerationObjectives(CliTestCase):
                 y = rc.act_object("graph", x, rng.choice(symmetric))
                 self.check_case(n, group, gens, "graph", x, y, f"s4r{k}-d{j}")
                 cases += 1
-        self.assertEqual(cases, 150)
+        self.assertEqual(cases, 5 * (8 if FAST else 30))
 
     def test_simple_upper(self):
         # spec 4.4: SIMPLE-UPPER-1 minimum on random simple undirected graphs against the
@@ -1221,7 +1233,7 @@ class NestedObjects(CliTestCase):
             for gi, group in enumerate(rc.subgroups(symmetric, n)):
                 gens = greedy_generators(group, n)
                 leaves = p1_leaves(n, group)
-                for k in range(10 if n < 4 else 6):
+                for k in range((10 if n < 4 else 6) // (3 if FAST else 1)):
                     rng = random.Random(5005 + 1000 * n + 37 * gi + k)
                     records, root = random_dag(n, rng)
                     stream = raw_stream(n, records, root)
@@ -1250,7 +1262,7 @@ class NestedObjects(CliTestCase):
                             objectives += self.check_objectives(n, group, gens, records, root,
                                                                 stream, cid, rng)
                     cases += 1
-        self.assertEqual(cases, 10 * 10 + 30 * 6)
+        self.assertEqual(cases, 10 * 3 + 30 * 2 if FAST else 10 * 10 + 30 * 6)
         self.assertTrue(0 < subsets < cases)
         self.assertTrue(0 < canonical_inputs < cases)
         self.assertGreater(objectives, 0)
@@ -1479,16 +1491,29 @@ class LabelingAndSigned(CliTestCase):
                     x = frozenset(a for a in range(n) if mask >> a & 1)
                     extra = set(range(len(symmetric))) if n < 4 else \
                         set(rng.sample(range(len(symmetric)), 2))
+                    if FAST:
+                        # fast mode: n <= 3 every rho with the extras on the first one; n = 4
+                        # one seeded rho for every other subset, without extras
+                        keep = set(range(len(symmetric))) if n < 4 else \
+                            ({rng.randrange(len(symmetric))} if mask % 2 == 0 else set())
+                        extra = {0} if n < 4 else set()
+                    else:
+                        keep = set(range(len(symmetric)))
                     for ri, rho in enumerate(symmetric):
+                        if ri not in keep:
+                            continue
                         cid = f"l1-n{n}-g{gi}-m{mask}-r{ri}"
                         with self.subTest(cid):
                             runs += self.labeling_case(n, group, gens, "subset", x, rho, cid,
                                                        rng, extras=ri in extra)
                         cases += 1
-        # subgroups times subsets times labelings: 1, 1 * 2 * 1, 2 * 4 * 2, 6 * 8 * 6, 30 * 16 * 24
-        self.assertEqual(cases, 1 + 2 + 2 * 4 * 2 + 6 * 8 * 6 + 30 * 16 * 24)
-        # one run per case, two more per case with extras (all of n <= 3, two per n = 4 case)
-        self.assertEqual(runs, cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
+        if not FAST:
+            # subgroups times subsets times labelings: 1, 1 * 2 * 1, 2 * 4 * 2, 6 * 8 * 6,
+            # 30 * 16 * 24
+            self.assertEqual(cases, 1 + 2 + 2 * 4 * 2 + 6 * 8 * 6 + 30 * 16 * 24)
+            # one run per case, two more per case with extras (all of n <= 3, two per n = 4
+            # case)
+            self.assertEqual(runs, cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
 
     def test_l1_g1_digraphs(self):
         # the G1 digraphs (n <= 2, every subgroup, every multiplicity vector, both colourings)
@@ -1508,9 +1533,10 @@ class LabelingAndSigned(CliTestCase):
                     for ri, rho in enumerate(symmetric):
                         cid = "l1g-n%d-g%d-m%s-c%d-r%d" % (
                             n, gi, "".join(map(str, multiplicities)), distinct, ri)
-                        with self.subTest(cid):
-                            self.labeling_case(n, group, gens, "graph", (colours, arcs), rho,
-                                               cid, rng, extras=ri == 0)
+                        if sampled(cases, 3):
+                            with self.subTest(cid):
+                                self.labeling_case(n, group, gens, "graph", (colours, arcs), rho,
+                                                   cid, rng, extras=ri == 0)
                         cases += 1
         self.assertEqual(cases, 2 * (1 + 3 + 2 * 81 * 2))
 
@@ -1608,9 +1634,12 @@ class LabelingAndSigned(CliTestCase):
                         invalid += 1
                 for ci, (signs, chi) in enumerate(chars):
                     for mask in range(1 << n):
+                        if n == 4 and not sampled(mask, 2):
+                            continue  # fast mode: every other subset for n = 4
                         x = frozenset(a for a in range(n) if mask >> a & 1)
                         members = sorted(group)
-                        hs_ = members if n < 4 else rng.sample(members, min(3, len(members)))
+                        count = (2 if n < 4 else 1) if FAST else (len(members) if n < 4 else 3)
+                        hs_ = members if count >= len(members) else rng.sample(members, count)
                         cid = f"z1-n{n}-g{gi}-c{ci}-m{mask}"
                         with self.subTest(cid):
                             zeros += self.signed_case(n, group, gens, signs, chi, "subset", x,
@@ -1635,9 +1664,11 @@ class LabelingAndSigned(CliTestCase):
                                      if multiplicities[a * n + b])
                         cid = "z1g-n%d-g%d-c%d-m%s-c%d" % (
                             n, gi, ci, "".join(map(str, multiplicities)), distinct)
-                        with self.subTest(cid):
-                            zeros += self.signed_case(n, group, gens, signs, chi, "graph",
-                                                      (colours, arcs), cid, sorted(group)) == 0
+                        if sampled(cases, 3):
+                            with self.subTest(cid):
+                                zeros += self.signed_case(n, group, gens, signs, chi, "graph",
+                                                          (colours, arcs), cid,
+                                                          sorted(group)) == 0
                         cases += 1
         # n = 0 and n = 1: one group with the trivial character, 1 and 3 multiplicity vectors;
         # n = 2: the trivial group (one character) and Sym(2) (two), 81 vectors; two colourings

@@ -92,6 +92,13 @@ int canon_perm_validate(const uint32_t *p, uint32_t n)
     return ok;
 }
 
+canon_status canon_perm_check(const uint32_t *p, uint32_t n, bool *ok)
+{
+    const int v = canon_perm_validate(p, n);
+    *ok = v == 1;
+    return v < 0 ? CANON_RESOURCE_LIMIT : CANON_COMPLETE;
+}
+
 /* ---- dense permutation table (perm.h) ---- */
 
 void canon_perm_table_init(canon_perm_table *t, uint32_t n)

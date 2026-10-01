@@ -18,6 +18,7 @@
 
 typedef struct explicit_group {
     uint64_t order;  /* number of rows */
+    uint32_t degree; /* points of every row */
     uint32_t *table; /* order * degree entries, rows sorted lexicographically */
     struct explicit_group *lift; /* S6, spec 8.4: the lifted group's table on degree + 2
                                     points for a signed group (its own lift is NULL); NULL
@@ -377,36 +378,21 @@ static canon_status sort_rows(uint32_t **table, size_t count, uint32_t degree, s
     return st;
 }
 
-/* spec 8.4 (slice S6): chi(g) by membership of the two extensions of g in the lift's sorted
- * table (src/bsgs/group.h contract), by binary search, as for contains. */
+/* The lift's membership rule for canon_group_character_by: binary search in the lift's
+ * sorted table on degree + 2 points (no scratch needed). */
+static bool lift_member(const void *lift, const uint32_t *p, uint32_t *residue)
+{
+    const explicit_group *l = lift;
+    (void)residue;
+    return table_contains(l, l->degree, p);
+}
+
+/* spec 8.4 (slice S6): chi(g) from the lift (src/bsgs/group.h). */
 static canon_status explicit_character(const canon_group *group, const uint32_t *g,
                                        uint32_t *scratch, int *sign)
 {
-    *sign = 0;
     const explicit_group *e = group->impl;
-    if (e->lift == NULL) {
-        return CANON_UNSUPPORTED_ACTION; /* an unsigned group has no character */
-    }
-    const uint32_t n = group->degree, m = n + 2u; /* fits: checked at creation (spec 11.1) */
-    canon_status st = CANON_COMPLETE;
-    uint32_t *own = NULL;
-    if (scratch == NULL) {
-        scratch = own = canon_alloc_array(m, sizeof *own, &st);
-        if (own == NULL) {
-            return st;
-        }
-    }
-    st = CANON_INVALID_INPUT; /* neither extension is in the lift: g is not in G */
-    for (int s = 1; s >= -1; s -= 2) {
-        canon_group_lift_element(g, n, s, scratch);
-        if (table_contains(e->lift, m, scratch)) {
-            *sign = s;
-            st = CANON_COMPLETE;
-            break;
-        }
-    }
-    free(own);
-    return st;
+    return canon_group_character_by(group, e->lift, lift_member, g, scratch, sign);
 }
 
 static canon_status explicit_conjugate(const canon_group *group, const uint32_t *g,
@@ -453,6 +439,7 @@ static canon_status explicit_conjugate(const canon_group *group, const uint32_t 
         return st;
     }
     c->order = e->order;
+    c->degree = n;
     c->table = table;
     c->lift = NULL;
     st = canon_group_alloc(&explicit_ops, n, c, out); /* spec 17: count from canon_group_alloc */
@@ -462,36 +449,28 @@ static canon_status explicit_conjugate(const canon_group *group, const uint32_t 
     return st;
 }
 
-/* Close <generators> into a sorted table (the S1 construction), bounded by max_order. */
+/* Close <generators> into a sorted table (the S1 construction), bounded by max_order.
+ * *over_order tells whether a CANON_CAPACITY_LIMIT is the bound itself (the closure would hold
+ * more than max_order rows; S6 review item 2) rather than a size that does not fit. */
 static canon_status build_table(uint32_t degree, const uint32_t *generators, size_t generator_count,
-                                uint64_t max_order, explicit_group **out)
+                                uint64_t max_order, explicit_group **out, bool *over_order)
 {
     *out = NULL;
+    *over_order = false;
     if (generator_count > 0 && degree > 0 && generators == NULL) {
         return CANON_INVALID_INPUT;
     }
     if (degree > 0 && generator_count > SIZE_MAX / degree) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: products checked */
     }
-    /* spec 4.1, 9.1: generators must be bijections of the domain.  On degree 0 every
-     * generator is the empty permutation and is not read (generators may be NULL).  One
-     * scratch bitmap serves every generator. */
-    if (degree > 0 && generator_count > 0) {
-        size_t words = ((size_t)degree + 63u) / 64u; /* <= 2^26: the product cannot wrap */
-        uint64_t *bitmap = malloc(words * sizeof *bitmap);
-        if (bitmap == NULL) {
-            return CANON_RESOURCE_LIMIT;
-        }
-        bool valid = true;
-        for (size_t i = 0; i < generator_count && valid; ++i) {
-            valid = canon_perm_validate_scratch(generators + i * (size_t)degree, degree, bitmap);
-        }
-        free(bitmap);
-        if (!valid) {
-            return CANON_INVALID_INPUT;
-        }
+    /* spec 4.1, 9.1: generators must be bijections of the domain (the check shared with the
+     * chain backend; on degree 0 nothing is read). */
+    canon_status vs = canon_group_validate_generators(degree, generators, generator_count);
+    if (vs != CANON_COMPLETE) {
+        return vs;
     }
     if (max_order < 1) {
+        *over_order = true;
         return CANON_CAPACITY_LIMIT; /* even the trivial group has one element */
     }
     /* Row storage: at least one uint32 so the table pointer is never NULL (n = 0). */
@@ -529,6 +508,7 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
             /* spec 11.1: capacity is checked before each growth of the table, never after. */
             if ((uint64_t)count >= max_order) {
                 st = CANON_CAPACITY_LIMIT;
+                *over_order = true;
                 goto fail;
             }
             if (count == rows_cap) {
@@ -573,6 +553,7 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
         goto fail;
     }
     e->order = (uint64_t)count;
+    e->degree = degree;
     e->table = table;
     e->lift = NULL;
     *out = e;
@@ -591,7 +572,8 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
 {
     *out = NULL;
     explicit_group *e = NULL;
-    canon_status st = build_table(degree, generators, generator_count, max_order, &e);
+    bool over_order = false; /* CAPACITY_LIMIT either way for an unsigned group */
+    canon_status st = build_table(degree, generators, generator_count, max_order, &e, &over_order);
     if (st == CANON_COMPLETE) {
         /* spec 17: the handle and its reference count come from canon_group_alloc. */
         st = canon_group_alloc(&explicit_ops, degree, e, out);
@@ -615,7 +597,8 @@ canon_status canon_group_explicit_create_signed(uint32_t degree, const uint32_t 
         return CANON_CAPACITY_LIMIT;
     }
     explicit_group *e = NULL;
-    canon_status st = build_table(degree, generators, generator_count, max_order, &e);
+    bool over_order = false; /* G above max_order: CAPACITY_LIMIT, as for canon_group_create */
+    canon_status st = build_table(degree, generators, generator_count, max_order, &e, &over_order);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -624,19 +607,13 @@ canon_status canon_group_explicit_create_signed(uint32_t degree, const uint32_t 
      * |lift| = |G| |K| >= |G|, and chi exists iff K = 1 iff |lift| = |G|.  The closure is
      * therefore bounded by |G|: if it would exceed |G| rows (CAPACITY_LIMIT of the bounded
      * closure) the orders differ and the signs are inconsistent; otherwise |lift| = |G|.  So
-     * the lift never needs more rows than G.  So that CAPACITY_LIMIT of that closure can only
-     * mean "more than |G| rows", every size it can reach (at most 2|G| rows of degree + 2 words
-     * and a hash set of at most 4|G| slots) is checked to fit first. */
-    size_t bytes = 0;
-    if (!canon_size_mul3((size_t)e->order, (size_t)degree + 2u, 4u * sizeof(uint32_t), &bytes) ||
-        !canon_size_mul3((size_t)e->order, 4u, sizeof(size_t), &bytes)) {
-        explicit_destroy(e);
-        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
-    }
+     * the lift never needs more rows than G.  Only the bound itself (over_order, S6 review
+     * item 2) means inconsistent signs; any other CAPACITY_LIMIT (a size that does not fit)
+     * stays CAPACITY_LIMIT. */
     uint32_t *lifted = canon_group_lift_generators(degree, generators, generator_count, signs, &st);
     if (lifted != NULL) {
-        st = build_table(degree + 2u, lifted, generator_count, e->order, &e->lift);
-        if (st == CANON_CAPACITY_LIMIT) {
+        st = build_table(degree + 2u, lifted, generator_count, e->order, &e->lift, &over_order);
+        if (st == CANON_CAPACITY_LIMIT && over_order) {
             st = CANON_INVALID_INPUT; /* spec 8.4: "Reject inconsistent signs" */
         } else if (st == CANON_COMPLETE && e->lift->order != e->order) {
             st = CANON_INTERNAL_ERROR; /* |lift| >= |G| and the closure stopped at |G| */

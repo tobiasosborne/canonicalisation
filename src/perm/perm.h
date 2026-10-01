@@ -45,6 +45,11 @@ bool canon_perm_validate_scratch(const uint32_t *p, uint32_t n, uint64_t *bitmap
  * spec section 17). */
 int canon_perm_validate(const uint32_t *p, uint32_t n);
 
+/* canon_perm_validate as a status (slice S6 review item 6; the one mapping of its result):
+ * *ok = (p is a bijection of {0..n-1}); CANON_RESOURCE_LIMIT (with *ok false) when the scratch
+ * bitmap cannot be allocated (spec 17), else CANON_COMPLETE. */
+canon_status canon_perm_check(const uint32_t *p, uint32_t n, bool *ok);
+
 /* ---- Dense permutation table (slice S3; detailed plan 2.2/2.3 `canon_perm_table`) ----
  *
  * A grow-only table of `count` dense image arrays of one degree n, row i at data + i * n.

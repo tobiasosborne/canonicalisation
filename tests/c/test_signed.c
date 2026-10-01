@@ -23,6 +23,7 @@
 #include "bsgs/group.h"
 #include "canon/canon.h"
 #include "check.h"
+#include "coset/coset.h"
 #include "object/object.h"
 #include "perm/perm.h"
 #include "search/objectives.h"
@@ -315,9 +316,73 @@ static canon_object *image_of(const t1_sym *s, uint32_t mask, uint32_t e, uint32
     return subset_of(s->n, atoms, k);
 }
 
+/* The zero certificate the reference procedure must return, computed independently of the
+ * consumer: on the spec 7.3 fast path (every generator fixes x) the first odd generator in
+ * input order; otherwise the first leaf of the group's spec 8.1 enumeration (its own
+ * `enumerate` op, the order S4 pinned against a model of the spec text) that fixes x and is odd
+ * by the brute-force sign table.  Returns 0 if there is none. */
+typedef struct first_odd {
+    const t1_sym *s;
+    const t1_group *grp;
+    uint32_t mask;
+    const int *chi;
+    uint32_t *out;
+    int found;
+} first_odd;
+
+static canon_status consume_first_odd(void *user, const uint32_t *r, bool *stop)
+{
+    first_odd *f = user;
+    uint32_t m = 0, e = 0;
+    for (uint32_t a = 0; a < f->s->n; ++a) {
+        m |= (f->mask >> a & 1u) << r[a];
+    }
+    while (e < f->s->count && f->s->n > 0 && memcmp(f->s->elem[e], r, f->s->n * 4u) != 0) {
+        ++e;
+    }
+    if (m == f->mask && f->chi[e] < 0) {
+        memcpy(f->out, r, f->s->n * sizeof *r);
+        f->found = 1;
+        *stop = true;
+    }
+    return CANON_COMPLETE;
+}
+
+static int expected_certificate(const t1_sym *s, const t1_group *grp, const canon_group *g,
+                                uint32_t mask, const int *chi, uint32_t *out)
+{
+    const uint32_t n = s->n;
+    int fixes_all = 1;
+    for (uint32_t k = 0; k < grp->gen_count; ++k) {
+        uint32_t m = 0;
+        for (uint32_t a = 0; a < n; ++a) {
+            m |= (mask >> a & 1u) << grp->gens[k * n + a];
+        }
+        fixes_all &= m == mask;
+    }
+    if (fixes_all) {
+        for (uint32_t k = 0; k < grp->gen_count; ++k) {
+            uint32_t e = 0;
+            while (e < s->count && n > 0 && memcmp(s->elem[e], grp->gens + k * n, n * 4u) != 0) {
+                ++e;
+            }
+            if (chi[e] < 0) {
+                memcpy(out, grp->gens + k * n, n * sizeof *out);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    first_odd f = {s, grp, mask, chi, out, 0};
+    canon_coset_visitor v;
+    canon_coset_visitor_init(&v, consume_first_odd, NULL, &f, 1u << 20);
+    CHECK(g->ops->enumerate(g, &v) == CANON_COMPLETE);
+    return f.found;
+}
+
 static void t1_tier(void)
 {
-    uint32_t cases = 0, zeros = 0, covariances = 0;
+    uint32_t cases = 0, zeros = 0, covariances = 0, certificates = 0;
     canon_workspace *ws = NULL;
     CHECK(canon_workspace_create(ctx_of[0], &ws) == CANON_COMPLETE);
     for (uint32_t n = 0; n <= 4; ++n) {
@@ -381,6 +446,12 @@ static void t1_tier(void)
                                 ++e;
                             }
                             CHECK(e < s.count && (grp->mask >> e & 1u) && chi[e] == -1);
+                            /* and it is the expected one (S6 review item 1: chi is evaluated
+                             * only on hits that enlarge A_known, which must not change it) */
+                            uint32_t want[4];
+                            CHECK(expected_certificate(&s, grp, g, mask, chi, want));
+                            CHECK(n == 0 || memcmp(want, w, n * 4u) == 0);
+                            certificates += 1;
                         } else {
                             /* c and t of the unsigned canonical image; s = chi(t); Group(A) */
                             canon_result *c =
@@ -437,9 +508,10 @@ static void t1_tier(void)
         }
     }
     canon_workspace_release(ws);
-    printf("T1 signed: %u cases (%u zero), %u covariance solves (both backends)\n", cases, zeros,
-           covariances);
-    CHECK(zeros > 0 && zeros < cases);
+    printf("T1 signed: %u cases (%u zero, %u certificates pinned), %u covariance solves (both "
+           "backends)\n",
+           cases, zeros, certificates, covariances);
+    CHECK(zeros > 0 && zeros < cases && certificates == zeros);
 }
 
 /* ---- tampered certificates ---- */
