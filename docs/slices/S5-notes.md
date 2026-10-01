@@ -85,7 +85,7 @@ The brief says: "the stream length is invariant because each record's length is 
 
 ## Timing and environment
 
-- `make check` without sanitizers: about 43 s wall-clock (42.6 s measured: `review_checks.py`, 45 Python tests with the chain backend, then `test_e2e.py` again with the explicit backend). One `test_e2e.py` run takes about 21 s, of which D1 takes about 2 s. Well under the brief's two minutes; no reduction was needed.
+- `make check` without sanitizers: 41.4 s wall-clock on the final state (42.6 s on an earlier run): `review_checks.py`, 45 Python tests with the chain backend (20.6 s), then the 26 tests of `test_e2e.py` again with the explicit backend (19.9 s). D1 takes about 2 s of each `test_e2e.py` run. Well under the brief's two minutes; no reduction was needed.
 - `make SANITIZE=1 BUILD=build/san test`: all 26 C tests pass under ASan/UBSan.
-- CMake with `-DCANON_SANITIZE=ON`: all 29 ctest entries pass; `test_e2e` and `test_e2e_explicit` take about 155 s each under ASan/UBSan.
+- CMake with `-DCANON_SANITIZE=ON`: all 29 ctest entries pass; `test_e2e` and `test_e2e_explicit` take about 150 s each under ASan/UBSan (153 s and 148 s on the final state).
 - As in S1–S4, the local clang has no ASan runtime; `make CC=clang BUILD=build/clang` builds with zero warnings and all 26 C tests pass.
