@@ -43,6 +43,20 @@ The milestones above are gates. Delivery is organised as **vertical slices**: ea
 
 After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruption) and M1 follow; M5 benchmarks and M6 concurrency are scheduled only after M0 closes.
 
+### External oracle tier (WP0.9, decided 1 October 2026; scheduled after S6)
+
+External tools can check orbit-level facts, never P1 traces or CDAG-2 bytes. A `refs/oracles/` tier runs them as external processes on the JSON case files, writing seven-field FORMAT records restricted to the fields they can produce, and is skipped when the tool is absent. Each tool is pinned by version and hash in `review_sources/SOURCES.json` under the evidence policy; acquisition needs the maintainer's go-ahead; nothing is linked into the library.
+
+| Oracle | Checks | Convention notes |
+|---|---|---|
+| GAP core and the `images` package | Order, membership, orbits, complete stabilisers, transporters and emptiness, `LEX_MIN_IMAGE` for subsets and tuples, equivalence decisions, at degrees beyond brute force | Right action and left-to-right products as ours; 1-indexed points; within one orbit all subsets have equal size, so GAP's list order and CDAG-BYTE-1 agree on subsets (prove in the adapter) |
+| SymPy `combinatorics` | Group facts; the signed objective via `tensor_can.canonicalize`, whose signed generators on two extra points are exactly the §8.4 lift | `p*q` applies `p` first, as ours; optional Python dependency, test tier only |
+| nauty and Traces | Sym(V) graph equivalence decisions, automorphism orders and generators at scale | `lab` is the inverse of our image map; multigraphs through gadgets only |
+| xperm.c, cadabra2 | Signed tensor-monomial canonicalisation | Only with the M3c wrapper; convention vectors first (TensorGR T1) |
+| Vole, ferret, dejavu, bliss, saucy, Symbolica graphica, GraphCombinations.jl, SeQuant | Competitors for M5, and secondary oracles where scope matches | Probabilistic tools give leads, not certificates (§14) |
+
+Order: GAP with `images` first, SymPy second, nauty third, xperm with M3c, the rest at M5. Disagreements are triaged as convention errors first. External agreement does not replace the M0 blind reference.
+
 ## 1. Layout to milestone map
 
 | Path | Milestone | Governing spec sections | Contents when complete |
