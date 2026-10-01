@@ -272,9 +272,9 @@ canon_status canon_object_create_graph(canon_context *ctx, uint32_t degree,
         return CANON_INVALID_INPUT;
     }
     *out = NULL;
-    /* Required arrays: the colour arrays for degree > 0 (they may be NULL only when degree is
-     * 0), the arcs for arc_count > 0. */
-    if (ctx == NULL || (degree > 0 && (colours == NULL || colour_lengths == NULL)) ||
+    /* Required arrays: the arcs for arc_count > 0.  The colour arrays are both given or both
+     * NULL (every colour empty); one without the other is invalid. */
+    if (ctx == NULL || (colours == NULL) != (colour_lengths == NULL) ||
         (arc_count > 0 && arcs == NULL)) {
         return CANON_INVALID_INPUT;
     }
@@ -286,8 +286,8 @@ canon_status canon_object_create_graph(canon_context *ctx, uint32_t degree,
         return CANON_RESOURCE_LIMIT;
     }
     /* spec 17: copies data; spec 4.1: duplicate arcs combined, zero multiplicities invalid. */
-    canon_status st = canon_graph_init(&obj->root.u.graph, degree, degree > 0 ? colours : NULL,
-                                       degree > 0 ? colour_lengths : NULL, arcs, arc_count);
+    canon_status st = canon_graph_init(&obj->root.u.graph, degree, colours, colour_lengths,
+                                       arcs, arc_count);
     return finish_object(obj, st, out);
 }
 

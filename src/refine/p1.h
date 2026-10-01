@@ -25,20 +25,30 @@ typedef struct canon_p1_sig_entry {
     uint64_t count; /* total multiplicity, > 0 */
 } canon_p1_sig_entry;
 
+/* Per-point refinement arrays (each cap_n entries, at least one).  They live in ONE allocation
+ * (`block`) carved by p1.c from a single table of the array fields, so the set is allocated,
+ * swapped and freed as a unit and adding an array touches that table and this struct only. */
+typedef struct canon_p1_points {
+    void *block;        /* the allocation holding every array below */
+    size_t *sig_len;    /* O stage: merged entry count of each vertex's signature */
+    uint32_t *fixed;    /* G stage: F, singleton atoms in partition order */
+    uint32_t *u;        /* G stage: transporter with F^u = M */
+    uint32_t *orbit;    /* G stage: orbit ids of G_M on target labels */
+    uint32_t *sig;      /* per-point uint32 key handed to split */
+    uint32_t *order;    /* O stage: vertices sorted by signature */
+    uint32_t *order_tmp; /* O stage: sort scratch for order */
+} canon_p1_points;
+
 /* Refinement scratch, owned by a workspace and reused across solves; every array only grows
  * (canon_p1_scratch_reserve). */
 typedef struct canon_p1_scratch {
-    uint32_t cap_n;  /* degree the per-point arrays hold (at least one entry each) */
-    uint32_t *fixed; /* F: singleton atoms in partition order */
-    uint32_t *u;     /* transporter with F^u = M */
-    uint32_t *orbit; /* orbit ids of G_M on target labels */
-    uint32_t *sig;   /* per-point uint32 key handed to split */
+    uint32_t cap_n;     /* degree the per-point arrays hold */
+    canon_p1_points pt; /* per-point arrays */
     /* O stage (graph roots): per-vertex sparse signatures.  The entries of vertex v live at
-     * entries[out_start[v] + in_start[v] ..] (v's incident arc count bounds them), sig_len[v]
-     * of them after merging. */
-    size_t *sig_len;             /* cap_n */
-    uint32_t *order, *order_tmp; /* cap_n: vertices sorted by signature, and sort scratch */
-    size_t cap_entries;          /* entries allocated in entries and entries_tmp */
+     * entries[out_start[v] + in_start[v] ..] (v's incident arc count bounds them),
+     * pt.sig_len[v] of them after merging.  entries and entries_tmp (the sort scratch) are the
+     * two halves of one allocation owned through `entries`. */
+    size_t cap_entries; /* entries in each half */
     canon_p1_sig_entry *entries, *entries_tmp;
 } canon_p1_scratch;
 
@@ -58,9 +68,10 @@ void canon_p1_initial(canon_partition *p, const canon_root *x, canon_p1_scratch 
 
 /* spec 7.1 O stage for a graph root, signatures only: for every vertex v, the sparse signature
  * of v against the current partition (the stage's entry snapshot), readable through
- * canon_p1_signature.  Requires canon_p1_scratch_reserve for g's root.
- * CANON_CAPACITY_LIMIT if 2 * L * k does not fit uint64 or a count overflows uint64 (neither
- * happens for an imported graph, whose total multiplicity fits uint64). */
+ * canon_p1_signature.  Requires canon_p1_scratch_reserve for g's root and an indexed (imported)
+ * graph (CANON_INTERNAL_ERROR otherwise).  CANON_CAPACITY_LIMIT if 2 * L * k does not fit
+ * uint64 or a count overflows uint64 (neither happens for an imported graph, whose total
+ * multiplicity fits uint64). */
 canon_status canon_p1_graph_signatures(const canon_partition *p, const canon_graph *g,
                                        canon_p1_scratch *s);
 

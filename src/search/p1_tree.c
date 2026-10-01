@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
 #include "arena/checked.h"
 #include "perm/perm.h"
 
@@ -58,20 +59,16 @@ static canon_status prepare(canon_p1_search *s, const canon_root *x)
         free_arrays(s);
         s->snaps = snaps;
         s->snap_alloc = snap_alloc;
-        size_t entries = n > 0 ? (size_t)n : 1, bytes = 0;
-        if (!canon_size_mul(entries, sizeof(uint32_t), &bytes)) {
-            return CANON_CAPACITY_LIMIT; /* spec 11.1 */
-        }
         st = canon_partition_init(&s->part, n);
         if (st != CANON_COMPLETE) {
             free_arrays(s);
             return st;
         }
-        s->leaf_t = malloc(bytes);
-        s->best_t = malloc(bytes);
+        s->leaf_t = canon_alloc_array(n, sizeof *s->leaf_t, &st);
+        s->best_t = canon_alloc_array(n, sizeof *s->best_t, &st);
         if (s->leaf_t == NULL || s->best_t == NULL) {
             free_arrays(s);
-            return CANON_RESOURCE_LIMIT;
+            return st;
         }
         s->cap = n;
         s->ready = true;
@@ -120,11 +117,24 @@ static canon_status snapshot_slot(canon_p1_search *s, uint32_t depth, uint32_t *
 }
 
 /* spec 7.2 leaf map: L = singleton order; t_L the unique element minimising L^G; image x^t_L;
- * key (complete trace, CDAG-2 bytes).  Keep the least key; on an equal key keep the
- * lexicographically smaller witness (spec 7.4 preamble). */
+ * key (complete trace, CDAG-2 bytes), trace compared first.  Keep the least key; on an equal
+ * key keep the lexicographically smaller witness (spec 7.4 preamble). */
 static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, const canon_root *x)
 {
     const uint32_t n = s->n;
+    s->leaves += 1;
+    /* spec 7.2: "The objective is the lexicographic pair (complete trace, CDAG-2 bytes of
+     * x^t_L), with trace compared first"; spec 4.3 byte order, proper prefix smaller.  A leaf
+     * whose trace is greater than the best one cannot win whatever its bytes, so t_L, the image
+     * and its stream are only computed when the trace is less than or equal to the best. */
+    int c = -1;
+    if (s->have_best) {
+        c = canon_bytes_compare(s->trace.data, s->trace.len, s->best_trace.data,
+                                s->best_trace.len);
+        if (c > 0) {
+            return CANON_COMPLETE;
+        }
+    }
     /* spec 7.2: "At a leaf extract L from the partition's singleton order."  Every cell is a
      * singleton, so lab is L. */
     canon_status st = g->ops->tuple_min(g, s->part.lab, n, s->leaf_t, NULL);
@@ -137,29 +147,23 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
     if (st != CANON_COMPLETE) {
         return st;
     }
+    s->images += 1;
     canon_buf_truncate(&s->leaf_bytes, 0);
     st = canon_root_stream_write(&s->image.root, &s->leaf_bytes);
     if (st != CANON_COMPLETE) {
         return st;
     }
-    int better = !s->have_best;
-    if (!better) {
-        /* spec 7.2: "The objective is the lexicographic pair (complete trace, CDAG-2 bytes of
-         * x^t_L), with trace compared first"; spec 4.3 byte order, proper prefix smaller. */
-        int c = canon_bytes_compare(s->trace.data, s->trace.len, s->best_trace.data,
-                                    s->best_trace.len);
+    if (c == 0) {
+        /* equal traces: compare the CDAG-2 bytes, then (spec 7.4 preamble: "minimise among the
+         * witnesses that actually attain that key") the witness; S1 reports the least leaf
+         * witness, see canon_result_witness. */
+        c = canon_bytes_compare(s->leaf_bytes.data, s->leaf_bytes.len, s->best_bytes.data,
+                                s->best_bytes.len);
         if (c == 0) {
-            c = canon_bytes_compare(s->leaf_bytes.data, s->leaf_bytes.len, s->best_bytes.data,
-                                    s->best_bytes.len);
-        }
-        if (c == 0) {
-            /* spec 7.4 preamble: "minimise among the witnesses that actually attain that key"
-             * (S1 reports the least leaf witness; see canon_result_witness). */
             c = canon_perm_lex_compare(s->leaf_t, s->best_t, n);
         }
-        better = c < 0;
     }
-    if (!better) {
+    if (c >= 0) {
         return CANON_COMPLETE;
     }
     canon_buf_truncate(&s->best_trace, 0);
@@ -253,6 +257,8 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
     }
     s->have_best = false;
     s->nodes = 0;
+    s->leaves = 0;
+    s->images = 0;
     canon_buf_truncate(&s->trace, 0);
     canon_buf_truncate(&s->best_trace, 0);
     canon_buf_truncate(&s->best_bytes, 0);
@@ -260,6 +266,9 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
      * a leaf. */
     canon_p1_initial(&s->part, x, &s->scratch);
     st = visit(s, g, x, 0, max_nodes);
+    /* Invariant (p1_tree.h): between runs nothing in the workspace points into x; the graph
+     * image borrowed x's tables, so drop them now, on every outcome. */
+    canon_root_image_clear(&s->image);
     if (st != CANON_COMPLETE) {
         s->have_best = false;
         return st;

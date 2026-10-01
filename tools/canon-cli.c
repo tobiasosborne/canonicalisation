@@ -149,22 +149,26 @@ static void graph_input_free(graph_input *in)
 static int parse_graph(uint32_t n, const char *colours_arg, const char *arcs_arg, graph_input *in)
 {
     memset(in, 0, sizeof *in);
-    size_t slots = n > 0 ? (size_t)n : 1u;
     size_t pool_bytes = strlen(colours_arg) / 2 + strlen(arcs_arg) / 2 + 1;
     size_t arc_slots = *arcs_arg == '\0' ? 0 : count_char(arcs_arg, ';') + 1;
-    in->colours = calloc(slots, sizeof *in->colours);
-    in->colour_lengths = calloc(slots, sizeof *in->colour_lengths);
     in->arcs = calloc(arc_slots > 0 ? arc_slots : 1u, sizeof *in->arcs);
     in->pool = malloc(pool_bytes);
-    if (in->colours == NULL || in->colour_lengths == NULL || in->arcs == NULL ||
-        in->pool == NULL) {
+    if (in->arcs == NULL || in->pool == NULL) {
         return 3;
     }
     size_t used = 0;
-    /* Colours: "" = all empty; otherwise exactly n hex strings separated by ';'. */
+    /* Colours: "" = all empty, passed to the library as NULL arrays (no per-vertex storage, so
+     * a huge --n reaches the library's degree check); otherwise exactly n hex strings
+     * separated by ';', so n is bounded by the argument's length before anything is
+     * allocated. */
     if (*colours_arg != '\0') {
         if (count_char(colours_arg, ';') + 1 != (size_t)n) {
             return usage("--colours must list exactly N hex strings separated by ';'");
+        }
+        in->colours = calloc(n, sizeof *in->colours);
+        in->colour_lengths = calloc(n, sizeof *in->colour_lengths);
+        if (in->colours == NULL || in->colour_lengths == NULL) {
+            return 3;
         }
         const char *p = colours_arg;
         for (uint32_t v = 0; v < n; ++v) {

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
 #include "arena/checked.h"
 #include "util/sort.h"
 
@@ -41,87 +42,76 @@ void canon_p1_scratch_init(canon_p1_scratch *s)
 
 void canon_p1_scratch_free(canon_p1_scratch *s)
 {
-    free(s->fixed);
-    free(s->u);
-    free(s->orbit);
-    free(s->sig);
-    free(s->sig_len);
-    free(s->order);
-    free(s->order_tmp);
-    free(s->entries);
-    free(s->entries_tmp);
+    free(s->pt.block);
+    free(s->entries); /* entries_tmp is the second half of this block */
     canon_p1_scratch_init(s);
 }
 
-/* Grow the per-point arrays to n entries (at least one).  On failure the old arrays stay. */
-static canon_status reserve_points(canon_p1_scratch *s, uint32_t n)
+/* Allocate the per-point arrays for n points as one block.  The uint32 arrays are listed once,
+ * in `slots`; sig_len (size_t) comes first so that every array is suitably aligned (malloc
+ * alignment, then a multiple of sizeof(size_t), then uint32 arrays). */
+static canon_status points_alloc(canon_p1_points *pt, uint32_t n)
 {
-    if (s->fixed != NULL && n <= s->cap_n) {
-        return CANON_COMPLETE;
-    }
-    size_t entries = n > 0 ? (size_t)n : 1u, bytes = 0, len_bytes = 0;
-    if (!canon_size_mul(entries, sizeof(uint32_t), &bytes) ||
-        !canon_size_mul(entries, sizeof(size_t), &len_bytes)) {
+    uint32_t **const slots[] = {&pt->fixed, &pt->u, &pt->orbit, &pt->sig, &pt->order,
+                                &pt->order_tmp};
+    const size_t count = sizeof slots / sizeof *slots;
+    const size_t m = n > 0 ? (size_t)n : 1u;
+    size_t len_bytes = 0, u32_bytes = 0, total = 0;
+    if (!canon_size_mul(m, sizeof(size_t), &len_bytes) ||
+        !canon_size_mul3(m, count, sizeof(uint32_t), &u32_bytes) ||
+        !canon_size_add(len_bytes, u32_bytes, &total)) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
-    canon_p1_scratch t;
-    canon_p1_scratch_init(&t);
-    t.fixed = malloc(bytes);
-    t.u = malloc(bytes);
-    t.orbit = malloc(bytes);
-    t.sig = malloc(bytes);
-    t.order = malloc(bytes);
-    t.order_tmp = malloc(bytes);
-    t.sig_len = malloc(len_bytes);
-    if (t.fixed == NULL || t.u == NULL || t.orbit == NULL || t.sig == NULL || t.order == NULL ||
-        t.order_tmp == NULL || t.sig_len == NULL) {
-        canon_p1_scratch_free(&t);
-        return CANON_RESOURCE_LIMIT;
+    canon_status st = CANON_COMPLETE;
+    unsigned char *block = canon_alloc_array(total, 1u, &st);
+    if (block == NULL) {
+        return st;
     }
-    free(s->fixed);
-    free(s->u);
-    free(s->orbit);
-    free(s->sig);
-    free(s->order);
-    free(s->order_tmp);
-    free(s->sig_len);
-    s->fixed = t.fixed;
-    s->u = t.u;
-    s->orbit = t.orbit;
-    s->sig = t.sig;
-    s->order = t.order;
-    s->order_tmp = t.order_tmp;
-    s->sig_len = t.sig_len;
-    s->cap_n = n;
+    pt->block = block;
+    pt->sig_len = (size_t *)(void *)block;
+    uint32_t *next = (uint32_t *)(void *)(block + len_bytes);
+    for (size_t i = 0; i < count; ++i) {
+        *slots[i] = next;
+        next += m;
+    }
     return CANON_COMPLETE;
 }
 
 canon_status canon_p1_scratch_reserve(canon_p1_scratch *s, const canon_root *x)
 {
-    canon_status st = reserve_points(s, x->n);
-    if (st != CANON_COMPLETE || x->kind != CANON_ROOT_GRAPH) {
-        return st;
+    if (s->pt.block == NULL || x->n > s->cap_n) {
+        canon_p1_points fresh;
+        memset(&fresh, 0, sizeof fresh);
+        canon_status st = points_alloc(&fresh, x->n);
+        if (st != CANON_COMPLETE) {
+            return st; /* spec 17: the previous arrays stay */
+        }
+        free(s->pt.block);
+        s->pt = fresh; /* swapped wholesale */
+        s->cap_n = x->n;
     }
-    /* Each arc is one out-entry of its source and one in-entry of its target: 2e entries. */
-    size_t need = 0, bytes = 0;
+    if (x->kind != CANON_ROOT_GRAPH) {
+        return CANON_COMPLETE;
+    }
+    /* Each arc is one out-entry of its source and one in-entry of its target: 2e entries, and
+     * as many again for the sort scratch. */
+    size_t need = 0, both = 0;
     if (!canon_size_mul((size_t)x->u.graph.e, 2u, &need) ||
-        !canon_size_mul(need > 0 ? need : 1u, sizeof(canon_p1_sig_entry), &bytes)) {
+        !canon_size_mul(need > 0 ? need : 1u, 2u, &both)) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
     if (s->entries != NULL && need <= s->cap_entries) {
         return CANON_COMPLETE;
     }
-    canon_p1_sig_entry *entries = malloc(bytes), *tmp = malloc(bytes);
-    if (entries == NULL || tmp == NULL) {
-        free(entries);
-        free(tmp);
-        return CANON_RESOURCE_LIMIT;
+    canon_status st = CANON_COMPLETE;
+    canon_p1_sig_entry *entries = canon_alloc_array(both, sizeof *entries, &st);
+    if (entries == NULL) {
+        return st;
     }
     free(s->entries);
-    free(s->entries_tmp);
     s->entries = entries;
-    s->entries_tmp = tmp;
-    s->cap_entries = need;
+    s->entries_tmp = entries + both / 2u;
+    s->cap_entries = both / 2u;
     return CANON_COMPLETE;
 }
 
@@ -134,10 +124,10 @@ void canon_p1_initial(canon_partition *p, const canon_root *x, canon_p1_scratch 
     for (uint32_t a = 0; a < p->n; ++a) {
         /* spec 7.1: membership 0/1 on a top-level subset, B(vertex_colour[a]) on a top-level
          * graph (as its rank in B order) */
-        s->sig[a] = canon_root_initial_key(x, a);
+        s->pt.sig[a] = canon_root_initial_key(x, a);
     }
     /* spec 7.1: "Partition by equal keys and order cells by increasing key." */
-    (void)canon_partition_split(p, s->sig);
+    (void)canon_partition_split(p, s->pt.sig);
 }
 
 /* ---- O stage for a graph root (spec 7.1, 10) ---- */
@@ -202,7 +192,7 @@ static size_t sig_offset(const canon_graph *g, uint32_t v)
 const canon_p1_sig_entry *canon_p1_signature(const canon_p1_scratch *s, const canon_graph *g,
                                              uint32_t v, size_t *length)
 {
-    *length = s->sig_len[v];
+    *length = s->pt.sig_len[v];
     return s->entries + sig_offset(g, v);
 }
 
@@ -212,9 +202,13 @@ canon_status canon_p1_graph_signatures(const canon_partition *p, const canon_gra
     /* spec 7.1: "Within O all signatures refer to its entry snapshot": every signature is
      * computed from p (cell_of and k) before the split modifies it, so p itself is the entry
      * snapshot and no copy is needed. */
-    const uint64_t L = g->labels.count, k = p->cells;
-    if (L != 0 && k > (UINT64_MAX / 2u) / L) {
-        return CANON_CAPACITY_LIMIT; /* the index 2 * L * k must fit uint64 */
+    if (!g->indexed) {
+        return CANON_INTERNAL_ERROR; /* precondition: an imported graph, which has CSR/CSC */
+    }
+    const uint64_t k = p->cells;
+    uint64_t lk = 0;
+    if (!canon_u64_mul(g->labels.count, k, &lk) || lk > UINT64_MAX / 2u) {
+        return CANON_CAPACITY_LIMIT; /* the index range 2 * L * k must fit uint64 */
     }
     for (uint32_t v = 0; v < g->n; ++v) {
         canon_p1_sig_entry *sig = s->entries + sig_offset(g, v);
@@ -241,15 +235,14 @@ canon_status canon_p1_graph_signatures(const canon_partition *p, const canon_gra
         size_t out = 0;
         for (size_t i = 0; i < len; ++i) {
             if (out > 0 && sig[out - 1].index == sig[i].index) {
-                if (sig[i].count > UINT64_MAX - sig[out - 1].count) {
+                if (!canon_u64_add(sig[out - 1].count, sig[i].count, &sig[out - 1].count)) {
                     return CANON_CAPACITY_LIMIT; /* count-bit limit 64 (detailed plan 2.1) */
                 }
-                sig[out - 1].count += sig[i].count;
             } else {
                 sig[out++] = sig[i];
             }
         }
-        s->sig_len[v] = out;
+        s->pt.sig_len[v] = out;
     }
     return CANON_COMPLETE;
 }
@@ -289,18 +282,18 @@ canon_status canon_p1_stage_o(canon_partition *p, const canon_root *x, canon_p1_
      * comparison, never by hash (spec 10). */
     const uint32_t n = p->n;
     for (uint32_t v = 0; v < n; ++v) {
-        s->order[v] = v;
+        s->pt.order[v] = v;
     }
     vertex_cmp_ctx ctx = {s, g};
-    canon_stable_sort(s->order, n, sizeof *s->order, s->order_tmp, vertex_cmp, &ctx);
+    canon_stable_sort(s->pt.order, n, sizeof *s->pt.order, s->pt.order_tmp, vertex_cmp, &ctx);
     uint32_t rank = 0;
     for (uint32_t i = 0; i < n; ++i) {
-        if (i > 0 && vertex_cmp(&s->order[i - 1], &s->order[i], &ctx) != 0) {
+        if (i > 0 && vertex_cmp(&s->pt.order[i - 1], &s->pt.order[i], &ctx) != 0) {
             ++rank; /* at most n - 1 distinct ranks: fits uint32 */
         }
-        s->sig[s->order[i]] = rank;
+        s->pt.sig[s->pt.order[i]] = rank;
     }
-    (void)canon_partition_split(p, s->sig);
+    (void)canon_partition_split(p, s->pt.sig);
     return CANON_COMPLETE;
 }
 
@@ -335,20 +328,20 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
         uint32_t f = 0;
         for (uint32_t i = 0; i < p->cells; ++i) {
             if (canon_partition_cell_size(p, i) == 1) {
-                s->fixed[f++] = p->lab[p->start[i]];
+                s->pt.fixed[f++] = p->lab[p->start[i]];
             }
         }
         /* spec 7.1: "M = lexicographically least F^G; choose any u in G with F^u=M; compute
          * G_M orbits; sort ...".  The backend returns orbit ids on target labels. */
-        st = g->ops->tuple_min(g, s->fixed, f, s->u, s->orbit);
+        st = g->ops->tuple_min(g, s->pt.fixed, f, s->pt.u, s->pt.orbit);
         if (st != CANON_COMPLETE) {
             return st;
         }
         /* spec 7.1: "sig(v) = position of the orbit containing u[v]" (pull back through u^-1) */
         for (uint32_t v = 0; v < p->n; ++v) {
-            s->sig[v] = s->orbit[s->u[v]];
+            s->pt.sig[v] = s->pt.orbit[s->pt.u[v]];
         }
-        (void)canon_partition_split(p, s->sig);
+        (void)canon_partition_split(p, s->pt.sig);
         st = append_stage(trace, TOKEN_STAGE_G, p);
         if (st != CANON_COMPLETE) {
             return st;

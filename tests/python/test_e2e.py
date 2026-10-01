@@ -261,6 +261,30 @@ class GraphTiers(CliTestCase):
         code, fields, _ = run_graph_cli(2, [(1, 0)], (b"", b""), [], "gquota3", max_nodes=3)
         self.assertEqual((code, fields[2]), (0, "COMPLETE"))
 
+    def test_trace_pruned_leaves(self):
+        # Review item 1: a directed 2-cycle plus a directed 3-cycle under Sym(5); the C search
+        # skips the image of every leaf whose trace exceeds the best one (spec 7.2: trace first)
+        # and must still agree with the model, which materialises every leaf.
+        n = 5
+        group = rc.closure(((1, 0, 2, 3, 4), (1, 2, 3, 4, 0)), n)
+        arcs = ((0, 1, b"", 1), (1, 0, b"", 1), (2, 3, b"", 1), (3, 4, b"", 1), (4, 2, b"", 1))
+        colours = (b"",) * n
+        self.check_graph(n, group, {"full": sorted(group), "greedy": greedy_generators(group, n)},
+                         colours, arcs, "pruned", random.Random(5))
+
+    def test_huge_degree(self):
+        # Review item 5: the CLI allocates nothing per vertex for the default colours, so a
+        # degree above the context's max_n is a deterministic CAPACITY_LIMIT, as for p1-subset.
+        for args in (["p1-graph", "--n", "4294967295", "--id", "huge"],
+                     ["p1-graph", "--n", "4294967295", "--arcs", "0,1,,1", "--id", "huge"],
+                     ["p1-subset", "--n", "4294967295", "--id", "huge"]):
+            with self.subTest(args):
+                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
+                                      check=False)
+                self.assertEqual(proc.returncode, 3)
+                self.assertEqual(proc.stdout.splitlines(),
+                                 ["huge\t0001\tCAPACITY_LIMIT\t\t\t-"])
+
     def test_graph_invalid_and_usage(self):
         # spec 4.1: zero multiplicities and out-of-domain vertices are invalid input.
         for arcs in ([(0, 1, b"", 0)], [(0, 2, b"", 1)]):

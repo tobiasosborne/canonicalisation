@@ -1,27 +1,20 @@
 /* The CDAG-2 stream of a top-level coloured directed multigraph (spec sections 4.1, 4.2). */
 #include "encoding/graph_stream.h"
 
+#include "arena/checked.h"
+
 /* Record tag of the spec 4.1 table: coloured directed multigraph. */
 enum { TAG_GRAPH = 0x09 };
 
-/* acc += x, false on uint64 overflow (spec 11.1: no wraparound has meaning). */
-static int add64(uint64_t *acc, uint64_t x)
-{
-    if (x > UINT64_MAX - *acc) {
-        return 0;
-    }
-    *acc += x;
-    return 1;
-}
-
-canon_status canon_graph_stream_size(const canon_graph *g, uint64_t *size_out)
+canon_status canon_graph_stream_measure(const canon_graph *g, uint64_t *size_out)
 {
     /* spec 4.1: magic 3, U16 schema, U16 action, U32 n, U32 q; tag; U32(e); U32 root. */
     uint64_t size = 3u + 2u + 2u + 4u + 4u + 1u + 4u + 4u;
     for (uint32_t v = 0; v < g->n; ++v) {
         size_t len = 0;
         (void)canon_byte_table_get(&g->colours, g->colour_id[v], &len);
-        if (!add64(&size, 4u) || !add64(&size, (uint64_t)len)) { /* B(colour[v]) */
+        /* B(colour[v]) */
+        if (!canon_u64_add(size, 4u, &size) || !canon_u64_add(size, (uint64_t)len, &size)) {
             return CANON_CAPACITY_LIMIT;
         }
     }
@@ -29,8 +22,8 @@ canon_status canon_graph_stream_size(const canon_graph *g, uint64_t *size_out)
         size_t len = 0;
         (void)canon_byte_table_get(&g->labels, g->arcs[i].label, &len);
         /* U32 source, U32 target, B(label), Nat(multiplicity) */
-        if (!add64(&size, 12u) || !add64(&size, (uint64_t)len) ||
-            !add64(&size, canon_nat_length(g->arcs[i].multiplicity))) {
+        if (!canon_u64_add(size, 12u, &size) || !canon_u64_add(size, (uint64_t)len, &size) ||
+            !canon_u64_add(size, canon_nat_length(g->arcs[i].multiplicity), &size)) {
             return CANON_CAPACITY_LIMIT;
         }
     }
@@ -38,13 +31,16 @@ canon_status canon_graph_stream_size(const canon_graph *g, uint64_t *size_out)
     return CANON_COMPLETE;
 }
 
+canon_status canon_graph_stream_size(const canon_graph *g, uint64_t *size_out)
+{
+    *size_out = g->stream_size; /* measured at import; images borrow it */
+    return CANON_COMPLETE;
+}
+
 canon_status canon_graph_stream_write(canon_buf *out, const canon_graph *g)
 {
-    uint64_t size = 0;
-    canon_status st = canon_graph_stream_size(g, &size);
-    if (st != CANON_COMPLETE) {
-        return st;
-    }
+    const uint64_t size = g->stream_size; /* spec 11.1: exact, cached at import */
+    canon_status st = CANON_COMPLETE;
     if (size > SIZE_MAX) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: uint64 offsets checked against SIZE_MAX */
     }

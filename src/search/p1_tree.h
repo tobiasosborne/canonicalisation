@@ -22,7 +22,10 @@
 #include "refine/p1.h"
 
 /* Reusable mutable search state (one active owner, spec 17).  Buffers persist across solves and
- * grow on demand; nothing here is ever aliased by a result. */
+ * grow on demand; nothing here is ever aliased by a result.  Invariant: when
+ * canon_p1_search_run returns (on every status), no member points into the root object or
+ * the group of that run (the leaf image's borrowed graph tables are cleared), so the object
+ * may be released before the workspace is reused or freed. */
 typedef struct canon_p1_search {
     uint32_t n;               /* degree of the current solve, n <= cap */
     uint32_t cap;             /* degree the per-point arrays are allocated for (only grows) */
@@ -41,6 +44,8 @@ typedef struct canon_p1_search {
     uint32_t *best_t;      /* ... and the least witness attaining it */
     bool have_best;
     uint64_t nodes;        /* NODE tokens of the reference traversal so far */
+    uint64_t leaves;       /* leaves reached in the last run */
+    uint64_t images;       /* leaves whose image and stream were materialised (trace <= best) */
 } canon_p1_search;
 
 /* Zero state, no allocation. */

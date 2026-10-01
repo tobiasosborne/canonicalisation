@@ -51,6 +51,10 @@ void canon_root_image_free(canon_root_image *img);
  * is.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT if the storage cannot grow. */
 canon_status canon_root_act_into(const canon_root *x, const uint32_t *g, canon_root_image *img);
 
+/* Forget the last image: a graph image drops the table pointers it borrowed from its source
+ * (canon_graph_image_clear), so the storage refers to no object; capacities are kept. */
+void canon_root_image_clear(canon_root_image *img);
+
 /* spec 4.1, 4.2: append the complete CDAG-2 stream of x (all or nothing). */
 canon_status canon_root_stream_write(const canon_root *x, canon_buf *out);
 

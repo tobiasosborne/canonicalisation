@@ -18,10 +18,14 @@
 #include "encoding/wire.h"
 #include "object/graph.h"
 
-/* Exact byte length of the stream of g, computed with overflow checks (spec 11.1); the length
- * does not depend on the vertex numbering (it sums over the colour multiset and the arcs'
- * label lengths and Nat lengths), so it is invariant under the action.  CANON_CAPACITY_LIMIT if
- * it does not fit uint64. */
+/* spec 11.1: compute the exact byte length of the stream of g from its normalised content, with
+ * overflow checks; CANON_CAPACITY_LIMIT if it does not fit uint64.  Called once, by import
+ * (src/object/graph.c), which caches the result in g->stream_size. */
+canon_status canon_graph_stream_measure(const canon_graph *g, uint64_t *size_out);
+
+/* The exact byte length of the stream of g: the cached g->stream_size.  It does not depend on
+ * the vertex numbering (it sums over the colour multiset and the arcs' label lengths and Nat
+ * lengths), so it is invariant under the action and an image carries its source's value. */
 canon_status canon_graph_stream_size(const canon_graph *g, uint64_t *size_out);
 
 /* Append the complete CDAG-2 stream of the normalised graph g.  All or nothing: on failure the
