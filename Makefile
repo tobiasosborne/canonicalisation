@@ -38,7 +38,7 @@ LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
 UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition test_search_subset \
              test_nat test_graph test_graph_stream test_signature test_simple_upper \
-             test_search_graph
+             test_search_graph test_chain test_reference_schreier test_verify test_provenance
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
@@ -70,7 +70,7 @@ $(BUILD)/test_version: tests/c/test_version.c $(LIB)
 $(BUILD)/test_header_abi: tests/c/test_header_abi.c $(LIB)
 	$(CC) $(CFLAGS) -Iinclude -Isrc $< $(LIB) -o $@ $(LDFLAGS)
 
-$(UNIT_TESTS:%=$(BUILD)/%): $(BUILD)/%: tests/c/%.c tests/c/check.h $(LIB)
+$(UNIT_TESTS:%=$(BUILD)/%): $(BUILD)/%: tests/c/%.c tests/c/check.h tests/c/t1_groups.h $(LIB)
 	$(CC) $(CFLAGS) -Iinclude -Isrc $< $(LIB) -o $@ $(LDFLAGS)
 
 test: all
