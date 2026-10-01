@@ -1,7 +1,10 @@
 /* The stabiliser-chain group backend (slice S3; spec 9.1, 9.2, 7.1, 7.2): canon_group_ops over
  * a verified chain (src/bsgs/chain.h).  The group is immutable after creation and may be
  * shared between threads (spec 17): every operation allocates its own scratch (tuple_min) or
- * none (order, contains). */
+ * uses the caller's (character) or none (order, contains).
+ *
+ * Slice S6: a signed group (spec 8.4) also keeps the verified chain of its lifted group on
+ * n + 2 points, from which `character` reads chi; `conjugate` relabels the chain (spec 3.1). */
 #include "bsgs/chain_backend.h"
 
 #include <stdlib.h>
@@ -9,26 +12,41 @@
 #include "arena/alloc.h"
 #include "perm/perm.h"
 
+/* Backend state: the chain of G and, for a signed group, the chain of its lift. */
+typedef struct chain_impl {
+    canon_bsgs chain;
+    canon_bsgs *lift; /* S6: NULL for an unsigned group */
+} chain_impl;
+
 static void chain_destroy(void *impl)
 {
-    canon_bsgs *c = impl;
+    chain_impl *c = impl;
     if (c != NULL) {
-        canon_bsgs_free(c);
+        canon_bsgs_free(&c->chain);
+        if (c->lift != NULL) {
+            canon_bsgs_free(c->lift);
+            free(c->lift);
+        }
         free(c);
     }
+}
+
+static const canon_bsgs *chain(const canon_group *group)
+{
+    const chain_impl *c = group->impl;
+    return &c->chain;
 }
 
 /* spec 9.2: the order is the product of the orbit lengths (it fits uint64 by construction). */
 static uint64_t chain_order(const canon_group *group)
 {
-    const canon_bsgs *c = group->impl;
-    return c->order;
+    return chain(group)->order;
 }
 
 /* spec 9.1/9.2: membership by sifting. */
 static canon_status chain_contains(const canon_group *group, const uint32_t *p, bool *out)
 {
-    return canon_bsgs_contains(group->impl, p, out);
+    return canon_bsgs_contains(chain(group), p, out);
 }
 
 /* spec 11.1: S3 brief 2.5 - the chain is limited only by its uint64 order, which every built
@@ -44,25 +62,117 @@ static canon_status chain_admits(const canon_group *group, const canon_capacity 
 static canon_status chain_tuple_min(const canon_group *group, const uint32_t *L, uint32_t len,
                                     uint32_t *t_out, uint32_t *orbit_id_out)
 {
-    return canon_bsgs_tuple_min(group->impl, L, len, t_out, orbit_id_out, NULL);
+    return canon_bsgs_tuple_min(chain(group), L, len, t_out, orbit_id_out, NULL);
 }
 
 /* spec 8.1: the coset enumerator over the verified chain (src/coset/enumerate.c). */
 static canon_status chain_enumerate(const canon_group *group, canon_coset_visitor *visitor)
 {
-    return canon_coset_enumerate(group->impl, visitor);
+    return canon_coset_enumerate(chain(group), visitor);
 }
 
-static const canon_group_ops chain_ops = {chain_destroy,   chain_order,  chain_contains,
-                                          chain_tuple_min, chain_admits, chain_enumerate};
+/* spec 8.4: chi(g) by membership of the two extensions of g in the lift (group.h contract):
+ * one sift of lift(g, +1) and, if it fails, one of lift(g, -1), through the lift's single
+ * membership rule (canon_bsgs_contains_scratch). */
+static canon_status chain_character(const canon_group *group, const uint32_t *g, uint32_t *scratch,
+                                    int *sign)
+{
+    *sign = 0;
+    const chain_impl *c = group->impl;
+    if (c->lift == NULL) {
+        return CANON_UNSUPPORTED_ACTION; /* an unsigned group has no character */
+    }
+    const uint32_t n = group->degree, m = n + 2u; /* fits: checked at creation (spec 11.1) */
+    canon_status st = CANON_COMPLETE;
+    uint32_t *own = NULL;
+    if (scratch == NULL) {
+        size_t words = 0;
+        if (!canon_group_character_words(n, &words)) {
+            return CANON_CAPACITY_LIMIT;
+        }
+        scratch = own = canon_alloc_array(words, sizeof *own, &st);
+        if (own == NULL) {
+            return st;
+        }
+    }
+    uint32_t *ext = scratch, *residue = scratch + m;
+    st = CANON_INVALID_INPUT; /* neither extension is in the lift: g is not in G */
+    for (int s = 1; s >= -1; s -= 2) {
+        canon_group_lift_element(g, n, s, ext);
+        if (canon_bsgs_contains_scratch(c->lift, ext, residue)) {
+            *sign = s;
+            st = CANON_COMPLETE;
+            break;
+        }
+    }
+    free(own);
+    return st;
+}
+
+static const canon_group_ops chain_ops;
+
+/* Wrap backend state in a handle (spec 17: the count comes from canon_group_alloc); on failure
+ * the state is destroyed. */
+static canon_status wrap(chain_impl *c, uint32_t degree, canon_group **out)
+{
+    canon_status st = canon_group_alloc(&chain_ops, degree, c, out);
+    if (st != CANON_COMPLETE) {
+        chain_destroy(c);
+    }
+    return st;
+}
+
+/* spec 3.1, 2.1: g^-1 G g by relabelling the verified chain through g (S5 review item 6:
+ * canon_bsgs_conjugate keeps the verified flag; see its comment in chain.h). */
+static canon_status chain_conjugate(const canon_group *group, const uint32_t *g, canon_group **out)
+{
+    *out = NULL;
+    canon_status st = CANON_COMPLETE;
+    chain_impl *c = canon_alloc_array(1, sizeof *c, &st);
+    if (c == NULL) {
+        return st;
+    }
+    c->lift = NULL; /* the conjugate is unsigned (signed labeling: deferred, S6 notes) */
+    st = canon_bsgs_conjugate(chain(group), g, &c->chain);
+    if (st != CANON_COMPLETE) {
+        free(c); /* canon_bsgs_conjugate left the chain empty */
+        return st;
+    }
+    return wrap(c, group->degree, out);
+}
+
+static const canon_group_ops chain_ops = {chain_destroy,   chain_order,    chain_contains,
+                                          chain_tuple_min, chain_admits,   chain_enumerate,
+                                          chain_character, chain_conjugate};
 
 const canon_bsgs *canon_group_chain_of(const canon_group *group)
 {
-    return group != NULL && group->ops == &chain_ops ? group->impl : NULL;
+    return group != NULL && group->ops == &chain_ops ? chain(group) : NULL;
 }
 
-canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generators,
-                                      size_t generator_count, canon_group **out)
+/* Validate the generators (spec 4.1, 9.1: bijections of the domain, one scratch bitmap). */
+static canon_status validate_generators(uint32_t degree, const uint32_t *generators,
+                                        size_t generator_count)
+{
+    if (degree == 0 || generator_count == 0) {
+        return CANON_COMPLETE;
+    }
+    canon_status st = CANON_COMPLETE;
+    uint64_t *bitmap = canon_alloc_array(((size_t)degree + 63u) / 64u, sizeof *bitmap, &st);
+    if (bitmap == NULL) {
+        return st;
+    }
+    bool valid = true;
+    for (size_t i = 0; i < generator_count && valid; ++i) {
+        valid = canon_perm_validate_scratch(generators + i * (size_t)degree, degree, bitmap);
+    }
+    free(bitmap);
+    return valid ? CANON_COMPLETE : CANON_INVALID_INPUT;
+}
+
+/* The shared constructor: signs NULL for an unsigned group. */
+static canon_status create(uint32_t degree, const uint32_t *generators, size_t generator_count,
+                           const int8_t *signs, canon_group **out)
 {
     *out = NULL;
     if (generator_count > 0 && degree > 0 && generators == NULL) {
@@ -71,37 +181,80 @@ canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generator
     if (generator_count > UINT32_MAX - 1u) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: input indices are uint32 */
     }
-    canon_status st = CANON_COMPLETE;
-    /* spec 4.1, 9.1: generators must be bijections of the domain (one scratch bitmap). */
-    if (degree > 0 && generator_count > 0) {
-        uint64_t *bitmap = canon_alloc_array(((size_t)degree + 63u) / 64u, sizeof *bitmap, &st);
-        if (bitmap == NULL) {
-            return st;
-        }
-        bool valid = true;
-        for (size_t i = 0; i < generator_count && valid; ++i) {
-            valid = canon_perm_validate_scratch(generators + i * (size_t)degree, degree, bitmap);
-        }
-        free(bitmap);
-        if (!valid) {
-            return CANON_INVALID_INPUT;
-        }
+    if (signs != NULL && degree > UINT32_MAX - 2u) {
+        /* spec 11.1: "the initial lifted-character validator additionally requires
+         * n+2 <= 2^32-1, checked before constructing its two sign points" */
+        return CANON_CAPACITY_LIMIT;
     }
-    canon_bsgs *c = canon_alloc_array(1, sizeof *c, &st);
+    canon_status st = validate_generators(degree, generators, generator_count);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    chain_impl *c = canon_alloc_array(1, sizeof *c, &st);
     if (c == NULL) {
         return st;
     }
+    c->lift = NULL;
     /* Degree 0: every generator is the empty permutation and is not read. */
     const size_t count = degree > 0 ? generator_count : 0;
     /* spec 9.1: "exact verification is mandatory"; the verifier is independent of the
      * constructor (src/bsgs/verify.c). */
-    st = canon_bsgs_build_verified(c, degree, generators, count);
-    if (st == CANON_COMPLETE) {
-        /* spec 17: the handle and its reference count come from canon_group_alloc. */
-        st = canon_group_alloc(&chain_ops, degree, c, out);
-    }
+    st = canon_bsgs_build_verified(&c->chain, degree, generators, count);
     if (st != CANON_COMPLETE) {
-        chain_destroy(c);
+        free(c); /* the build left the chain empty */
+        return st;
+    }
+    if (signs != NULL) {
+        /* spec 8.4: "Validate chi by constructing the lifted generated group on Omega u {+,-}
+         * ... chi exists exactly when the subgroup fixing every point of Omega in this lift is
+         * trivial".  The projection L -> G (restriction to Omega) is onto with that subgroup
+         * as its kernel K, so |L| = |G| |K|: K is trivial iff |L| = |G| (a complete chain
+         * calculation, both orders exact).  Every generator is lifted, including identities
+         * and repeats (an identity with sign -1 puts the marker swap into K); degree 0 lifts
+         * the empty generators to the two markers. */
+        uint32_t *lifted =
+            canon_group_lift_generators(degree, generators, generator_count, signs, &st);
+        c->lift = lifted != NULL ? canon_alloc_array(1, sizeof *c->lift, &st) : NULL;
+        if (c->lift != NULL) {
+            st = canon_bsgs_build_verified(c->lift, degree + 2u, lifted, generator_count);
+            if (st != CANON_COMPLETE) {
+                free(c->lift); /* left empty by the build */
+                c->lift = NULL;
+            } else if (c->lift->order != c->chain.order) {
+                st = CANON_INVALID_INPUT; /* spec 8.4: "Reject inconsistent signs" */
+            }
+        }
+        free(lifted);
+        if (st != CANON_COMPLETE) {
+            chain_destroy(c);
+            return st;
+        }
+    }
+    st = wrap(c, degree, out);
+    if (st == CANON_COMPLETE && signs != NULL) {
+        st = canon_group_set_signs(*out, generators, generator_count, signs);
+        if (st != CANON_COMPLETE) {
+            canon_group_unshare(*out);
+            *out = NULL;
+        }
     }
     return st;
+}
+
+canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generators,
+                                      size_t generator_count, canon_group **out)
+{
+    return create(degree, generators, generator_count, NULL, out);
+}
+
+canon_status canon_group_chain_create_signed(uint32_t degree, const uint32_t *generators,
+                                             size_t generator_count, const int8_t *signs,
+                                             canon_group **out)
+{
+    if (generator_count > 0 && signs == NULL) {
+        *out = NULL;
+        return CANON_INVALID_INPUT;
+    }
+    static const int8_t none = 1; /* zero generators: a non-NULL sign array marks "signed" */
+    return create(degree, generators, generator_count, generator_count > 0 ? signs : &none, out);
 }
