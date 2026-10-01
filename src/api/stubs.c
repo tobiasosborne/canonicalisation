@@ -1,23 +1,11 @@
-/* Stubs for the spec section 17 entry points.  Every function reports
- * CANON_UNSUPPORTED_ACTION (spec section 3.2: unknown or unimplemented actions are
+/* Stubs for the spec section 17 entry points not implemented in slice S1.  Every function
+ * reports CANON_UNSUPPORTED_ACTION (spec section 3.2: unknown or unimplemented actions are
  * unsupported, never reinterpreted) and stores NULL through any out-pointer it is given.
  * No argument is validated or dereferenced other than the out-pointers.
- * TODO(M4): spec section 17 -- replace each stub with the real implementation. */
+ * Replaced by: canon_object_create (S5), canon_solve_batch (S8),
+ * canon_result_verify_witness (S4), canon_checkpoint_write/read (M6).
+ * The S1 entry points live in src/api/api.c. */
 #include "canon/canon.h"
-
-/* spec section 17 */
-canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint32_t *generators,
-                                size_t generator_count, canon_group **out)
-{
-    (void)ctx;
-    (void)degree;
-    (void)generators;
-    (void)generator_count;
-    if (out != NULL) {
-        *out = NULL;
-    }
-    return CANON_UNSUPPORTED_ACTION;
-}
 
 /* spec section 17 */
 canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_action action,
@@ -30,47 +18,6 @@ canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_
     (void)degree;
     (void)stream;
     (void)stream_length;
-    if (out != NULL) {
-        *out = NULL;
-    }
-    return CANON_UNSUPPORTED_ACTION;
-}
-
-/* spec section 17 */
-canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
-                                  const canon_object *object, canon_objective objective,
-                                  canon_profile profile, canon_encoding encoding, canon_order order,
-                                  canon_problem **out)
-{
-    (void)ctx;
-    (void)group;
-    (void)object;
-    (void)objective;
-    (void)profile;
-    (void)encoding;
-    (void)order;
-    if (out != NULL) {
-        *out = NULL;
-    }
-    return CANON_UNSUPPORTED_ACTION;
-}
-
-/* spec section 17 */
-canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out)
-{
-    (void)ctx;
-    if (out != NULL) {
-        *out = NULL;
-    }
-    return CANON_UNSUPPORTED_ACTION;
-}
-
-/* spec section 17 */
-canon_status canon_solve(canon_workspace *workspace, const canon_problem *problem,
-                         canon_result **out)
-{
-    (void)workspace;
-    (void)problem;
     if (out != NULL) {
         *out = NULL;
     }
@@ -99,15 +46,6 @@ canon_status canon_result_verify_witness(const canon_result *result, bool *valid
     if (valid != NULL) {
         *valid = false; /* spec section 3.2: false means unproved */
     }
-    return CANON_UNSUPPORTED_ACTION;
-}
-
-/* spec section 17 */
-canon_status canon_result_encode(const canon_result *result, canon_sink_fn sink, void *user)
-{
-    (void)result;
-    (void)sink;
-    (void)user;
     return CANON_UNSUPPORTED_ACTION;
 }
 
