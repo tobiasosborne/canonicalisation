@@ -62,5 +62,5 @@ Known costs of the S1 backend: the element table is `|G|·n·4` bytes (up to 1 G
 
 ## Environment notes
 
-- The local clang has no AddressSanitizer runtime (`libclang_rt.asan-x86_64.a` is missing), so `cmake -DCANON_SANITIZE=ON` with `CC=clang` cannot link here; it is a toolchain gap, not a code issue (CI installs a full clang). Locally the clang build was exercised with `-fsanitize=undefined -fsanitize-trap=all` (all C tests and `test_e2e.py` pass), and gcc with ASan+UBSan.
+- The local clang has no AddressSanitizer runtime (`libclang_rt.asan-x86_64.a` is missing), so `cmake -DCANON_SANITIZE=ON` with `CC=clang` cannot link here; it is a toolchain gap, not a code issue (the CI clang+sanitizer job was not run from here; the ubuntu-latest clang normally ships the runtime). Locally the clang build was exercised with `-fsanitize=undefined -fsanitize-trap=all` (all C tests and `test_e2e.py` pass), and gcc with ASan+UBSan.
 - Stale text outside this slice's write permission: `README.md` (status paragraph and layout line) and `HANDOFF.md` (state and layout table) still say the library has only `canon_version()` and stubs; `CLAUDE.md`'s project summary says the same. They need a coordinator update.
