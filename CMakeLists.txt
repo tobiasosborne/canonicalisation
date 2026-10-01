@@ -62,7 +62,7 @@ add_test(NAME test_header_abi COMMAND test_header_abi)
 # Unit and end-to-end C tests; they may include internal headers from src/.
 foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_search_subset
           test_nat test_graph test_graph_stream test_signature test_simple_upper
-          test_search_graph)
+          test_search_graph test_chain test_reference_schreier test_verify test_provenance)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)
