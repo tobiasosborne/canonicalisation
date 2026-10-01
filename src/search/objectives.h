@@ -29,10 +29,10 @@
 
 /* Counters of the last run (docs/slices/S4-notes.md; spec 8.3 "must appear in metrics"). */
 typedef struct canon_obj_stats {
-    uint64_t nodes;       /* enumeration visit calls (all enumerations of the run) */
-    uint64_t leaves;      /* consume calls */
-    uint64_t hits;        /* x^r = y (transporter) or x^r = x (stabiliser) */
-    uint64_t stab_builds; /* verified rebuilds of the stabiliser chain (<= log2 |A|) */
+    uint64_t nodes;                /* enumeration visit calls (all enumerations of the run) */
+    uint64_t leaves;               /* consume calls */
+    uint64_t hits;                 /* x^r = y (transporter) or x^r = x (stabiliser) */
+    uint64_t stab_builds;          /* verified rebuilds of the stabiliser chain (<= log2 |A|) */
     canon_coset_stats coset;       /* descents and transient rebuilds, all phases */
     canon_group_bytes_stats group; /* the last Group(A) payload */
 } canon_obj_stats;

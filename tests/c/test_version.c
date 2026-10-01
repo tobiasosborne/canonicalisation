@@ -1,11 +1,12 @@
 /* ctest: canon_version() matches the header constants; remaining stubs report
  * UNSUPPORTED_ACTION; the slice S1 entry points validate NULL arguments.
  *
- * Documented stub behaviour (src/api/stubs.c): the section 17 entry points not implemented in
- * slice S1 (canon_object_create from a stream, canon_solve_batch, canon_result_verify_witness,
- * canon_checkpoint_write/read) return CANON_UNSUPPORTED_ACTION unconditionally, even for NULL
- * arguments, and store NULL through out-pointers.  The S1 entry points (src/api/api.c) return
- * CANON_INVALID_INPUT for NULL required arguments and store NULL through out-pointers. */
+ * Documented stub behaviour (src/api/stubs.c): the section 17 entry points not implemented yet
+ * (canon_object_create from a stream, canon_solve_batch, canon_checkpoint_write/read) return
+ * CANON_UNSUPPORTED_ACTION unconditionally, even for NULL arguments, and store NULL through
+ * out-pointers.  The implemented entry points (src/api/api.c), including
+ * canon_result_verify_witness since slice S4, return CANON_INVALID_INPUT for NULL required
+ * arguments and store NULL (or false) through out-pointers. */
 #include <stdio.h>
 #include <string.h>
 
@@ -45,6 +46,12 @@ int main(void)
     CHECK(canon_problem_create(NULL, NULL, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1,
                                CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
                                NULL) == CANON_INVALID_INPUT);
+    canon_problem *problem = (canon_problem *)&failures;
+    CHECK(canon_problem_create_with_options(NULL, NULL, NULL, NULL,
+                                            CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE,
+                                            CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
+                                            NULL, &problem) == CANON_INVALID_INPUT);
+    CHECK(problem == NULL); /* S4 */
     CHECK(canon_workspace_create(NULL, NULL) == CANON_INVALID_INPUT);
     CHECK(canon_result_encode(NULL, NULL, NULL) == CANON_INVALID_INPUT);
 

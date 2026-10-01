@@ -82,8 +82,7 @@ static void golden(void)
     CHECK(canon_bsgs_build_verified(&one, 2, NULL, 0) == CANON_COMPLETE);
     canon_buf_truncate(&b, 0);
     CHECK(canon_coset_bytes_write(&b, &one, swap, NULL) == CANON_COMPLETE);
-    CHECK(check_hex_is(b.data, b.len,
-                       "01 00000000 00000002 00000000 00000001 00000001 00000000"));
+    CHECK(check_hex_is(b.data, b.len, "01 00000000 00000002 00000000 00000001 00000001 00000000"));
     canon_bsgs_free(&one);
     /* Perm of the identity is U32(0); a 3-cycle lists its support, source then target */
     const uint32_t id3[3] = {0, 1, 2};
@@ -249,8 +248,7 @@ static void t1(void)
                     }
                 }
                 group_bytes(n, gens, gc, &other, NULL);
-                CHECK(other.len == b.len &&
-                      (b.len == 0 || memcmp(other.data, b.data, b.len) == 0));
+                CHECK(other.len == b.len && (b.len == 0 || memcmp(other.data, b.data, b.len) == 0));
             }
             /* random bases: rebase to a random prefix (verified) */
             canon_bsgs h, rb;

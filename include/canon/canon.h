@@ -187,7 +187,7 @@ void canon_result_release(canon_result *result);
  * {0..degree-1}.  With the context's backend (canon_context_options):
  * CANON_BACKEND_CHAIN (default, S3) builds a verified stabiliser chain (spec 9.1) and returns
  * CANON_CAPACITY_LIMIT only when |G| exceeds 2^64 - 1 (the order is exact in uint64 in this
- * release; slice S4's multi-limb orders lift this), or CANON_INTERNAL_ERROR if the independent
+ * release; multi-limb orders are deferred beyond S4), or CANON_INTERNAL_ERROR if the independent
  * verifier rejected the constructed chain; CANON_BACKEND_EXPLICIT (S1) enumerates the group
  * and returns CANON_CAPACITY_LIMIT when the closure would exceed the context's max_group_order
  * (checked before each growth of the element table, never after). */

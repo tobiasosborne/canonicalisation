@@ -46,9 +46,8 @@ static canon_result *solve(const canon_group *g, const canon_object *x, const ca
                            canon_objective objective, canon_order order, canon_witness_mode mode,
                            uint64_t max_nodes, canon_status *st)
 {
-    const canon_profile profile = objective == CANON_OBJECTIVE_CANONICAL_IMAGE
-                                      ? CANON_PROFILE_P1
-                                      : CANON_PROFILE_NO_TREE;
+    const canon_profile profile =
+        objective == CANON_OBJECTIVE_CANONICAL_IMAGE ? CANON_PROFILE_P1 : CANON_PROFILE_NO_TREE;
     canon_capacity cap = {0, 0, max_nodes, 0};
     canon_problem_options opts = {mode};
     canon_problem *p = NULL;
@@ -98,9 +97,9 @@ static void hand_built(void)
     CHECK(st == CANON_COMPLETE && canon_result_status(r) == CANON_COMPLETE);
     CHECK(flags_are(canon_result_get_flags(r), true, false, true, false, false, false, true));
     const uint8_t *b = canon_result_bytes(r, &len);
-    CHECK(b != NULL &&
-          check_hex_is(b, len, "434e0200010001 00000002 00000002 01 00000000 04 00000001 "
-                               "00000000 00000001"));
+    CHECK(b != NULL && check_hex_is(b, len,
+                                    "434e0200010001 00000002 00000002 01 00000000 04 00000001 "
+                                    "00000000 00000001"));
     const uint32_t *w = canon_result_witness(r, &deg);
     CHECK(w != NULL && deg == 2 && w[0] == 0 && w[1] == 1);
     CHECK(canon_result_trace(r, &len) == NULL && len == 0); /* NO_TREE: no trace */
@@ -111,8 +110,9 @@ static void hand_built(void)
     r = solve(s2, x0, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
               CANON_WITNESS_ANY, 0, &st);
     b = canon_result_bytes(r, &len);
-    CHECK(b != NULL && check_hex_is(b, len, "434e0200010001 00000002 00000002 01 00000001 04 "
-                                            "00000001 00000000 00000001"));
+    CHECK(b != NULL && check_hex_is(b, len,
+                                    "434e0200010001 00000002 00000002 01 00000001 04 "
+                                    "00000001 00000000 00000001"));
     verify_ok(r);
     canon_result_release(r);
 
@@ -137,8 +137,8 @@ static void hand_built(void)
     canon_result_release(r);
 
     /* stabiliser: of {0} under Sym(2) is 1 (Group(1)); of {} it is Sym(2) */
-    r = solve(s2, x0, NULL, CANON_OBJECTIVE_STABILISER, CANON_ORDER_CDAG_BYTE_1,
-              CANON_WITNESS_ANY, 0, &st);
+    r = solve(s2, x0, NULL, CANON_OBJECTIVE_STABILISER, CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY,
+              0, &st);
     CHECK(flags_are(canon_result_get_flags(r), false, false, false, true, true, false, false));
     b = canon_result_group_bytes(r, &len);
     CHECK(b != NULL && check_hex_is(b, len, "01 00000000"));
@@ -159,8 +159,9 @@ static void hand_built(void)
         CHECK(st == CANON_COMPLETE);
         CHECK(flags_are(canon_result_get_flags(r), true, false, false, true, true, false, false));
         b = canon_result_group_bytes(r, &len);
-        CHECK(b != NULL && check_hex_is(b, len, "01 00000000 00000002 00000000 00000001 "
-                                                "00000001 00000000"));
+        CHECK(b != NULL && check_hex_is(b, len,
+                                        "01 00000000 00000002 00000000 00000001 "
+                                        "00000001 00000000"));
         w = canon_result_transporter(r, &deg);
         CHECK(w != NULL && w[0] == 1 && w[1] == 0);
         verify_ok(r);
@@ -198,10 +199,11 @@ static void coset_deterministic(void)
     size_t len = 0;
     const uint8_t *b = canon_result_group_bytes(r, &len);
     /* Group(A): rule 1 (|A| = 4 = 2! 2!), blocks {0,1}, {2,3}; then Perm([2,3,0,1]) */
-    CHECK(b != NULL && check_hex_is(b, len, "01 00000002 00000002 00000000 00000001 00000002 "
-                                            "00000002 00000003 "
-                                            "00000004 00000000 00000002 00000001 00000003 "
-                                            "00000002 00000000 00000003 00000001"));
+    CHECK(b != NULL && check_hex_is(b, len,
+                                    "01 00000002 00000002 00000000 00000001 00000002 "
+                                    "00000002 00000003 "
+                                    "00000004 00000000 00000002 00000001 00000003 "
+                                    "00000002 00000000 00000003 00000001"));
     verify_ok(r);
     canon_result_release(r);
     canon_object_release(x);
@@ -281,9 +283,9 @@ static void deterministic_t1(void)
                     canon_status st1, st2;
                     canon_result *any = solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
                                               CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY, 0, &st1);
-                    canon_result *det = solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
-                                              CANON_ORDER_CDAG_BYTE_1,
-                                              CANON_WITNESS_DETERMINISTIC, 0, &st2);
+                    canon_result *det =
+                        solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
+                              CANON_WITNESS_DETERMINISTIC, 0, &st2);
                     CHECK(st1 == CANON_COMPLETE && st2 == CANON_COMPLETE);
                     uint32_t d1 = 0, d2 = 0;
                     const uint32_t *w1 = canon_result_witness(any, &d1);
@@ -388,22 +390,19 @@ static void validation(void)
           CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, NT, CB, NULL) ==
           CANON_UNSUPPORTED_ACTION);
-    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, SU, NULL) ==
-          CANON_UNSUPPORTED_ACTION);
-    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, CB, &det) ==
-          CANON_UNSUPPORTED_ACTION);
+    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, SU, NULL) == CANON_UNSUPPORTED_ACTION);
+    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, CB, &det) == CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, x, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, &det) ==
           CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CANONICAL_LABELING_COSET, NT, CB, NULL) ==
           CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CONSTRAINT_ONE, NT, CB, NULL) ==
           CANON_UNSUPPORTED_ACTION);
-    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER,
-                                            NT, 1, CB, NULL, NULL, &p) ==
+    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER, NT,
+                                            1, CB, NULL, NULL, &p) ==
           CANON_UNSUPPORTED_ACTION); /* encoding 1 is not CDAG-2 */
     /* targets: required for the transporters, refused otherwise, same kind and degree */
-    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, NULL) ==
-          CANON_INVALID_INPUT);
+    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, NULL) == CANON_INVALID_INPUT);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_TRANSPORTER_COSET, NT, CB, NULL) ==
           CANON_INVALID_INPUT);
     CHECK(CREATE(g, x, x, CANON_OBJECTIVE_STABILISER, NT, CB, NULL) == CANON_INVALID_INPUT);
@@ -418,29 +417,29 @@ static void validation(void)
     canon_problem_release(p);
     /* capacity: the Group(A) bound for |G| = 2, n = 2 is 5 + 1 * (4 + 16) = 25 bytes */
     canon_capacity cap = {0, 0, 0, 24};
-    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER,
-                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL, &p) ==
-          CANON_CAPACITY_LIMIT);
+    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER, NT,
+                                            CANON_ENCODING_CDAG_2, CB, &cap, NULL,
+                                            &p) == CANON_CAPACITY_LIMIT);
     cap.max_output_bytes = 25;
-    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER,
-                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL, &p) ==
-          CANON_COMPLETE);
+    CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER, NT,
+                                            CANON_ENCODING_CDAG_2, CB, &cap, NULL,
+                                            &p) == CANON_COMPLETE);
     canon_problem_release(p);
     /* the coset adds Perm(r0) <= 4 + 16 bytes; the transporter has no byte output */
     cap.max_output_bytes = 44;
     CHECK(canon_problem_create_with_options(ctx_chain, g, x, x, CANON_OBJECTIVE_TRANSPORTER_COSET,
-                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL, &p) ==
-          CANON_CAPACITY_LIMIT);
+                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL,
+                                            &p) == CANON_CAPACITY_LIMIT);
     cap.max_output_bytes = 1;
-    CHECK(canon_problem_create_with_options(ctx_chain, g, x, x, CANON_OBJECTIVE_TRANSPORTER_ONE,
-                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL, &p) ==
-          CANON_COMPLETE);
+    CHECK(canon_problem_create_with_options(ctx_chain, g, x, x, CANON_OBJECTIVE_TRANSPORTER_ONE, NT,
+                                            CANON_ENCODING_CDAG_2, CB, &cap, NULL,
+                                            &p) == CANON_COMPLETE);
     canon_problem_release(p);
     /* the minimum's stream is 33 bytes for a one-atom subset on degree 2 */
     cap.max_output_bytes = 32;
     CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_LEX_MIN_IMAGE,
-                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL, &p) ==
-          CANON_CAPACITY_LIMIT);
+                                            NT, CANON_ENCODING_CDAG_2, CB, &cap, NULL,
+                                            &p) == CANON_CAPACITY_LIMIT);
 #undef CREATE
     canon_object_release(graph);
     canon_object_release(x);
@@ -465,8 +464,8 @@ static void lifetimes(void)
     size_t len = 0;
     CHECK(canon_result_group_bytes(r, &len) == NULL && len == 0);
     canon_result_release(r);
-    r = solve(g, x, NULL, CANON_OBJECTIVE_STABILISER, CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY,
-              3, &st);
+    r = solve(g, x, NULL, CANON_OBJECTIVE_STABILISER, CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY, 3,
+              &st);
     CHECK(st == CANON_COMPLETE);
     /* the result outlives its problem (released in solve), group and object */
     canon_group_release(g);
@@ -491,16 +490,15 @@ static void lifetimes(void)
         canon_object *gx = NULL;
         CHECK(canon_object_create_graph(ctx_chain, n, colours, lengths, arcs, 2, &gx) ==
               CANON_COMPLETE);
-        const canon_objective objs[3] = {CANON_OBJECTIVE_LEX_MIN_IMAGE,
-                                         CANON_OBJECTIVE_STABILISER,
+        const canon_objective objs[3] = {CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_OBJECTIVE_STABILISER,
                                          CANON_OBJECTIVE_TRANSPORTER_COSET};
         const canon_objective obj = objs[round % 3];
         const bool target = obj == CANON_OBJECTIVE_TRANSPORTER_COSET;
         canon_problem *p = NULL;
         CHECK(canon_problem_create_with_options(ctx_chain, gg, gx, target ? gx : NULL, obj,
                                                 CANON_PROFILE_NO_TREE, CANON_ENCODING_CDAG_2,
-                                                CANON_ORDER_CDAG_BYTE_1, NULL, NULL, &p) ==
-              CANON_COMPLETE);
+                                                CANON_ORDER_CDAG_BYTE_1, NULL, NULL,
+                                                &p) == CANON_COMPLETE);
         canon_object_release(gx); /* the problem holds it */
         canon_result *a = NULL, *b = NULL;
         canon_workspace *fresh = NULL;

@@ -25,9 +25,9 @@
 
 typedef struct leaves {
     uint32_t n, count, cap;
-    uint32_t *elems;   /* consumed elements in order */
-    uint32_t stop_at;  /* stop after this many leaves (0 = never) */
-    uint32_t polls;    /* poll calls so far */
+    uint32_t *elems;    /* consumed elements in order */
+    uint32_t stop_at;   /* stop after this many leaves (0 = never) */
+    uint32_t polls;     /* poll calls so far */
     uint32_t cancel_at; /* cancel at this poll (0 = never) */
 } leaves;
 

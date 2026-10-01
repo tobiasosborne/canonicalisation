@@ -86,7 +86,8 @@ void canon_bsgs_free(canon_bsgs *c);
  * the `prefix_len` distinct points of `prefix` (rebase, spec 9.2), then is extended by the
  * policy.  *out is initialised here; on failure it is freed and left empty.
  * Returns CANON_CAPACITY_LIMIT when |G| exceeds uint64 (detected as soon as the product of the
- * orbit lengths, a lower bound on |G|, overflows; S4's canon_nat lifts this) or a size does not
+ * orbit lengths, a lower bound on |G|, overflows; the multi-limb canon_nat that would lift this is
+ * deferred, docs/slices/S4-notes.md) or a size does not
  * fit, CANON_INVALID_INPUT for a prefix point >= n or a repeated prefix point,
  * CANON_RESOURCE_LIMIT on allocation failure.  The chain is NOT marked verified. */
 canon_status canon_bsgs_build(canon_bsgs *out, uint32_t n, const uint32_t *gens, size_t count,
