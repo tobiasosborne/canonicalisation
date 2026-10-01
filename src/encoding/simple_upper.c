@@ -52,6 +52,15 @@ static int in_class(const canon_graph *g)
     return 1;
 }
 
+uint64_t canon_simple_upper_key_size(uint32_t n)
+{
+    /* spec 4.4: U32(n), then n(n - 1)/2 bits packed into whole bytes.  n <= 2^32 - 1, so
+     * n(n - 1) < 2^64 and every quantity fits uint64. */
+    const uint64_t m = n;
+    const uint64_t pairs = m == 0 ? 0 : m * (m - 1u) / 2u;
+    return 4u + pairs / 8u + (pairs % 8u != 0 ? 1u : 0u);
+}
+
 bool canon_simple_upper_in_class(const canon_graph *g)
 {
     return in_class(g) != 0;
@@ -62,23 +71,21 @@ canon_status canon_simple_upper_key(const canon_graph *g, canon_buf *out)
     if (!in_class(g)) {
         return CANON_INVALID_INPUT; /* spec 4.4 restricts this order to the class above */
     }
-    /* n(n - 1)/2 pairs; n <= 2^32 - 1, so n(n - 1) < 2^64 and the bit count fits uint64. */
-    const uint64_t n = g->n;
-    const uint64_t pairs = n == 0 ? 0 : n * (n - 1u) / 2u;
-    const uint64_t key_bytes = pairs / 8u + (pairs % 8u != 0 ? 1u : 0u);
-    if (key_bytes > (uint64_t)SIZE_MAX - 4u) {
+    const uint64_t total = canon_simple_upper_key_size(g->n);
+    if (total > (uint64_t)SIZE_MAX) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
-    canon_status st = canon_buf_reserve(out, 4u + (size_t)key_bytes);
+    const size_t key_bytes = (size_t)total - 4u;
+    canon_status st = canon_buf_reserve(out, (size_t)total);
     if (st != CANON_COMPLETE) {
         return st;
     }
     (void)canon_buf_put_u32(out, g->n); /* spec 4.4: U32(n) */
     uint8_t *bits = out->data + out->len;
     if (key_bytes > 0) {
-        memset(bits, 0, (size_t)key_bytes); /* spec 4.4: padding bits are zero */
+        memset(bits, 0, key_bytes); /* spec 4.4: padding bits are zero */
     }
-    out->len += (size_t)key_bytes;
+    out->len += key_bytes;
     for (uint32_t i = 0; i < g->e; ++i) {
         uint64_t a = g->arcs[i].source, b = g->arcs[i].target;
         if (a > b) {

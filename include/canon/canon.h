@@ -303,7 +303,8 @@ typedef struct canon_problem_options {
  * mismatch, a missing, superfluous or mismatched target; CANON_UNSUPPORTED_ACTION for
  * SIMPLE-UPPER-1 on an object outside the spec 4.4 class; CANON_CAPACITY_LIMIT as for
  * canon_problem_create, where the output size is the exact stream length for CANONICAL_IMAGE
- * and LEX_MIN_IMAGE and a conservative bound derived from n and |G| for the Group payloads of
+ * and LEX_MIN_IMAGE (plus, under SIMPLE-UPPER-1, the exact key length 4 + ceil(n(n-1)/16)
+ * bytes) and a conservative bound derived from n and |G| for the Group payloads of
  * STABILISER and TRANSPORTER_COSET (spec 11.1: "a conservative input-derived bound"). */
 canon_status canon_problem_create_with_options(canon_context *ctx, const canon_group *group,
                                                const canon_object *object,
@@ -365,8 +366,8 @@ const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degre
 const uint8_t *canon_result_bytes(const canon_result *result, size_t *length);
 /* spec 9.4: the canonical Group(A) bytes (STABILISER) or Group(A) || Perm(r0)
  * (TRANSPORTER_COSET, A g the complete solution set, r0 its least element); NULL and
- * *length = 0 unless subgroup_verified && stabiliser_complete (and, for a coset, witness_valid:
- * an empty coset has no payload; see docs/slices/S4-notes.md). */
+ * *length = 0 unless subgroup_verified && stabiliser_complete (an empty coset has neither flag,
+ * only transport_exhausted, and no payload). */
 const uint8_t *canon_result_group_bytes(const canon_result *result, size_t *length);
 /* spec 4.4: the SIMPLE-UPPER-1 key of the minimum when LEX_MIN_IMAGE was solved under that
  * order (and minimum_proved); else NULL and *length = 0. */

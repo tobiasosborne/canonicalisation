@@ -124,6 +124,11 @@ void canon_bsgs_sift(const canon_bsgs *c, uint32_t from, uint32_t *g, uint32_t *
  * when the scratch cannot be allocated (*out = false). */
 canon_status canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p, bool *out);
 
+/* spec 9.1/9.2 membership with caller scratch (n words, overwritten; no allocation): true iff
+ * p is in the group.  The single implementation of the membership rule (S4 review item 6);
+ * canon_bsgs_contains calls it. */
+bool canon_bsgs_contains_scratch(const canon_bsgs *c, const uint32_t *p, uint32_t *scratch);
+
 /* spec 9.2: the order of the suffix from `level` (the pointwise stabiliser
  * G_(b_0..b_{level-1}), spec 9.2 "point stabilisers"), the product of its orbit lengths.  It
  * fits uint64 for every chain canon_bsgs_build returns. */
@@ -146,6 +151,14 @@ canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint3
  * failure *out is freed and left empty. */
 canon_status canon_bsgs_build_verified(canon_bsgs *out, uint32_t n, const uint32_t *gens,
                                        size_t count);
+
+/* Insert g into the verified chain *k of K = <gens> unless g is already a member (slice S4,
+ * review item 7; shared by the stabiliser consumer of spec 8.2 and the rule-2 sequence of spec
+ * 9.4): on a non-member, g is appended to `gens` (grow-only, degree k->n) and *k is replaced by
+ * canon_bsgs_build_verified(gens), so |K| at least doubles.  *inserted tells which happened.
+ * `scratch` has n words.  On failure *k and `gens` are unchanged (spec 17). */
+canon_status canon_bsgs_insert_verified(canon_bsgs *k, canon_perm_table *gens, const uint32_t *g,
+                                        uint32_t *scratch, bool *inserted);
 
 /* spec 7.1 ordering of the orbits of K_level (the pointwise stabiliser of b_0..b_{level-1}):
  * orbit_id[v] = rank of the orbit of v, orbits ranked by their least point. */

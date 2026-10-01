@@ -40,7 +40,7 @@ static void group_bytes(uint32_t n, const uint32_t *gens, uint32_t count, canon_
     canon_bsgs h;
     CHECK(canon_bsgs_build_verified(&h, n, gens, count) == CANON_COMPLETE);
     canon_buf_truncate(buf, 0);
-    CHECK(canon_group_bytes_write(buf, &h, stats) == CANON_COMPLETE);
+    CHECK(canon_group_bytes_write(buf, &h, stats, NULL) == CANON_COMPLETE);
     canon_bsgs_free(&h);
 }
 
@@ -81,7 +81,13 @@ static void golden(void)
     canon_bsgs one;
     CHECK(canon_bsgs_build_verified(&one, 2, NULL, 0) == CANON_COMPLETE);
     canon_buf_truncate(&b, 0);
-    CHECK(canon_coset_bytes_write(&b, &one, swap, NULL) == CANON_COMPLETE);
+    uint32_t r0[2] = {9, 9};
+    /* review item 2: *stats is initialised on every path, whatever it held before */
+    memset(&st, 0xa5, sizeof st);
+    CHECK(canon_coset_bytes_write(&b, &one, swap, r0, &st, NULL) == CANON_COMPLETE);
+    CHECK(r0[0] == 1 && r0[1] == 0); /* review item 4: r0 is returned */
+    CHECK(st.rule == 1 && st.k == 0 && st.k_builds == 0 && st.coset.descents == 1 &&
+          st.coset.rebuilds == 0);
     CHECK(check_hex_is(b.data, b.len, "01 00000000 00000002 00000000 00000001 00000001 00000000"));
     canon_bsgs_free(&one);
     /* Perm of the identity is U32(0); a 3-cycle lists its support, source then target */
@@ -195,6 +201,8 @@ static size_t brute_group_bytes(const t1_sym *s, uint32_t mask, uint8_t *out, ui
 static void t1(void)
 {
     uint32_t rules[3] = {0, 0, 0};
+    canon_coset_scratch scratch; /* one grow-only scratch across degrees (review item 5) */
+    canon_coset_scratch_init(&scratch);
     for (uint32_t n = 0; n <= 4; ++n) {
         t1_sym s;
         t1_sym_init(&s, n);
@@ -258,7 +266,7 @@ static void t1(void)
             const uint32_t plen = n > 0 ? (uint32_t)(check_rng() % (n + 1u)) : 0;
             CHECK(canon_bsgs_rebase(&h, 0, prefix, plen, true, &rb) == CANON_COMPLETE);
             canon_buf_truncate(&other, 0);
-            CHECK(canon_group_bytes_write(&other, &rb, NULL) == CANON_COMPLETE);
+            CHECK(canon_group_bytes_write(&other, &rb, NULL, &scratch) == CANON_COMPLETE);
             CHECK(other.len == b.len && (b.len == 0 || memcmp(other.data, b.data, b.len) == 0));
             /* the coset payload against brute force: least of H r over every r */
             for (uint32_t ri = 0; ri < s.count; ++ri) {
@@ -271,7 +279,10 @@ static void t1(void)
                     }
                 }
                 canon_buf_truncate(&other, 0);
-                CHECK(canon_coset_bytes_write(&other, &rb, r, NULL) == CANON_COMPLETE);
+                uint32_t r0[4];
+                CHECK(canon_coset_bytes_write(&other, &rb, r, r0, NULL, &scratch) ==
+                      CANON_COMPLETE);
+                CHECK(n == 0 || memcmp(r0, s.elem[least], n * sizeof *r0) == 0);
                 canon_buf perm;
                 canon_buf_init(&perm);
                 CHECK(canon_perm_bytes_write(&perm, s.elem[least], n) == CANON_COMPLETE);
@@ -285,6 +296,7 @@ static void t1(void)
             canon_buf_free(&b);
         }
     }
+    canon_coset_scratch_free(&scratch);
     printf("T1 Group(H): %u by rule 1, %u by rule 2\n", rules[1], rules[2]);
     CHECK(rules[1] > 0 && rules[2] > 0 && rules[1] + rules[2] == 40);
 }
@@ -358,7 +370,7 @@ static void t2(void)
         canon_buf_init(&b);
         canon_buf_init(&other);
         canon_group_bytes_stats st;
-        CHECK(canon_group_bytes_write(&b, &h, &st) == CANON_COMPLETE);
+        CHECK(canon_group_bytes_write(&b, &h, &st, NULL) == CANON_COMPLETE);
         if (st.rule == 2) {
             ++rule2;
             CHECK(st.k < 64 && ((uint64_t)1 << st.k) <= h.order);
@@ -378,7 +390,7 @@ static void t2(void)
         canon_bsgs h2;
         CHECK(canon_bsgs_build_verified(&h2, n, more, mc) == CANON_COMPLETE);
         if (h2.order == h.order) { /* the same group (h2 <= h, equal order) */
-            CHECK(canon_group_bytes_write(&other, &h2, NULL) == CANON_COMPLETE);
+            CHECK(canon_group_bytes_write(&other, &h2, NULL, NULL) == CANON_COMPLETE);
             CHECK(other.len == b.len && memcmp(other.data, b.data, b.len) == 0);
         }
         canon_bsgs_free(&h2);
@@ -388,7 +400,7 @@ static void t2(void)
         canon_bsgs rb;
         CHECK(canon_bsgs_rebase(&h, 0, prefix, n, true, &rb) == CANON_COMPLETE);
         canon_buf_truncate(&other, 0);
-        CHECK(canon_group_bytes_write(&other, &rb, NULL) == CANON_COMPLETE);
+        CHECK(canon_group_bytes_write(&other, &rb, NULL, NULL) == CANON_COMPLETE);
         CHECK(other.len == b.len && memcmp(other.data, b.data, b.len) == 0);
         canon_bsgs_free(&rb);
         canon_bsgs_free(&h);

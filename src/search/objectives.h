@@ -50,16 +50,16 @@ typedef struct canon_obj_outcome {
  * only.  Invariant: after every run, on every status, no member points into the run's objects
  * or group (the image's borrowed graph tables are cleared, as in src/search/p1_tree.h). */
 typedef struct canon_obj_search {
-    uint32_t cap;           /* degree the per-point arrays are allocated for */
-    uint32_t *best;         /* cap: the witness */
-    uint32_t *work;         /* cap: sift residue */
-    uint32_t *g;            /* cap: the transporter of a coset */
-    uint32_t *agens;        /* 64 * cap: the generators inserted into the stabiliser */
-    canon_root_image image; /* x^r */
-    canon_buf key;          /* order key of the current leaf */
-    canon_buf best_key;     /* least key so far */
-    canon_buf bytes;        /* CDAG-2 stream of the minimum image */
-    canon_buf group;        /* Group(A) or Group(A) || Perm(r0) */
+    uint32_t cap;                /* degree the per-point arrays are allocated for */
+    uint32_t *best;              /* cap: the witness */
+    uint32_t *work;              /* cap: sift residue */
+    uint32_t *g;                 /* cap: the transporter of a coset */
+    canon_coset_scratch scratch; /* descents and enumerator (src/coset/coset.h) */
+    canon_root_image image;      /* x^r */
+    canon_buf key;               /* order key of the current leaf */
+    canon_buf best_key;          /* least key so far */
+    canon_buf bytes;             /* CDAG-2 stream of the minimum image */
+    canon_buf group;             /* Group(A) or Group(A) || Perm(r0) */
     canon_obj_stats stats;
 } canon_obj_search;
 

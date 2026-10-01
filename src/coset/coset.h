@@ -34,6 +34,23 @@ typedef struct canon_coset_stats {
     uint64_t rebuilds; /* transient chain rebuilds (one per base change, spec 9.2) */
 } canon_coset_stats;
 
+/* Reusable scratch of the descents and the enumerator (S4 review item 5): grow-only, owned
+ * by the caller (a workspace, or one enumeration), so that the hot path makes no heap
+ * round-trip per descent or per visited node.  Transient chain rebuilds (spec 9.2 base change)
+ * still allocate; that is the S3 cost model (M5 work).  Not shareable between threads. */
+typedef struct canon_coset_scratch {
+    uint32_t cap;    /* degree the descent block is allocated for */
+    uint32_t *block; /* 9 * cap words: the descent's arrays */
+    uint32_t node_n; /* degree the enumerator's node blocks are allocated for */
+    uint32_t node_count, node_cap;
+    uint32_t **nodes; /* one block of 4 * node_n words per recursion depth; blocks never move */
+} canon_coset_scratch;
+
+/* Empty scratch (no allocation). */
+void canon_coset_scratch_init(canon_coset_scratch *s);
+/* Release all storage; the scratch is empty afterwards. */
+void canon_coset_scratch_free(canon_coset_scratch *s);
+
 /* spec 9.4 ("choose its least image-array element r0 by successive point constraints"), 8.1
  * (t_b): the lexicographically least image array in the coset J r, J = K_level of `c`, among
  * the elements g with g[v_i] = c_i for the k constraints (k may be 0; `cons` may then be NULL).
@@ -41,10 +58,10 @@ typedef struct canon_coset_stats {
  * whether an element satisfies the constraints, and if so `out` (n entries, not aliasing r)
  * holds the least one.  CANON_INVALID_INPUT for level > depth or a constraint point or image
  * >= n; CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT when scratch or a transient chain cannot
- * be allocated.  `stats` may be NULL. */
+ * be allocated.  `stats` may be NULL.  `scratch` may be NULL (a temporary one is used). */
 canon_status canon_coset_least(const canon_bsgs *c, uint32_t level, const uint32_t *r,
                                const canon_coset_constraint *cons, uint32_t k, uint32_t *out,
-                               bool *found, canon_coset_stats *stats);
+                               bool *found, canon_coset_stats *stats, canon_coset_scratch *scratch);
 
 /* spec 9.4 rule 2: "repeatedly choose the lexicographically least image-array g in H \ K".
  * H is the whole group of chain `h`, K the group of chain `k` (same degree), K <= H.  On
@@ -53,7 +70,8 @@ canon_status canon_coset_least(const canon_bsgs *c, uint32_t level, const uint32
  * J <= K" (spec 9.4).  Allocation failure as canon_coset_least; CANON_INVALID_INPUT for a
  * degree mismatch. */
 canon_status canon_coset_least_outside(const canon_bsgs *h, const canon_bsgs *k, uint32_t *out,
-                                       bool *found, canon_coset_stats *stats);
+                                       bool *found, canon_coset_stats *stats,
+                                       canon_coset_scratch *scratch);
 
 /* ---- the spec 8.1 enumerator ---- */
 
@@ -77,9 +95,12 @@ typedef struct canon_coset_visitor {
     uint64_t leaves; /* consume calls */
     bool stopped;    /* the consumer asked to stop */
     canon_coset_stats stats;
+    canon_coset_scratch *scratch; /* grow-only scratch for the chain enumerator; NULL: one
+                                     temporary scratch per enumeration */
 } canon_coset_visitor;
 
-/* Start a visitor: consumer, poll, quota; counters zero. */
+/* Start a visitor: consumer, poll, quota; counters zero; no scratch (set v->scratch to reuse
+ * one). */
 void canon_coset_visitor_init(canon_coset_visitor *v, canon_coset_consume_fn consume,
                               canon_coset_poll_fn cancelled, void *user, uint64_t quota);
 

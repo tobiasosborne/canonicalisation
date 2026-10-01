@@ -329,22 +329,28 @@ void canon_bsgs_sift(const canon_bsgs *c, uint32_t from, uint32_t *g, uint32_t *
     sift_record(c, from, g, stop, NULL, NULL, NULL, stats);
 }
 
+bool canon_bsgs_contains_scratch(const canon_bsgs *c, const uint32_t *p, uint32_t *scratch)
+{
+    /* spec 9.1/9.2: membership by sifting a copy of p once: p is in the group iff the residue
+     * is the identity.  The one implementation of the rule (S4 review item 6). */
+    if (c->n > 0) {
+        memcpy(scratch, p, (size_t)c->n * sizeof *scratch);
+    }
+    uint32_t stop = 0;
+    sift_record(c, 0, scratch, &stop, NULL, NULL, NULL, NULL);
+    return stop == c->depth && canon_perm_is_identity(scratch, c->n);
+}
+
 canon_status canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p, bool *out)
 {
-    /* spec 9.1/9.2: membership by sifting a copy of p once, in per-call scratch (S3 review
-     * item 5): p is in the group iff the residue is the identity. */
+    /* per-call scratch (S3 review item 5), so that an allocation failure is reported */
     *out = false;
     canon_status st = CANON_COMPLETE;
     uint32_t *g = canon_alloc_array(c->n, sizeof *g, &st);
     if (g == NULL) {
         return st;
     }
-    if (c->n > 0) {
-        memcpy(g, p, (size_t)c->n * sizeof *g);
-    }
-    uint32_t stop = 0;
-    sift_record(c, 0, g, &stop, NULL, NULL, NULL, NULL);
-    *out = stop == c->depth && canon_perm_is_identity(g, c->n);
+    *out = canon_bsgs_contains_scratch(c, p, g);
     free(g);
     return CANON_COMPLETE;
 }
@@ -725,6 +731,30 @@ canon_status canon_bsgs_build_verified(canon_bsgs *out, uint32_t n, const uint32
         canon_bsgs_free(out);
     }
     return st;
+}
+
+canon_status canon_bsgs_insert_verified(canon_bsgs *k, canon_perm_table *gens, const uint32_t *g,
+                                        uint32_t *scratch, bool *inserted)
+{
+    *inserted = false;
+    if (canon_bsgs_contains_scratch(k, g, scratch)) {
+        return CANON_COMPLETE; /* already in K */
+    }
+    uint32_t row = 0;
+    canon_status st = canon_perm_table_push(gens, g, &row);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    canon_bsgs grown;
+    st = canon_bsgs_build_verified(&grown, k->n, gens->data, gens->count); /* K <- <K, g> */
+    if (st != CANON_COMPLETE) {
+        gens->count -= 1; /* spec 17: the old state is kept */
+        return st;
+    }
+    canon_bsgs_free(k);
+    *k = grown;
+    *inserted = true;
+    return CANON_COMPLETE;
 }
 
 /* ---- orbits of a pointwise stabiliser (spec 7.1) ---- */

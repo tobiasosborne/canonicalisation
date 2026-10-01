@@ -21,6 +21,10 @@
  * (all or nothing). */
 canon_status canon_simple_upper_key(const canon_graph *g, canon_buf *out);
 
+/* spec 4.4: the exact length of the key of any graph on n vertices, 4 + ceil(n(n-1)/16)
+ * bytes (U32(n) and the packed upper-triangle bits); a function of n alone. */
+uint64_t canon_simple_upper_key_size(uint32_t n);
+
 /* spec 4.4: true iff g is in the class the order is defined for (uncoloured, empty labels, no
  * loops, exactly one unit arc in each direction for each edge).  The class is invariant under
  * the action, so slice S4 checks it once, at problem creation. */

@@ -9,10 +9,6 @@
 #include "arena/checked.h"
 #include "perm/perm.h"
 
-/* Largest number of rule-2 generators: every step at least doubles |K| (spec 9.4), and
- * |H| < 2^64 in this release (orders fit uint64), so k <= 63. */
-#define MAX_RULE2_GENS 64u
-
 canon_status canon_perm_bytes_write(canon_buf *out, const uint32_t *p, uint32_t n)
 {
     /* spec 4.1: "Perm(p)=U32(s) followed by s pairs U32(i),U32(p[i]) in increasing i, exactly
@@ -126,56 +122,57 @@ static canon_status rule1(canon_buf *out, const canon_bsgs *h, bool *applies, ui
 /* spec 9.4 rule 2: "Start K=1; repeatedly choose the lexicographically least image-array
  * g in H\K and set K <- <K,g> until K=H."  g comes from the constrained descent of
  * src/coset/least.c ("descend in point-image lexicographic order through exact constrained
- * cosets"); K is rebuilt from g_1..g_i and verified after each insertion (detailed plan WP2.7),
- * since its membership test decides the descent. */
-static canon_status rule2(canon_buf *out, const canon_bsgs *h, canon_group_bytes_stats *stats)
+ * cosets"); K is rebuilt from g_1..g_i and verified after each insertion (detailed plan WP2.7,
+ * canon_bsgs_insert_verified), since its membership test decides the next descent.  The
+ * generators live in a grow-only canon_perm_table; each step at least doubles |K|, so there
+ * are at most log2 |H| of them. */
+static canon_status rule2(canon_buf *out, const canon_bsgs *h, canon_group_bytes_stats *stats,
+                          canon_coset_scratch *scratch)
 {
     const uint32_t n = h->n;
     canon_status st = CANON_COMPLETE;
-    size_t words = 0;
-    if (!canon_size_mul((size_t)n, MAX_RULE2_GENS, &words)) {
-        return CANON_CAPACITY_LIMIT;
-    }
-    uint32_t *gens = canon_alloc_array(words, sizeof *gens, &st);
-    if (gens == NULL) {
-        return st;
-    }
+    uint32_t *g = canon_alloc_array(n, sizeof *g, &st);
+    uint32_t *sift = canon_alloc_array(n, sizeof *sift, &st);
+    canon_perm_table gens;
+    canon_perm_table_init(&gens, n);
     canon_bsgs k;
-    st = canon_bsgs_build_verified(&k, n, gens, 0); /* K = 1 */
-    uint32_t count = 0;
-    while (st == CANON_COMPLETE) {
+    canon_bsgs_init(&k, n);
+    if (g != NULL && sift != NULL) {
+        st = canon_bsgs_build_verified(&k, n, NULL, 0); /* K = 1 */
+    }
+    while (st == CANON_COMPLETE && g != NULL && sift != NULL) {
         bool found = false;
-        st = canon_coset_least_outside(h, &k, gens + (size_t)count * n, &found, &stats->coset);
+        st = canon_coset_least_outside(h, &k, g, &found, &stats->coset, scratch);
         if (st != CANON_COMPLETE || !found) {
             break; /* K = H: the sequence is complete */
         }
-        if (count + 1u >= MAX_RULE2_GENS) {
-            st = CANON_INTERNAL_ERROR; /* each step doubles |K| < 2^64 */
-            break;
+        bool inserted = false;
+        st = canon_bsgs_insert_verified(&k, &gens, g, sift, &inserted); /* K <- <K, g> */
+        stats->k_builds += inserted;
+        if (st == CANON_COMPLETE && !inserted) {
+            st = CANON_INTERNAL_ERROR; /* g was chosen outside K */
         }
-        count += 1;
-        canon_bsgs_free(&k);
-        st = canon_bsgs_build_verified(&k, n, gens, count); /* K <- <K, g> */
-        stats->k_builds += 1;
     }
     canon_bsgs_free(&k);
     if (st == CANON_COMPLETE) {
-        stats->k = count;
+        stats->k = gens.count;
         /* spec 9.4: "encode 00 || U32(k) || Perm(g_1)...Perm(g_k)" */
         st = canon_buf_put_u8(out, 0x00);
         if (st == CANON_COMPLETE) {
-            st = canon_buf_put_u32(out, count);
+            st = canon_buf_put_u32(out, gens.count);
         }
-        for (uint32_t i = 0; i < count && st == CANON_COMPLETE; ++i) {
-            st = canon_perm_bytes_write(out, gens + (size_t)i * n, n);
+        for (uint32_t i = 0; i < gens.count && st == CANON_COMPLETE; ++i) {
+            st = canon_perm_bytes_write(out, canon_perm_table_row(&gens, i), n);
         }
     }
-    free(gens);
+    canon_perm_table_free(&gens);
+    free(g);
+    free(sift);
     return st;
 }
 
 canon_status canon_group_bytes_write(canon_buf *out, const canon_bsgs *h,
-                                     canon_group_bytes_stats *stats)
+                                     canon_group_bytes_stats *stats, canon_coset_scratch *scratch)
 {
     canon_group_bytes_stats local;
     memset(&local, 0, sizeof local);
@@ -189,7 +186,7 @@ canon_status canon_group_bytes_write(canon_buf *out, const canon_bsgs *h,
         local.k = blocks;
     } else if (st == CANON_COMPLETE) {
         local.rule = 2;
-        st = rule2(out, h, &local);
+        st = rule2(out, h, &local, scratch);
     }
     if (st != CANON_COMPLETE) {
         canon_buf_truncate(out, mark); /* all or nothing */
@@ -201,37 +198,35 @@ canon_status canon_group_bytes_write(canon_buf *out, const canon_bsgs *h,
 }
 
 canon_status canon_coset_bytes_write(canon_buf *out, const canon_bsgs *h, const uint32_t *r,
-                                     canon_group_bytes_stats *stats)
+                                     uint32_t *r0, canon_group_bytes_stats *stats,
+                                     canon_coset_scratch *scratch)
 {
     const uint32_t n = h->n;
     const size_t mark = out->len;
-    canon_status st = CANON_COMPLETE;
-    uint32_t *r0 = canon_alloc_array(n, sizeof *r0, &st);
-    if (r0 == NULL) {
-        return st;
-    }
+    canon_group_bytes_stats local; /* every counter starts at zero on every path */
+    memset(&local, 0, sizeof local);
     /* spec 9.4: "For a labeling coset H r, first choose its least image-array element r0 by
      * successive point constraints, then encode the canonical Group(H) and Perm(r0)." */
     bool found = false;
     canon_coset_stats cs = {0, 0};
-    st = canon_coset_least(h, 0, r, NULL, 0, r0, &found, &cs);
+    canon_status st = canon_coset_least(h, 0, r, NULL, 0, r0, &found, &cs, scratch);
     if (st == CANON_COMPLETE && !found) {
         st = CANON_INTERNAL_ERROR; /* an unconstrained coset is never empty */
     }
     if (st == CANON_COMPLETE) {
-        st = canon_group_bytes_write(out, h, stats);
+        st = canon_group_bytes_write(out, h, &local, scratch);
     }
     if (st == CANON_COMPLETE) {
         st = canon_perm_bytes_write(out, r0, n);
     }
-    if (stats != NULL) {
-        stats->coset.descents += cs.descents;
-        stats->coset.rebuilds += cs.rebuilds;
-    }
+    local.coset.descents += cs.descents;
+    local.coset.rebuilds += cs.rebuilds;
     if (st != CANON_COMPLETE) {
         canon_buf_truncate(out, mark);
     }
-    free(r0);
+    if (stats != NULL) {
+        *stats = local;
+    }
     return st;
 }
 
