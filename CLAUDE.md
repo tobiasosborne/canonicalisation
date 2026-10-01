@@ -2,7 +2,7 @@
 
 ## Project summary
 - An exact, dependency-free C17 library (`canon`) for canonical forms of objects under finite permutation groups, with a frozen wire format (`CDAG-2`) and an independent certificate checker.
-- Design-stage: `docs/specification.md` (v2.0) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Only `canon_version()` and UNSUPPORTED stubs exist in C.
+- Design-stage: `docs/specification.md` (v2.0) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`, explicit group backend) has landed; everything else is stubs returning UNSUPPORTED_ACTION.
 - Read `README.md` and `HANDOFF.md` first. Do not start a new research cycle without the user's direction.
 
 ## Standing constraints (from HANDOFF.md)
