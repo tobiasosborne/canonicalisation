@@ -152,7 +152,7 @@ From `test_signed_group`: 113 sign vectors on the greedy generators of the 40 T1
 
 ## Timing and environment
 
-- `make check` without sanitizers: about 103 s wall-clock (41 s after S5). This is `review_checks.py`, the 52 Python tests with the chain backend (about 53 s) and the 32 tests of `test_e2e.py` with the explicit backend (about 51 s). L1 and Z1 take about 19 s per backend in total.
+- `make check` without sanitizers: about 103 s wall-clock (41 s after S5). This is `review_checks.py`, the 52 Python tests with the chain backend (about 53 s) and the 32 tests of `test_e2e.py` with the explicit backend (about 51 s). L1 and Z1 take about 32 s per backend in total (the discover run went from 21 s to 53 s).
 - `make SANITIZE=1 BUILD=build/san test`: all 29 C tests pass under ASan/UBSan. The S6 Python class against the sanitizer-built CLI passes in about 283 s, and again with `UBSAN_OPTIONS=halt_on_error=1`.
 - CMake with `-DCANON_SANITIZE=ON`: all 32 ctest entries pass (14 min 51 s in total). Under ASan/UBSan, `test_e2e` takes about 442 s and `test_e2e_explicit` about 429 s (about 150 s each after S5), well inside ctest's default 1500 s timeout; `test_labeling` takes 12.6 s and `test_signed` 1.8 s.
 - As in S1–S5, the local clang has no ASan runtime; `make CC=clang BUILD=build/clang` builds with zero warnings and all 29 C tests pass.
