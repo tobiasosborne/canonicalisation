@@ -153,9 +153,9 @@ canon_status canon_group_create(canon_context *ctx, uint32_t degree, const uint3
                                 size_t generator_count, canon_group **out);
 
 /* spec 17 input builder (copies data): a subset of atoms of {0..degree-1}; duplicates permitted
- * and deduplicated (spec 4.2: sets deduplicate equal children); an atom >= degree gives
- * CANON_INVALID_INPUT; degree above the context's max_n gives CANON_CAPACITY_LIMIT.  `atoms`
- * may be NULL when count is 0. */
+ * and deduplicated (spec 4.2: sets deduplicate equal children); degree above the context's
+ * max_n gives CANON_CAPACITY_LIMIT (checked first); an atom >= degree gives
+ * CANON_INVALID_INPUT.  `atoms` may be NULL when count is 0. */
 canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
                                         const uint32_t *atoms, size_t count, canon_object **out);
 
