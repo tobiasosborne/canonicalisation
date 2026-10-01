@@ -23,6 +23,8 @@
 #include "perm/perm.h"
 #include "util/sort.h"
 
+/* The descent's arrays, bound to the caller's grow-only canon_coset_scratch (S4 review item
+ * 5: no allocation per call on the hot path). */
 typedef struct least_scratch {
     uint32_t n;
     uint32_t *want;  /* n: constrained image of each point, or CANON_BSGS_NONE */
@@ -33,36 +35,50 @@ typedef struct least_scratch {
     uint32_t *order; /* n: orbit points sorted by image (least_outside) */
     uint32_t *sort_tmp;
     uint32_t *g; /* n: sift residue (least_outside) */
+    uint32_t *r; /* n: the current representative (least_outside) */
     uint32_t stamp;
 } least_scratch;
 
-static void scratch_free(least_scratch *x)
+/* Number of n-word arrays in a descent block (the fields of least_scratch). */
+#define DESCENT_ARRAYS 9u
+
+void canon_coset_scratch_init(canon_coset_scratch *s)
 {
-    free(x->want); /* one block holds every array */
-    memset(x, 0, sizeof *x);
+    memset(s, 0, sizeof *s);
 }
 
-static canon_status scratch_alloc(least_scratch *x, uint32_t n)
+void canon_coset_scratch_free(canon_coset_scratch *s)
 {
-    memset(x, 0, sizeof *x);
-    canon_status st = CANON_COMPLETE;
-    size_t words = 0;
-    if (!canon_size_mul((size_t)n, 9u, &words)) {
-        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+    free(s->block);
+    for (uint32_t d = 0; d < s->node_count; ++d) {
+        free(s->nodes[d]);
     }
-    uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
-    if (block == NULL) {
-        return st;
+    free(s->nodes);
+    canon_coset_scratch_init(s);
+}
+
+/* Bind x to the descent block of s, grown (never shrunk) to degree n, and reset the per-call
+ * state (no constraints, no marks). */
+static canon_status bind(least_scratch *x, canon_coset_scratch *s, uint32_t n)
+{
+    if (s->block == NULL || n > s->cap) {
+        size_t words = 0;
+        if (!canon_size_mul((size_t)n, DESCENT_ARRAYS, &words)) {
+            return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+        }
+        canon_status st = CANON_COMPLETE;
+        uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
+        if (block == NULL) {
+            return st; /* the old block is kept (spec 17) */
+        }
+        free(s->block);
+        s->block = block;
+        s->cap = n;
     }
-    x->n = n;
-    x->want = block;
-    x->t = block + (size_t)n;
-    x->tmp = block + 2u * (size_t)n;
-    x->queue = block + 3u * (size_t)n;
-    x->mark = block + 4u * (size_t)n;
-    x->order = block + 5u * (size_t)n;
-    x->sort_tmp = block + 6u * (size_t)n;
-    x->g = block + 7u * (size_t)n;
+    uint32_t *b = s->block;
+    const size_t m = n;
+    *x = (least_scratch){n,         b,         b + m,     b + 2 * m, b + 3 * m, b + 4 * m,
+                         b + 5 * m, b + 6 * m, b + 7 * m, b + 8 * m, 0};
     for (uint32_t v = 0; v < n; ++v) {
         x->want[v] = CANON_BSGS_NONE;
         x->mark[v] = 0;
@@ -225,9 +241,26 @@ static canon_status descend(const canon_bsgs *cur, uint32_t lv, uint32_t *r, lea
     return CANON_COMPLETE;
 }
 
+/* The caller's scratch, or a temporary one released by scratch_done (scratch == NULL). */
+static canon_coset_scratch *scratch_use(canon_coset_scratch *given, canon_coset_scratch *local)
+{
+    if (given != NULL) {
+        return given;
+    }
+    canon_coset_scratch_init(local);
+    return local;
+}
+
+static void scratch_done(const canon_coset_scratch *given, canon_coset_scratch *local)
+{
+    if (given == NULL) {
+        canon_coset_scratch_free(local);
+    }
+}
+
 canon_status canon_coset_least(const canon_bsgs *c, uint32_t level, const uint32_t *r,
                                const canon_coset_constraint *cons, uint32_t k, uint32_t *out,
-                               bool *found, canon_coset_stats *stats)
+                               bool *found, canon_coset_stats *stats, canon_coset_scratch *scratch)
 {
     const uint32_t n = c->n;
     *found = false;
@@ -239,43 +272,41 @@ canon_status canon_coset_least(const canon_bsgs *c, uint32_t level, const uint32
             return CANON_INVALID_INPUT;
         }
     }
+    canon_coset_scratch local;
+    canon_coset_scratch *s = scratch_use(scratch, &local);
     least_scratch x;
-    canon_status st = scratch_alloc(&x, n);
-    if (st != CANON_COMPLETE) {
-        return st;
-    }
-    if (stats != NULL) {
-        stats->descents += 1;
-    }
-    bool consistent = true;
-    for (uint32_t i = 0; i < k; ++i) {
-        uint32_t *w = &x.want[cons[i].point];
-        /* two different images for one point: no element satisfies both */
-        consistent = consistent && (*w == CANON_BSGS_NONE || *w == cons[i].image);
-        *w = cons[i].image;
-    }
-    if (consistent) {
-        for (uint32_t v = 0; v < n; ++v) {
-            out[v] = r != NULL ? r[v] : v;
+    canon_status st = bind(&x, s, n);
+    if (st == CANON_COMPLETE) {
+        if (stats != NULL) {
+            stats->descents += 1;
         }
-        canon_bsgs own;
-        canon_bsgs_init(&own, n);
-        st = descend(c, level, out, &x, &own, found, stats);
-        canon_bsgs_free(&own);
+        bool consistent = true;
+        for (uint32_t i = 0; i < k; ++i) {
+            uint32_t *w = &x.want[cons[i].point];
+            /* two different images for one point: no element satisfies both */
+            consistent = consistent && (*w == CANON_BSGS_NONE || *w == cons[i].image);
+            *w = cons[i].image;
+        }
+        if (consistent) {
+            for (uint32_t v = 0; v < n; ++v) {
+                out[v] = r != NULL ? r[v] : v;
+            }
+            canon_bsgs own;
+            canon_bsgs_init(&own, n);
+            st = descend(c, level, out, &x, &own, found, stats);
+            canon_bsgs_free(&own);
+        }
     }
-    scratch_free(&x);
+    scratch_done(scratch, &local);
     return st;
 }
 
 /* ---- spec 9.4 rule 2: the least element of H \ K ---- */
 
-/* p in K, by sifting a copy (spec 9.2 membership). */
+/* p in K (spec 9.2 membership, the one rule of chain.c). */
 static bool member(const canon_bsgs *k, const uint32_t *p, least_scratch *x)
 {
-    memcpy(x->g, p, (size_t)x->n * sizeof *x->g);
-    uint32_t stop = 0;
-    canon_bsgs_sift(k, 0, x->g, &stop, NULL);
-    return stop == k->depth && canon_perm_is_identity(x->g, x->n);
+    return canon_bsgs_contains_scratch(k, p, x->g);
 }
 
 /* spec 9.4 "J <= K": every generator of J = K_lv of c sifts to the identity in K. */
@@ -359,7 +390,8 @@ static canon_status outside_descend(const canon_bsgs *cur, const canon_bsgs *k, 
 }
 
 canon_status canon_coset_least_outside(const canon_bsgs *h, const canon_bsgs *k, uint32_t *out,
-                                       bool *found, canon_coset_stats *stats)
+                                       bool *found, canon_coset_stats *stats,
+                                       canon_coset_scratch *scratch)
 {
     *found = false;
     if (h->n != k->n) {
@@ -370,29 +402,23 @@ canon_status canon_coset_least_outside(const canon_bsgs *h, const canon_bsgs *k,
         return CANON_COMPLETE;
     }
     const uint32_t n = h->n;
+    canon_coset_scratch local;
+    canon_coset_scratch *s = scratch_use(scratch, &local);
     least_scratch x;
-    canon_status st = scratch_alloc(&x, n);
-    if (st != CANON_COMPLETE) {
-        return st;
+    canon_status st = bind(&x, s, n);
+    if (st == CANON_COMPLETE) {
+        if (stats != NULL) {
+            stats->descents += 1;
+        }
+        for (uint32_t v = 0; v < n; ++v) {
+            x.r[v] = v; /* C = H id, not contained in K */
+        }
+        canon_bsgs own;
+        canon_bsgs_init(&own, n);
+        st = outside_descend(h, k, x.r, &x, &own, out, stats);
+        canon_bsgs_free(&own);
+        *found = st == CANON_COMPLETE;
     }
-    if (stats != NULL) {
-        stats->descents += 1;
-    }
-    canon_status alloc = CANON_COMPLETE;
-    uint32_t *r = canon_alloc_array(n, sizeof *r, &alloc);
-    if (r == NULL) {
-        scratch_free(&x);
-        return alloc;
-    }
-    for (uint32_t v = 0; v < n; ++v) {
-        r[v] = v; /* C = H id, not contained in K */
-    }
-    canon_bsgs own;
-    canon_bsgs_init(&own, n);
-    st = outside_descend(h, k, r, &x, &own, out, stats);
-    canon_bsgs_free(&own);
-    free(r);
-    scratch_free(&x);
-    *found = st == CANON_COMPLETE;
+    scratch_done(scratch, &local);
     return st;
 }

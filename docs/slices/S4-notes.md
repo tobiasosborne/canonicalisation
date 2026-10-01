@@ -35,7 +35,7 @@ Files changed:
 1. **Profile of the enumeration objectives (§4.3).** "Profile tag `0x0000` means `NO_TREE` for coset-enumeration objectives; canonical and signed image objectives use P1 (`0x0001`)." `LEX_MIN_IMAGE`, `TRANSPORTER_ONE`, `STABILISER` and `TRANSPORTER_COSET` therefore require profile `NO_TREE`; P1 with them, or `NO_TREE` with `CANONICAL_IMAGE`, is `UNSUPPORTED_ACTION` ("unsupported, never reinterpreted", §4.1).
 2. **Orders.** `SIMPLE-UPPER-1` is "the minimum-search order" (§4.4) and is accepted only for `LEX_MIN_IMAGE`. The other objectives accept `CDAG-BYTE-1`, the order of their canonical bytes (§4.3 key tuple). Everything else is `UNSUPPORTED_ACTION`.
 3. **Constrained least element (§9.4 "by successive point constraints").** The constrained points are fixed first, in increasing point order. Each such step restricts the coset to the admissible elements, which form a coset `J'' r''` again. The unconstrained descent over `v = 0..n−1` then minimises the image array inside it. This differs from the brief; see conflict 1.
-4. **Group bytes of a coset result.** `canon_result_group_bytes` returns `Group(A) || Perm(r₀)` when `subgroup_verified`, `stabiliser_complete` and `witness_valid` all hold. An empty coset has `transport_exhausted` and no payload. See conflict 2.
+4. **Group bytes of a coset result.** `canon_result_group_bytes` returns the payload when `subgroup_verified` and `stabiliser_complete` hold (review item 8: the flags alone gate it). A nonempty coset carries both flags (and `witness_valid`); an empty coset has only `transport_exhausted` and no payload. See conflict 2.
 5. **Logical work quota (§11.1).** "A logical work quota … counts the fixed reference traversal." One quota covers the whole solve, and `max_search_nodes` keeps its name:
    - For an enumeration it counts `visit` calls, leaves included. `CAPACITY_LIMIT` means the traversal needs more than `max_search_nodes` visits.
    - For `TRANSPORTER_COSET` the visits of both enumerations add up: the transporter one (up to its hit) and the stabiliser.
@@ -61,7 +61,7 @@ Files changed:
     | `TRANSPORTER_COSET` | The same bound plus `4 + 8n` for `Perm(r₀)` |
     | `TRANSPORTER_ONE` | Nothing: no canonical bytes |
 
-    The `SIMPLE-UPPER-1` key is metadata, not canonical stream bytes, so it is not counted.
+    Under `SIMPLE-UPPER-1` the key, exactly `4 + ⌈n(n−1)/16⌉` bytes, is added to the stream length (review item 3).
 12. **Rule 1 in `uint64` (brief §3.5).** `∏|O_i|!` is computed with overflow detection. While orders fit `uint64`, an overflowing product exceeds `|H|`, so rule 1 correctly does not apply. Orders fit `uint64` because S3's admission refuses `|G| ≥ 2^64` and `A ≤ G`.
 13. **Rule 2 descent (§9.4).** The pieces of the descent:
     - "C ⊆ K iff r ∈ K and J ≤ K": `J ≤ K` is tested by sifting the generators of `J`'s chain level through `K`.
@@ -100,7 +100,7 @@ The multi-limb `canon_nat` of detailed plan §2.1 is **deferred** to the slice t
 
 - **Constraint order in the descent** (reading 3, conflict 1).
 - **`canon_group_ops.enumerate`.** The brief does not say how the explicit backend serves the enumeration objectives. A backend operation keeps the API backend-agnostic (`api.c` and `objectives.c` never look at the chain behind a group). It also makes the explicit backend a real oracle rather than a second path into the same chain code.
-- **Group bytes of a coset** require `witness_valid`, not `transport_exhausted` (reading 4, conflict 2).
+- **Group bytes of a coset** are not gated on `transport_exhausted` (reading 4, conflict 2).
 - **One quota per solve** across phases (reading 5). The brief left the multi-phase case open.
 - **CLI.**
   - The object kind of the S4 subcommands is `--kind subset|graph`, defaulting to graph exactly when a graph option is given. Mixing subset and graph options is a usage error.
@@ -175,3 +175,21 @@ The subgroup services of §8.2's second paragraph (intersection, normaliser, con
 - CMake with `-DCANON_SANITIZE=ON`: all 25 ctest entries pass. Under ASan/UBSan, `test_e2e` and `test_e2e_explicit` take about 132 s each and `test_enumerate` about 5.4 s.
 - As in S1–S3, the local clang has no ASan runtime. The clang check is a plain build, `make CC=clang BUILD=build/clang`: zero warnings, all 22 C tests pass.
 - Attribution: the commits of this slice carry `Co-Authored-By: Claude Opus 5.5`, as the session's attribution reminder specifies. The coordinator's brief named "Claude Fable 5.1", as the S1–S3 commits do; the session reminder was followed.
+
+## Review fixes
+
+The S4 review found no failing behaviour and raised nine findings; the coordinator accepted both brief corrections (conflicts 1 and 2). All nine are fixed. The counters above are unchanged (the printed T1 and T2 lines are identical), every tier is byte identical with the model under both backends, and every §5 command was run again.
+
+1. **Target contract at the module boundary** (`src/search/objectives.c`). `canon_obj_run` returns `CANON_INVALID_INPUT` when `y` is NULL for `TRANSPORTER_ONE`/`TRANSPORTER_COSET` or non-NULL for the other objectives, as `canon_problem_create_with_options` does. `test_objectives.c` (`review_items`) checks both directions for all four objectives.
+2. **Initialised counters** (`src/encoding/group_stream.c`). `canon_coset_bytes_write` accumulates into a zeroed local and assigns `*stats` on every path; `canon_group_bytes_write` already did. `test_group_stream.c` fills `*stats` with garbage first and checks every field afterwards.
+3. **Order key in the output check** (`src/api/api.c`). For `LEX_MIN_IMAGE` under `SIMPLE-UPPER-1` the key length `4 + ⌈n(n−1)/16⌉` (new `canon_simple_upper_key_size`, also used by the key writer) is added to the stream length before the `max_output_bytes` comparison. `test_objectives.c` tests the boundary on the path 0-1-2: 109 bytes admitted, 108 refused (104 and 103 under `CDAG-BYTE-1`).
+4. **`r₀` once** (`src/search/objectives.c`, `group_stream.c`). `canon_coset_bytes_write` takes an output array for `r₀`. The deterministic coset passes the witness buffer, so `r₀` is computed once; the second descent is gone. `test_group_stream.c` checks the returned `r₀` against brute force on every T1 coset.
+5. **No heap round-trips per descent or node** (`src/coset/`). New `canon_coset_scratch` (grow-only): the descent's nine `n`-word arrays (including the rule-2 representative, formerly a separate allocation) and one `4n`-word block per recursion depth of the enumerator, allocated when a depth is first reached and never moved. `canon_coset_least`, `canon_coset_least_outside`, `canon_group_bytes_write` and `canon_coset_bytes_write` take it (NULL means a temporary one), and the visitor carries it. The workspace's `canon_obj_search` owns one, so objective runs reuse it across solves and degrees. Transient chain rebuilds (spec 9.2 base change) still allocate; that is the S3 cost model (M5). The explicit backend's oracle traversal still allocates per node: it is the independent oracle and is kept simple. `test_enumerate.c` reruns every T1 and random enumeration with one scratch shared across all groups and degrees and requires the same leaf sequence, visit count, rebuilds and descents; `test_coset_least.c` repeats every comparison with a shared scratch.
+6. **One membership rule** (`src/bsgs/chain.c`). `canon_bsgs_contains_scratch(c, p, scratch)` holds the sift-to-identity rule; `canon_bsgs_contains` wraps it with its own scratch, and the descent (`least.c`) and the stabiliser consumer (through item 7) call it. The inline copies are gone.
+7. **Grow-only generator tables and one insertion helper** (`chain.c`, `objectives.c`, `group_stream.c`). `canon_bsgs_insert_verified(k, gens, g, scratch, &inserted)` inserts `g` into the verified chain of `K = <gens>` unless it is a member: `gens` is a grow-only `canon_perm_table`, the chain is rebuilt and verified, and on failure both are unchanged. The stabiliser consumer and the rule-2 loop use it. The 64-row buffers, `MAX_STAB_GENS`, `MAX_RULE2_GENS` and their `INTERNAL_ERROR` branches are removed (the rule-2 loop keeps one consistency check: a `g` chosen outside `K` must be inserted).
+8. **Flag-only gate for group bytes** (`src/api/api.c`). `canon_result_group_bytes` returns the payload iff `subgroup_verified && stabiliser_complete` and the buffer exists, like `canon_result_bytes`; the coset special case is gone. The result's `objective` field stays: `canon_result_transporter` still needs it to answer only for the transporter objectives.
+9. **One-expression accessors** (`src/api/api.c`). `bytes_if(ok, data, len, length)` handles a missing buffer and the length; each of `canon_result_bytes`, `canon_result_group_bytes` and `canon_result_order_key` is one expression that returns early on a NULL result.
+
+Disagreements with the findings: none. Two remarks: in item 5 the per-node chain rebuilds and the explicit oracle's per-node lists still allocate, as explained; in item 8 the `objective` field is kept for the transporter accessor.
+
+After the review fixes, `make check` without sanitizers takes **36.9 s** wall-clock.

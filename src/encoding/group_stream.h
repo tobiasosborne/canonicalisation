@@ -37,16 +37,21 @@ canon_status canon_perm_bytes_write(canon_buf *out, const uint32_t *p, uint32_t 
  *          points increasing, blocks by least point;
  *   rule 2 otherwise: 00 || U32(k) || Perm(g_1) ... Perm(g_k), g_i the least image array in
  *          H \ <g_1, ..., g_(i-1)>.
- * All or nothing (on failure the buffer keeps its old length).  `stats` may be NULL.
- * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation or size failure,
- * CANON_INTERNAL_ERROR if a verified rebuild of K is rejected. */
+ * All or nothing (on failure the buffer keeps its old length).  `stats` may be NULL; when
+ * given it is overwritten on every path.  `scratch` (may be NULL) is the descents' reusable
+ * scratch (src/coset/coset.h).  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation or
+ * size failure, CANON_INTERNAL_ERROR if a verified rebuild of K is rejected. */
 canon_status canon_group_bytes_write(canon_buf *out, const canon_bsgs *h,
-                                     canon_group_bytes_stats *stats);
+                                     canon_group_bytes_stats *stats, canon_coset_scratch *scratch);
 
 /* spec 9.4: the labeling-coset payload of H r: Group(H) || Perm(r0), r0 the least image-array
- * element of H r (r a permutation of the domain).  All or nothing. */
+ * element of H r (r a permutation of the domain).  r0 (n entries, not aliasing r) receives
+ * that least element, so a caller needing it (the deterministic witness of a transporter
+ * coset) does not compute it again.  All or nothing for `out`; `stats` and `scratch` as
+ * above. */
 canon_status canon_coset_bytes_write(canon_buf *out, const canon_bsgs *h, const uint32_t *r,
-                                     canon_group_bytes_stats *stats);
+                                     uint32_t *r0, canon_group_bytes_stats *stats,
+                                     canon_coset_scratch *scratch);
 
 /* spec 11.1: a conservative input-derived bound on the length of Group(H) for every subgroup
  * H of a group of degree n and order at most `order` (rule 1: at most 5 + 4 floor(n/2) + 4n

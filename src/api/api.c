@@ -477,6 +477,13 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
          * members; a graph image has the same colour multiset, arc count, label bytes and
          * multiplicities (hence Nat lengths), since the action only renumbers vertices. */
         st = canon_root_stream_size(&object->root, &out_bytes);
+        /* spec 4.4: "return the selected graph in CDAG-2 plus its order key"; the key is
+         * 4 + ceil(n(n-1)/16) bytes exactly (S4 review item 3) */
+        if (st == CANON_COMPLETE && order == CANON_ORDER_SIMPLE_UPPER_1 &&
+            !canon_u64_add(out_bytes, canon_simple_upper_key_size(object->root.n),
+                           &out_bytes)) {
+            st = CANON_CAPACITY_LIMIT;
+        }
         break;
     case CANON_OBJECTIVE_STABILISER:
     case CANON_OBJECTIVE_TRANSPORTER_COSET:
@@ -738,45 +745,40 @@ const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degre
     return result->witness;
 }
 
-/* Hand out an owned byte array when `ok`, else NULL with length 0. */
+/* Hand out a result's owned byte array when `ok` and it exists, else NULL with length 0.
+ * Callers pass ok = false for a NULL result and only then read nothing from it. */
 static const uint8_t *bytes_if(bool ok, const uint8_t *data, size_t len, size_t *length)
 {
-    if (!ok || data == NULL) {
-        if (length != NULL) {
-            *length = 0;
-        }
-        return NULL;
-    }
+    ok = ok && data != NULL;
     if (length != NULL) {
-        *length = len;
+        *length = ok ? len : 0;
     }
-    return data;
+    return ok ? data : NULL;
 }
 
 /* spec 3.2: "Incomplete bytes cannot be used as a canonical database key." */
-const uint8_t *canon_result_bytes(const canon_result *result, size_t *length)
+const uint8_t *canon_result_bytes(const canon_result *r, size_t *length)
 {
-    const bool ok = result != NULL && result->flags.encoding_complete &&
-                    (result->flags.image_canonical || result->flags.minimum_proved);
-    return bytes_if(ok, ok ? result->bytes : NULL, ok ? result->bytes_len : 0, length);
+    return r == NULL ? bytes_if(false, NULL, 0, length)
+                     : bytes_if(r->flags.encoding_complete &&
+                                    (r->flags.image_canonical || r->flags.minimum_proved),
+                                r->bytes, r->bytes_len, length);
 }
 
-/* spec 9.4; spec 3.2: a group answer needs the verified, complete subgroup. */
-const uint8_t *canon_result_group_bytes(const canon_result *result, size_t *length)
+/* spec 9.4; spec 3.2: a group answer needs the verified, complete subgroup (an empty coset has
+ * neither flag and no payload). */
+const uint8_t *canon_result_group_bytes(const canon_result *r, size_t *length)
 {
-    bool ok = result != NULL && result->flags.subgroup_verified &&
-              result->flags.stabiliser_complete;
-    if (ok && result->objective == CANON_OBJECTIVE_TRANSPORTER_COSET) {
-        ok = result->flags.witness_valid; /* a nonempty coset A g (S4 notes, reading 4) */
-    }
-    return bytes_if(ok, ok ? result->group_bytes : NULL, ok ? result->group_len : 0, length);
+    return r == NULL ? bytes_if(false, NULL, 0, length)
+                     : bytes_if(r->flags.subgroup_verified && r->flags.stabiliser_complete,
+                                r->group_bytes, r->group_len, length);
 }
 
 /* spec 4.4: "return the selected graph in CDAG-2 plus its order key" */
-const uint8_t *canon_result_order_key(const canon_result *result, size_t *length)
+const uint8_t *canon_result_order_key(const canon_result *r, size_t *length)
 {
-    const bool ok = result != NULL && result->flags.minimum_proved;
-    return bytes_if(ok, ok ? result->key : NULL, ok ? result->key_len : 0, length);
+    return r == NULL ? bytes_if(false, NULL, 0, length)
+                     : bytes_if(r->flags.minimum_proved, r->key, r->key_len, length);
 }
 
 /* spec 8.2: "Transporter one: ... stop successfully on one hit." */

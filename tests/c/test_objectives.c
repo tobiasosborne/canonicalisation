@@ -586,6 +586,72 @@ static void counters(void)
            (unsigned long long)total.group.coset.rebuilds);
 }
 
+/* ---- review items 1 and 3 ---- */
+
+static void review_items(void)
+{
+    /* item 1: canon_obj_run refuses a missing target for the transporters and a superfluous
+     * one for the other objectives, at the module boundary */
+    const uint32_t swap[2] = {1, 0}, zero = 0;
+    canon_group *g = group(ctx_chain, 2, swap, 1);
+    canon_root xr;
+    memset(&xr, 0, sizeof xr);
+    xr.kind = CANON_ROOT_SUBSET;
+    xr.n = 2;
+    CHECK(canon_subset_init(&xr.u.subset, 2, &zero, 1) == CANON_COMPLETE);
+    canon_obj_search s;
+    canon_obj_search_init(&s);
+    canon_obj_outcome o;
+    const canon_objective all[4] = {CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_OBJECTIVE_TRANSPORTER_ONE,
+                                    CANON_OBJECTIVE_STABILISER, CANON_OBJECTIVE_TRANSPORTER_COSET};
+    for (int i = 0; i < 4; ++i) {
+        const bool needs = all[i] == CANON_OBJECTIVE_TRANSPORTER_ONE ||
+                           all[i] == CANON_OBJECTIVE_TRANSPORTER_COSET;
+        CHECK(canon_obj_run(&s, g, &xr, needs ? NULL : &xr, all[i], CANON_ORDER_CDAG_BYTE_1, false,
+                            UINT64_MAX, &o) == CANON_INVALID_INPUT);
+        CHECK(!o.witness && !o.group && !o.flags.witness_valid);
+        CHECK(canon_obj_run(&s, g, &xr, needs ? &xr : NULL, all[i], CANON_ORDER_CDAG_BYTE_1, false,
+                            UINT64_MAX, &o) == CANON_COMPLETE);
+    }
+    canon_obj_search_free(&s);
+    canon_subset_free(&xr.u.subset);
+    canon_group_release(g);
+
+    /* item 3: under SIMPLE-UPPER-1 the output check counts the CDAG-2 stream (104 bytes for
+     * the path 0-1-2: 11 header + 4 q + 85 record + 4 root) plus the key, 4 + ceil(3/8) = 5
+     * bytes: 109 is admitted, 108 is not; under CDAG-BYTE-1, 104 is admitted */
+    const uint32_t gens[6] = {1, 0, 2, 1, 2, 0};
+    const uint32_t edges[2][2] = {{0, 1}, {1, 2}};
+    canon_group *s3 = group(ctx_chain, 3, gens, 2);
+    canon_object *path = NULL;
+    CHECK(canon_object_create_simple_graph(ctx_chain, 3, edges, 2, &path) == CANON_COMPLETE);
+    const struct {
+        canon_order order;
+        uint64_t limit;
+        canon_status want;
+    } cases[4] = {{CANON_ORDER_SIMPLE_UPPER_1, 109, CANON_COMPLETE},
+                  {CANON_ORDER_SIMPLE_UPPER_1, 108, CANON_CAPACITY_LIMIT},
+                  {CANON_ORDER_CDAG_BYTE_1, 104, CANON_COMPLETE},
+                  {CANON_ORDER_CDAG_BYTE_1, 103, CANON_CAPACITY_LIMIT}};
+    for (int i = 0; i < 4; ++i) {
+        canon_capacity cap = {0, 0, 0, cases[i].limit};
+        canon_problem *p = NULL;
+        CHECK(canon_problem_create_with_options(
+                  ctx_chain, s3, path, NULL, CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE,
+                  CANON_ENCODING_CDAG_2, cases[i].order, &cap, NULL, &p) == cases[i].want);
+        canon_problem_release(p);
+    }
+    canon_status st;
+    canon_result *r = solve(s3, path, NULL, CANON_OBJECTIVE_LEX_MIN_IMAGE,
+                            CANON_ORDER_SIMPLE_UPPER_1, CANON_WITNESS_ANY, 0, &st);
+    size_t bytes = 0, key = 0;
+    CHECK(canon_result_bytes(r, &bytes) != NULL && canon_result_order_key(r, &key) != NULL);
+    CHECK(bytes == 104 && key == 5);
+    canon_result_release(r);
+    canon_object_release(path);
+    canon_group_release(s3);
+}
+
 int main(void)
 {
     const canon_context_options co = {CANON_BACKEND_CHAIN}, eo = {CANON_BACKEND_EXPLICIT};
@@ -599,6 +665,7 @@ int main(void)
     validation();
     lifetimes();
     counters();
+    review_items();
     canon_context_release(ctx_chain);
     canon_context_release(ctx_explicit);
     return check_finish("test_objectives");

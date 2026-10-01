@@ -71,24 +71,27 @@ static void product_side(void)
     CHECK(canon_bsgs_build_verified(&j, 3, tau, 1) == CANON_COMPLETE);
     uint32_t out[3];
     bool found = false;
-    CHECK(canon_coset_least(&j, 0, cyc, NULL, 0, out, &found, NULL) == CANON_COMPLETE && found);
+    CHECK(canon_coset_least(&j, 0, cyc, NULL, 0, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          found);
     const uint32_t want[3] = {1, 0, 2};
     CHECK(eq(out, want, 3));
     /* with the constraint 0 -> 1 both elements qualify; with 1 -> 2 only r itself */
     const canon_coset_constraint c12 = {1, 2};
-    CHECK(canon_coset_least(&j, 0, cyc, &c12, 1, out, &found, NULL) == CANON_COMPLETE && found);
+    CHECK(canon_coset_least(&j, 0, cyc, &c12, 1, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          found);
     CHECK(eq(out, cyc, 3));
     /* 1 -> 1 is not an image of 1 in J r ({2, 0}): empty */
     const canon_coset_constraint c11 = {1, 1};
-    CHECK(canon_coset_least(&j, 0, cyc, &c11, 1, out, &found, NULL) == CANON_COMPLETE && !found);
+    CHECK(canon_coset_least(&j, 0, cyc, &c11, 1, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          !found);
     canon_bsgs_free(&j);
 
     /* spec 7.4 labeling-coset payload case: H = 1 on degree two, r = [1,0]: least is [1,0] */
     canon_bsgs one;
     CHECK(canon_bsgs_build_verified(&one, 2, NULL, 0) == CANON_COMPLETE);
     const uint32_t swap[2] = {1, 0};
-    CHECK(canon_coset_least(&one, 0, swap, NULL, 0, out, &found, NULL) == CANON_COMPLETE && found &&
-          eq(out, swap, 2));
+    CHECK(canon_coset_least(&one, 0, swap, NULL, 0, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          found && eq(out, swap, 2));
     canon_bsgs_free(&one);
 }
 
@@ -103,6 +106,8 @@ static void random_constraints(uint32_t n, canon_coset_constraint *cons, uint32_
     }
 }
 
+static canon_coset_scratch shared;
+
 static void compare_one(const canon_bsgs *c, uint32_t level, const uint32_t *elems, uint32_t count,
                         uint32_t n, const uint32_t *r, const canon_coset_constraint *cons,
                         uint32_t k, uint64_t *found_count)
@@ -110,7 +115,7 @@ static void compare_one(const canon_bsgs *c, uint32_t level, const uint32_t *ele
     uint32_t want[MAXN], got[MAXN];
     bool found = false;
     canon_coset_stats stats = {0, 0};
-    CHECK(canon_coset_least(c, level, r, cons, k, got, &found, &stats) == CANON_COMPLETE);
+    CHECK(canon_coset_least(c, level, r, cons, k, got, &found, &stats, NULL) == CANON_COMPLETE);
     int bf = brute_least(elems, count, n, r, cons, k, want);
     CHECK((int)found == bf);
     if (found && bf) {
@@ -118,6 +123,11 @@ static void compare_one(const canon_bsgs *c, uint32_t level, const uint32_t *ele
         *found_count += 1;
     }
     CHECK(stats.descents == 1);
+    /* the same with one grow-only scratch shared across all cases and degrees (review item 5) */
+    uint32_t again[MAXN];
+    bool found2 = false;
+    CHECK(canon_coset_least(c, level, r, cons, k, again, &found2, NULL, &shared) == CANON_COMPLETE);
+    CHECK(found2 == found && (!found || eq(again, got, n)));
 }
 
 /* the elements of a T1 group as a flat table */
@@ -287,7 +297,7 @@ static void outside(void)
                       CANON_COMPLETE);
                 uint32_t out[MAXN];
                 bool found = true;
-                CHECK(canon_coset_least_outside(&h, &k, out, &found, NULL) == CANON_COMPLETE);
+                CHECK(canon_coset_least_outside(&h, &k, out, &found, NULL, NULL) == CANON_COMPLETE);
                 const uint32_t rest = groups[hi].mask & ~groups[ki].mask;
                 CHECK(found == (rest != 0));
                 if (rest != 0) {
@@ -315,20 +325,23 @@ static void invalid(void)
     uint32_t out[3];
     bool found = true;
     const canon_coset_constraint bad = {3, 0}, bad_image = {0, 3};
-    CHECK(canon_coset_least(&c, 0, NULL, &bad, 1, out, &found, NULL) == CANON_INVALID_INPUT &&
+    CHECK(canon_coset_least(&c, 0, NULL, &bad, 1, out, &found, NULL, NULL) == CANON_INVALID_INPUT &&
           !found);
-    CHECK(canon_coset_least(&c, 0, NULL, &bad_image, 1, out, &found, NULL) == CANON_INVALID_INPUT);
-    CHECK(canon_coset_least(&c, c.depth + 1, NULL, NULL, 0, out, &found, NULL) ==
+    CHECK(canon_coset_least(&c, 0, NULL, &bad_image, 1, out, &found, NULL, NULL) ==
+          CANON_INVALID_INPUT);
+    CHECK(canon_coset_least(&c, c.depth + 1, NULL, NULL, 0, out, &found, NULL, NULL) ==
           CANON_INVALID_INPUT);
     /* two images for one point: empty, not invalid */
     const canon_coset_constraint two[2] = {{0, 1}, {0, 2}};
-    CHECK(canon_coset_least(&c, 0, NULL, two, 2, out, &found, NULL) == CANON_COMPLETE && !found);
-    CHECK(canon_coset_least_outside(&c, &d, out, &found, NULL) == CANON_INVALID_INPUT);
+    CHECK(canon_coset_least(&c, 0, NULL, two, 2, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          !found);
+    CHECK(canon_coset_least_outside(&c, &d, out, &found, NULL, NULL) == CANON_INVALID_INPUT);
     /* degree 0: the empty permutation */
     canon_bsgs z;
     CHECK(canon_bsgs_build_verified(&z, 0, NULL, 0) == CANON_COMPLETE);
-    CHECK(canon_coset_least(&z, 0, NULL, NULL, 0, out, &found, NULL) == CANON_COMPLETE && found);
-    CHECK(canon_coset_least_outside(&z, &z, out, &found, NULL) == CANON_COMPLETE && !found);
+    CHECK(canon_coset_least(&z, 0, NULL, NULL, 0, out, &found, NULL, NULL) == CANON_COMPLETE &&
+          found);
+    CHECK(canon_coset_least_outside(&z, &z, out, &found, NULL, NULL) == CANON_COMPLETE && !found);
     canon_bsgs_free(&z);
     canon_bsgs_free(&c);
     canon_bsgs_free(&d);
@@ -336,10 +349,12 @@ static void invalid(void)
 
 int main(void)
 {
+    canon_coset_scratch_init(&shared);
     product_side();
     t1();
     t2();
     outside();
     invalid();
+    canon_coset_scratch_free(&shared);
     return check_finish("test_coset_least");
 }

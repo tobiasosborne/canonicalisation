@@ -146,6 +146,10 @@ static void product_side(void)
 
 static uint64_t total_nodes, total_rebuilds, total_descents, total_leaves;
 
+/* One grow-only scratch shared by every enumeration of the run, across degrees (S4 review
+ * item 5); results must equal those of a temporary scratch per enumeration. */
+static canon_coset_scratch shared_scratch;
+
 static void compare_backends(uint32_t n, const uint32_t *gens, uint32_t count, uint32_t *buf_a,
                              uint32_t *buf_b)
 {
@@ -165,6 +169,20 @@ static void compare_backends(uint32_t n, const uint32_t *gens, uint32_t count, u
     CHECK(n == 0 || memcmp(buf_a, buf_b, (size_t)la.count * n * sizeof *buf_a) == 0);
     /* one poll per node, before it is counted */
     CHECK(la.polls == va.nodes);
+    /* the chain enumerator with the shared scratch: same sequence, nodes and counters */
+    {
+        uint32_t *buf_c = malloc((size_t)MAXG * 8 * sizeof *buf_c);
+        leaves lc = {n, 0, MAXG, buf_c, 0, 0, 0};
+        canon_coset_visitor vc;
+        canon_coset_visitor_init(&vc, on_leaf, on_poll, &lc, UINT64_MAX);
+        vc.scratch = &shared_scratch;
+        lc.count = 0;
+        CHECK(gc->ops->enumerate(gc, &vc) == CANON_COMPLETE);
+        CHECK(lc.count == la.count && vc.nodes == va.nodes &&
+              vc.stats.rebuilds == va.stats.rebuilds && vc.stats.descents == va.stats.descents);
+        CHECK(n == 0 || memcmp(buf_a, buf_c, (size_t)la.count * n * sizeof *buf_a) == 0);
+        free(buf_c);
+    }
     total_nodes += va.nodes;
     total_leaves += va.leaves;
     total_rebuilds += va.stats.rebuilds;
@@ -264,10 +282,12 @@ int main(void)
     CHECK(canon_context_create_with_options(NULL, &eo, &ctx_explicit) == CANON_COMPLETE);
     uint32_t *buf_a = malloc((size_t)MAXG * 8 * sizeof *buf_a);
     uint32_t *buf_b = malloc((size_t)MAXG * 8 * sizeof *buf_b);
+    canon_coset_scratch_init(&shared_scratch);
     product_side();
     t1(buf_a, buf_b);
     t2(buf_a, buf_b);
     chain_only();
+    canon_coset_scratch_free(&shared_scratch);
     free(buf_a);
     free(buf_b);
     canon_context_release(ctx_chain);

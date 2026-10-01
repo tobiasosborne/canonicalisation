@@ -55,8 +55,47 @@ static int u32_cmp(const void *a, const void *b, void *ctx)
     return x < y ? -1 : x > y;
 }
 
+/* The node block of recursion depth d (4 * n words: orbit, sort buffer, t_b, child r),
+ * allocated the first time that depth is reached and then reused; blocks never move, so a
+ * parent's child r stays valid while its children run (S4 review item 5). */
+static canon_status node_block(canon_coset_scratch *s, uint32_t depth, uint32_t **out)
+{
+    while (s->node_count <= depth) {
+        void *nodes = s->nodes;
+        canon_status st =
+            canon_grow_array(&nodes, &s->node_cap, s->node_count, 8u, sizeof *s->nodes);
+        s->nodes = nodes;
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+        size_t words = 0;
+        if (!canon_size_mul((size_t)s->node_n, 4u, &words)) {
+            return CANON_CAPACITY_LIMIT;
+        }
+        uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
+        if (block == NULL) {
+            return st;
+        }
+        s->nodes[s->node_count++] = block;
+    }
+    *out = s->nodes[depth];
+    return CANON_COMPLETE;
+}
+
+/* Node blocks for degree n: blocks of a larger degree are reused, smaller ones are dropped. */
+static void node_degree(canon_coset_scratch *s, uint32_t n)
+{
+    if (n > s->node_n) {
+        for (uint32_t d = 0; d < s->node_count; ++d) {
+            free(s->nodes[d]);
+        }
+        s->node_count = 0;
+        s->node_n = n;
+    }
+}
+
 static canon_status visit(const canon_bsgs *c, uint32_t lv, const uint32_t *r,
-                          canon_coset_visitor *v)
+                          canon_coset_visitor *v, canon_coset_scratch *s, uint32_t depth)
 {
     canon_status st = canon_coset_visit_enter(v);
     if (st != CANON_COMPLETE) {
@@ -70,13 +109,10 @@ static canon_status visit(const canon_bsgs *c, uint32_t lv, const uint32_t *r,
     }
     /* spec 8.1: "a = smallest atom moved by H" */
     uint32_t a = canon_coset_least_moved(c, lv);
-    /* per-node scratch: the sorted orbit, its sort buffer, t_b and the child representative */
-    size_t words = 0;
-    if (!canon_size_mul((size_t)n, 4u, &words)) {
-        return CANON_CAPACITY_LIMIT;
-    }
-    uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
-    if (block == NULL) {
+    /* this depth's scratch: the sorted orbit, its sort buffer, t_b and the child's r */
+    uint32_t *block = NULL;
+    st = node_block(s, depth, &block);
+    if (st != CANON_COMPLETE) {
         return st;
     }
     uint32_t *orbit = block, *sort_tmp = block + (size_t)n;
@@ -101,34 +137,43 @@ static canon_status visit(const canon_bsgs *c, uint32_t lv, const uint32_t *r,
             /* spec 8.1: "t_b = least image-array element of H with a^t_b=b" */
             const canon_coset_constraint ab = {a, orbit[i]};
             bool found = false;
-            st = canon_coset_least(h, hl, NULL, &ab, 1, t_b, &found, &v->stats);
+            st = canon_coset_least(h, hl, NULL, &ab, 1, t_b, &found, &v->stats, s);
             if (st == CANON_COMPLETE && !found) {
                 st = CANON_INTERNAL_ERROR; /* b is in a^H, so some element sends a to b */
             }
             if (st == CANON_COMPLETE) {
                 canon_perm_compose(t_b, r, child_r, n); /* t_b r: t_b acts first (spec 3) */
-                st = visit(h, hl + 1u, child_r, v);     /* spec 8.1: visit(H_a, t_b r) */
+                /* spec 8.1: visit(H_a, t_b r); depth < log2 |G| + 1 <= 64 */
+                st = visit(h, hl + 1u, child_r, v, s, depth + 1u);
             }
         }
     }
     canon_bsgs_free(&own);
-    free(block);
     return st;
 }
 
 canon_status canon_coset_enumerate(const canon_bsgs *c, canon_coset_visitor *v)
 {
     const uint32_t n = c->n;
+    canon_coset_scratch local;
+    canon_coset_scratch *s = v->scratch;
+    if (s == NULL) {
+        canon_coset_scratch_init(&local);
+        s = &local;
+    }
+    node_degree(s, n);
     canon_status st = CANON_COMPLETE;
-    uint32_t *id = canon_alloc_array(n, sizeof *id, &st);
-    if (id == NULL) {
-        return st;
+    uint32_t *id = canon_alloc_array(n, sizeof *id, &st); /* once per enumeration */
+    if (id != NULL) {
+        for (uint32_t p = 0; p < n; ++p) {
+            id[p] = p;
+        }
+        v->stopped = false;
+        st = visit(c, 0, id, v, s, 0); /* spec 8.1: "start visit(G, id)" */
+        free(id);
     }
-    for (uint32_t p = 0; p < n; ++p) {
-        id[p] = p;
+    if (v->scratch == NULL) {
+        canon_coset_scratch_free(&local);
     }
-    v->stopped = false;
-    st = visit(c, 0, id, v); /* spec 8.1: "start visit(G, id)" */
-    free(id);
     return st;
 }

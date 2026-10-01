@@ -11,10 +11,6 @@
 #include "encoding/simple_upper.h"
 #include "perm/perm.h"
 
-/* At most this many generators are inserted into the stabiliser: each insertion of a
- * non-member at least doubles |A_known| (Lagrange), and |A| <= |G| < 2^64 in this release. */
-#define MAX_STAB_GENS 64u
-
 void canon_obj_search_init(canon_obj_search *s)
 {
     memset(s, 0, sizeof *s);
@@ -23,11 +19,13 @@ void canon_obj_search_init(canon_obj_search *s)
     canon_buf_init(&s->best_key);
     canon_buf_init(&s->bytes);
     canon_buf_init(&s->group);
+    canon_coset_scratch_init(&s->scratch);
 }
 
 void canon_obj_search_free(canon_obj_search *s)
 {
-    free(s->best); /* one block: best, work, g, agens */
+    free(s->best); /* one block: best, work, g */
+    canon_coset_scratch_free(&s->scratch);
     canon_root_image_free(&s->image);
     canon_buf_free(&s->key);
     canon_buf_free(&s->best_key);
@@ -43,7 +41,7 @@ static canon_status prepare(canon_obj_search *s, uint32_t n)
         return CANON_COMPLETE;
     }
     size_t words = 0;
-    if (!canon_size_mul((size_t)n, 3u + MAX_STAB_GENS, &words)) {
+    if (!canon_size_mul((size_t)n, 3u, &words)) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
     canon_status st = CANON_COMPLETE;
@@ -55,7 +53,6 @@ static canon_status prepare(canon_obj_search *s, uint32_t n)
     s->best = block;
     s->work = block + (size_t)n;
     s->g = block + 2u * (size_t)n;
-    s->agens = block + 3u * (size_t)n;
     s->cap = n;
     return CANON_COMPLETE;
 }
@@ -68,9 +65,9 @@ typedef struct obj_ctx {
     const canon_root *y; /* transporter target; for the stabiliser, x itself */
     canon_order order;
     bool deterministic;
-    bool have;        /* minimum: an incumbent exists; transporter: a hit was found */
-    canon_bsgs *a;    /* stabiliser: verified chain of A_known */
-    uint32_t a_count; /* generators inserted into A_known (rows of s->agens) */
+    bool have;               /* minimum: an incumbent exists; transporter: a hit was found */
+    canon_bsgs *a;           /* stabiliser: verified chain of A_known */
+    canon_perm_table *agens; /* stabiliser: the generators inserted into A_known */
 } obj_ctx;
 
 /* spec 8.2 Minimum: "Compare the exact selected order key of x^r; retain the least.  Exhaust
@@ -141,16 +138,16 @@ static canon_status consume_transporter(void *user, const uint32_t *r, bool *sto
 }
 
 /* spec 8.2 Stabiliser: "Test x^r=x; insert every hit into a verified subgroup."  A hit is
- * sifted through the current verified chain of A_known; a non-member is appended to the
- * generators and the chain is rebuilt and verified (canon_bsgs_build_verified).  Each such
- * insertion at least doubles |A_known|, so there are at most log2 |A| rebuilds.  "Exhaustion
- * proves every member of A was inserted and no other one was": every hit is a member of A
- * (x^r = x) and every member of G is consumed once, so after exhaustion A_known = A. */
+ * inserted into the verified chain of A_known unless it is already a member
+ * (canon_bsgs_insert_verified: membership by the chain's one sift rule; a non-member is
+ * appended to the generators and the chain rebuilt and verified).  Each insertion at least
+ * doubles |A_known|, so there are at most log2 |A| rebuilds.  "Exhaustion proves every member
+ * of A was inserted and no other one was": every hit is a member of A (x^r = x) and every
+ * member of G is consumed once, so after exhaustion A_known = A. */
 static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop)
 {
     obj_ctx *c = user;
     canon_obj_search *s = c->s;
-    const uint32_t n = c->x->n;
     (void)stop;
     canon_status st = canon_root_act_into(c->x, r, &s->image);
     if (st != CANON_COMPLETE) {
@@ -160,28 +157,10 @@ static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop
         return CANON_COMPLETE;
     }
     s->stats.hits += 1;
-    if (n > 0) {
-        memcpy(s->work, r, (size_t)n * sizeof *s->work);
-    }
-    uint32_t stop_level = 0;
-    canon_bsgs_sift(c->a, 0, s->work, &stop_level, NULL); /* spec 9.2 membership */
-    if (stop_level == c->a->depth && canon_perm_is_identity(s->work, n)) {
-        return CANON_COMPLETE; /* already in A_known */
-    }
-    if (c->a_count + 1u >= MAX_STAB_GENS) {
-        return CANON_INTERNAL_ERROR; /* each insertion doubles |A_known| < 2^64 */
-    }
-    memcpy(s->agens + (size_t)c->a_count * n, r, (size_t)n * sizeof *s->agens);
-    c->a_count += 1;
-    canon_bsgs grown;
-    st = canon_bsgs_build_verified(&grown, n, s->agens, c->a_count);
-    if (st != CANON_COMPLETE) {
-        return st;
-    }
-    canon_bsgs_free(c->a);
-    *c->a = grown;
-    s->stats.stab_builds += 1;
-    return CANON_COMPLETE;
+    bool inserted = false;
+    st = canon_bsgs_insert_verified(c->a, c->agens, r, s->work, &inserted);
+    s->stats.stab_builds += inserted;
+    return st;
 }
 
 /* ---- runs ---- */
@@ -205,13 +184,16 @@ static canon_status enumerate(const canon_group *g, canon_coset_visitor *v,
 static canon_status stabiliser(canon_obj_search *s, const canon_group *g, const canon_root *x,
                                canon_coset_visitor *v, canon_bsgs *a)
 {
-    canon_status st = canon_bsgs_build_verified(a, x->n, s->agens, 0); /* A_known = 1 */
+    canon_status st = canon_bsgs_build_verified(a, x->n, NULL, 0); /* A_known = 1 */
     if (st != CANON_COMPLETE) {
-        canon_bsgs_init(a, x->n);
-        return st;
+        return st; /* *a was left empty */
     }
-    obj_ctx c = {s, x, x, CANON_ORDER_CDAG_BYTE_1, false, false, a, 0};
-    return enumerate(g, v, consume_stabiliser, &c);
+    canon_perm_table agens; /* grow-only, freed with the run */
+    canon_perm_table_init(&agens, x->n);
+    obj_ctx c = {s, x, x, CANON_ORDER_CDAG_BYTE_1, false, false, a, &agens};
+    st = enumerate(g, v, consume_stabiliser, &c);
+    canon_perm_table_free(&agens);
+    return st;
 }
 
 static canon_status run(canon_obj_search *s, const canon_group *g, const canon_root *x,
@@ -220,7 +202,7 @@ static canon_status run(canon_obj_search *s, const canon_group *g, const canon_r
 {
     const uint32_t n = x->n;
     canon_status st = CANON_COMPLETE;
-    obj_ctx c = {s, x, y, order, deterministic, false, NULL, 0};
+    obj_ctx c = {s, x, y, order, deterministic, false, NULL, NULL};
     switch (objective) {
     case CANON_OBJECTIVE_LEX_MIN_IMAGE:
         st = enumerate(g, v, consume_min, &c);
@@ -260,7 +242,7 @@ static canon_status run(canon_obj_search *s, const canon_group *g, const canon_r
         st = stabiliser(s, g, x, v, &a);
         if (st == CANON_COMPLETE) {
             canon_buf_truncate(&s->group, 0);
-            st = canon_group_bytes_write(&s->group, &a, &s->stats.group); /* spec 9.4 */
+            st = canon_group_bytes_write(&s->group, &a, &s->stats.group, &s->scratch); /* 9.4 */
         }
         canon_bsgs_free(&a);
         if (st == CANON_COMPLETE) {
@@ -284,15 +266,12 @@ static canon_status run(canon_obj_search *s, const canon_group *g, const canon_r
         canon_bsgs a;
         st = stabiliser(s, g, x, v, &a);
         if (st == CANON_COMPLETE) {
-            /* spec 9.4: Group(A) || Perm(r0), r0 the least element of A g */
+            /* spec 9.4: Group(A) || Perm(r0), r0 the least element of A g; spec 3: in
+             * deterministic mode the witness is the least solution, r0 itself, written
+             * straight into the witness buffer (computed once, S4 review item 4) */
             canon_buf_truncate(&s->group, 0);
-            st = canon_coset_bytes_write(&s->group, &a, s->g, &s->stats.group);
-        }
-        if (st == CANON_COMPLETE && deterministic) {
-            /* spec 3: the deterministic witness is the least solution, r0 */
-            bool found = false;
-            st = canon_coset_least(&a, 0, s->g, NULL, 0, s->best, &found, &s->stats.coset);
-            st = st == CANON_COMPLETE && !found ? CANON_INTERNAL_ERROR : st;
+            st = canon_coset_bytes_write(&s->group, &a, s->g, deterministic ? s->best : s->work,
+                                         &s->stats.group, &s->scratch);
         }
         canon_bsgs_free(&a);
         if (st == CANON_COMPLETE) {
@@ -314,8 +293,13 @@ canon_status canon_obj_run(canon_obj_search *s, const canon_group *g, const cano
 {
     memset(out, 0, sizeof *out);
     memset(&s->stats, 0, sizeof s->stats);
-    if (g->degree != x->n || (y != NULL && (y->kind != x->kind || y->n != x->n))) {
-        return CANON_INVALID_INPUT; /* module contract; the API checks it at creation */
+    /* module contract (the API checks the same at creation): the transporters need a target of
+     * x's kind and degree, the other objectives take none (S4 review item 1) */
+    const bool needs_y = objective == CANON_OBJECTIVE_TRANSPORTER_ONE ||
+                         objective == CANON_OBJECTIVE_TRANSPORTER_COSET;
+    if (g->degree != x->n || needs_y != (y != NULL) ||
+        (y != NULL && (y->kind != x->kind || y->n != x->n))) {
+        return CANON_INVALID_INPUT;
     }
     canon_status st = prepare(s, x->n);
     if (st != CANON_COMPLETE) {
@@ -323,6 +307,7 @@ canon_status canon_obj_run(canon_obj_search *s, const canon_group *g, const cano
     }
     canon_coset_visitor v;
     canon_coset_visitor_init(&v, NULL, NULL, NULL, quota);
+    v.scratch = &s->scratch; /* grow-only, owned by the workspace */
     st = run(s, g, x, y, objective, order, deterministic, &v, out);
     /* Invariant (objectives.h): the image borrowed x's graph tables; drop them on every
      * outcome so that nothing in the workspace points into x after the run. */
@@ -346,13 +331,14 @@ canon_status canon_obj_deterministic_witness(canon_obj_search *s, const canon_gr
     }
     canon_coset_visitor v;
     canon_coset_visitor_init(&v, NULL, NULL, NULL, quota);
+    v.scratch = &s->scratch; /* grow-only, owned by the workspace */
     canon_bsgs a;
     st = stabiliser(s, g, x, &v, &a);
     canon_root_image_clear(&s->image); /* objectives.h invariant */
     if (st == CANON_COMPLETE) {
         /* spec 3: "minimising A g after A is proved complete" */
         bool found = false;
-        st = canon_coset_least(&a, 0, t, NULL, 0, s->best, &found, &s->stats.coset);
+        st = canon_coset_least(&a, 0, t, NULL, 0, s->best, &found, &s->stats.coset, &s->scratch);
         st = st == CANON_COMPLETE && !found ? CANON_INTERNAL_ERROR : st;
     }
     canon_bsgs_free(&a);
