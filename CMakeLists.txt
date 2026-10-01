@@ -66,7 +66,7 @@ foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_
           test_nat test_graph test_graph_stream test_signature test_simple_upper
           test_search_graph test_chain test_reference_schreier test_verify test_provenance
           test_coset_least test_enumerate test_group_stream test_objectives
-          test_dag)
+          test_dag test_cdag_decode test_dag_action test_search_dag)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)
