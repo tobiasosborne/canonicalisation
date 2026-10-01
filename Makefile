@@ -23,19 +23,21 @@ CFLAGS   += -flto
 LDFLAGS  += -flto
 endif
 
-LIB_SRC  = src/api/version.c src/api/stubs.c \
+LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c \
-           src/object/subset.c src/bsgs/explicit.c src/partition/partition.c
+           src/object/subset.c src/bsgs/explicit.c src/partition/partition.c \
+           src/refine/p1.c src/search/p1_tree.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
-UNIT_TESTS = test_perm test_wire test_group_explicit test_partition
+UNIT_TESTS = test_perm test_wire test_group_explicit test_partition test_search_subset
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
+CLI      = $(BUILD)/canon-cli
 FORMAT_FILES = $(shell find include src checker tests/c -name '*.c' -o -name '*.h' 2>/dev/null)
 
 .PHONY: all test check format clean
-all: $(LIB) $(CHECKER) $(TESTS)
+all: $(LIB) $(CHECKER) $(CLI) $(TESTS)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -48,6 +50,11 @@ $(LIB): $(LIB_OBJ)
 $(CHECKER): checker/main.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
+# The CLI uses only the public header (no -Isrc).
+$(CLI): tools/canon-cli.c $(LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Iinclude $< $(LIB) -o $@ $(LDFLAGS)
 
 $(BUILD)/test_version: tests/c/test_version.c $(LIB)
 	$(CC) $(CFLAGS) -Iinclude $< $(LIB) -o $@ $(LDFLAGS)
