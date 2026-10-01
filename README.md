@@ -2,7 +2,7 @@
 
 **An exact, native C engine for canonical forms under arbitrary finite permutation groups: specification, reviews and implementation plan.**
 
-> **Status: design stage, scaffolded.** This repository contains a reviewed architecture specification (v2.0), a milestone plan and a detailed work-package plan, lower-bound performance analysis, literature and formalisation audits, finite mathematical sanity checks, and a build/test scaffold with the public header, machine-readable golden vectors and the blind-reference comparison harness. Implementation proceeds in vertical slices (see `docs/detailed-implementation-plan.md` §0a). **Slices S1 to S3 have landed**: the P1 canonical image of a subset or a coloured directed multigraph, end to end through the public API and `canon-cli`, over a deterministic Schreier–Sims stabiliser chain with an independent verifier and provenance records (an explicit-enumeration backend remains as a test oracle), agreeing with the Python model on every subgroup of Sym(n) for n ≤ 4 (all subsets; all small digraphs with loops and multiplicities; sampled larger ones) under both backends. The enumeration objectives (S4), nested objects, labeling cosets and signed images, certificates and Lean proofs are later slices and milestones. Semantics are not frozen until the M0 blind-reference gate passes.
+> **Status: design stage, scaffolded.** This repository contains a reviewed architecture specification (v2.0), a milestone plan and a detailed work-package plan, lower-bound performance analysis, literature and formalisation audits, finite mathematical sanity checks, and a build/test scaffold with the public header, machine-readable golden vectors and the blind-reference comparison harness. Implementation proceeds in vertical slices (see `docs/detailed-implementation-plan.md` §0a). **Slices S1 to S4 have landed**: the P1 canonical image of a subset or a coloured directed multigraph, and the enumeration objectives (lexicographic minimum under both frozen orders, transporter, complete stabiliser, transporter coset) with canonical Group and coset bytes and the deterministic witness, end to end through the public API and `canon-cli`, over a deterministic Schreier–Sims stabiliser chain with an independent verifier and provenance records (an explicit-enumeration backend remains as a test oracle). Every objective agrees with brute-force enumeration in Python on every subgroup of Sym(n) for n ≤ 4 and on random groups up to degree 7, under both backends. Nested objects (S5), labeling cosets and signed images (S6), certificates and Lean proofs are later slices and milestones. Semantics are not frozen until the M0 blind-reference gate passes.
 
 ## The problem
 
@@ -77,9 +77,10 @@ HANDOFF.md                         current state and next steps for contributors
 CLAUDE.md, CONTRIBUTING.md         agent and contributor rules (constraints, conventions)
 Makefile, CMakeLists.txt           C17 build: library, checker, tests; strict warnings, sanitizer option
 include/canon/                     public header (statuses, objective tags, frozen IDs, opaque handles)
-src/<module>/                      one directory per spec §5 module; S1–S3 fill perm, bsgs (chain, verifier, provenance,
-                                   explicit oracle), object (subset, graph), encoding (wire, Nat, streams,
-                                   SIMPLE-UPPER-1), partition, refine (O and G stages), search, api, arena, util
+src/<module>/                      one directory per spec §5 module; S1–S4 fill perm, bsgs (chain, verifier, provenance,
+                                   explicit oracle), coset (descent, §8.1 enumerator), object (subset, graph),
+                                   encoding (wire, Nat, streams, Group/Perm, SIMPLE-UPPER-1), partition,
+                                   refine, search (P1 tree, objectives), api, arena, util
 tools/canon-cli.c                  command-line driver emitting refs/compare/FORMAT.md records
 docs/slices/                       one brief and one notes file per vertical slice
 checker/                           independent certificate checker (shares no code with src/)

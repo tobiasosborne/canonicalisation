@@ -2,12 +2,12 @@
 
 ## Project summary
 - An exact, dependency-free C17 library (`canon`) for canonical forms of objects under finite permutation groups, with a frozen wire format (`CDAG-2`) and an independent certificate checker.
-- Design-stage: `docs/specification.md` (v2.0) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage) and S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) have landed; every other objective and entry point is a stub returning UNSUPPORTED_ACTION.
+- Design-stage: `docs/specification.md` (v2.0) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage), S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) and S4 (coset enumeration objectives, canonical Group bytes) have landed; every other objective and entry point is a stub returning UNSUPPORTED_ACTION.
 - Read `README.md` and `HANDOFF.md` first. Do not start a new research cycle without the user's direction.
 
 ## Standing constraints (from HANDOFF.md)
 - **Keep machine load light.** The user's machine has CPU contention: no dependency downloads, no mathlib fetch/unpacking, no calibration benchmarks, no heavy builds, no broad filesystem scans. Run anything non-trivial under `nice -n 19`.
-- **Git.** Stage explicit paths; never `git add -A` at the root. Commit when a task is complete. Push to `origin/main` only when the user asks (or the task is itself publication).
+- **Git.** Stage explicit paths; never `git add -A` at the root. Commit when a task is complete. The user has asked (1 October 2026) that landed work be merged to `main`; push each landed slice to `main` as well as the working branch.
 - **No third-party source redistribution.** `review_sources/` is provenance only (URLs, hashes); never commit papers, TeX, vendor documents, isocert code or mathlib files. They are git-ignored.
 - **Evidence policy.** Literature claims rest on local primary sources, preferably TeX, with provenance. Web summaries (including TensorGR's web-sourced claims) are leads only; source code and manufacturer documents support implementation and hardware claims, not measurements.
 - Lean/lake are not installed here; the `lean/` skeleton is files only and must never be built or fetched.
