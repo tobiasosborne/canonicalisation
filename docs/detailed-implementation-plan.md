@@ -43,6 +43,14 @@ The milestones above are gates. Delivery is organised as **vertical slices**: ea
 
 After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruption) and M1 follow; M5 benchmarks and M6 concurrency are scheduled only after M0 closes.
 
+### Readings fixed by S6 (labeling cosets and signed images)
+
+- The complete stabiliser for the labeling objective is computed on the source domain Ω (`A`); the target stabiliser is `A′ = ρ⁻¹Aρ` and the two give the same coset payload. §8.2 should name the domain (v2.1 item).
+- The §7.3 generator fast path for the signed objective counts only the work actually done against the quota; the strict §11.1 reading would count the reference enumeration. Both are deterministic; the spec should say which applies (v2.1 item).
+- A certified zero is written `a;sign=0` in the FORMAT witness field, with `a` the verified odd automorphism.
+- `verify_witness` on a signed result also checks `χ(a) = −1` for a zero and `χ(t) = s` for a nonzero, since the sign is part of the claim; this extends §17's "membership and exact action".
+- Characters for the Z1 tier are built from consistent sign vectors on the generators rather than enumerated by `review_checks.characters`, which cannot enumerate Sym(4)'s characters in reasonable time; they are checked equal to the model's for every T1 group of order at most 12.
+
 ### External oracle tier (WP0.9, decided 1 October 2026; scheduled after S6)
 
 External tools can check orbit-level facts, never P1 traces or CDAG-2 bytes. A `refs/oracles/` tier runs them as external processes on the JSON case files, writing seven-field FORMAT records restricted to the fields they can produce, and is skipped when the tool is absent. Each tool is pinned by version and hash in `review_sources/SOURCES.json` under the evidence policy; acquisition needs the maintainer's go-ahead; nothing is linked into the library.
