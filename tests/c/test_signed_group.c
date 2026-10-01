@@ -119,6 +119,17 @@ static void capacity(void)
           st == CANON_CAPACITY_LIMIT);
     size_t words = 0;
     CHECK(canon_group_character_words(5, &words) && words == 14);
+    /* the shared status mapping of canon_perm_validate (S6 review item 6) */
+    const uint32_t perm3[3] = {2, 0, 1}, dup3[3] = {2, 2, 1}, out3[3] = {0, 1, 3};
+    bool ok = false;
+    CHECK(canon_perm_check(perm3, 3, &ok) == CANON_COMPLETE && ok);
+    CHECK(canon_perm_check(dup3, 3, &ok) == CANON_COMPLETE && !ok);
+    CHECK(canon_perm_check(out3, 3, &ok) == CANON_COMPLETE && !ok);
+    CHECK(canon_perm_check(NULL, 0, &ok) == CANON_COMPLETE && ok);
+    /* the shared generator validation (S6 review item 4) */
+    CHECK(canon_group_validate_generators(3, perm3, 1) == CANON_COMPLETE);
+    CHECK(canon_group_validate_generators(3, dup3, 1) == CANON_INVALID_INPUT);
+    CHECK(canon_group_validate_generators(0, NULL, 5) == CANON_COMPLETE);
 }
 
 /* ---- the lift's product rule (spec 8.4) ---- */

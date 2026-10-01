@@ -135,6 +135,25 @@ void canon_group_lift_element(const uint32_t *g, uint32_t n, int sign, uint32_t 
 uint32_t *canon_group_lift_generators(uint32_t n, const uint32_t *gens, size_t count,
                                       const int8_t *signs, canon_status *status);
 
+/* spec 4.1, 9.1 (slice S6 review item 4): every generator is a bijection of {0..degree-1}
+ * (one scratch bitmap, canon_perm_validate_scratch).  CANON_COMPLETE, CANON_INVALID_INPUT for a
+ * non-bijection, or the allocator's status.  Nothing is read for degree 0 or no generators.
+ * Shared by both backends. */
+canon_status canon_group_validate_generators(uint32_t degree, const uint32_t *gens, size_t count);
+
+/* Membership of an element of degree + 2 points in a backend's lift: `residue` is n + 2 words
+ * of scratch the test may overwrite. */
+typedef bool (*canon_lift_member_fn)(const void *lift, const uint32_t *p, uint32_t *residue);
+
+/* spec 8.4 (slice S6 review item 5): the one implementation of the `character` op's rule
+ * (see canon_group_ops.character): chi(g) = +1 iff lift(g, +1) is a member of the lift, -1 iff
+ * lift(g, -1) is, and CANON_INVALID_INPUT (g not in G) if neither.  `lift` is the backend's
+ * lift, tested through `member`; NULL means an unsigned group (CANON_UNSUPPORTED_ACTION).
+ * `scratch` as for the op (NULL: allocated here).  *sign = 0 on every failure. */
+canon_status canon_group_character_by(const canon_group *group, const void *lift,
+                                      canon_lift_member_fn member, const uint32_t *g,
+                                      uint32_t *scratch, int *sign);
+
 /* Words of caller scratch that `character` accepts for a group of degree n: 2 (n + 2) (the
  * lifted element and the sift residue).  False if the count does not fit size_t. */
 bool canon_group_character_words(uint32_t n, size_t *words);

@@ -123,6 +123,63 @@ uint32_t *canon_group_lift_generators(uint32_t n, const uint32_t *gens, size_t c
     return out;
 }
 
+canon_status canon_group_validate_generators(uint32_t degree, const uint32_t *gens, size_t count)
+{
+    if (degree == 0 || count == 0) {
+        return CANON_COMPLETE; /* degree 0: every generator is the empty permutation */
+    }
+    canon_status st = CANON_COMPLETE;
+    uint64_t *bitmap = canon_alloc_array(((size_t)degree + 63u) / 64u, sizeof *bitmap, &st);
+    if (bitmap == NULL) {
+        return st;
+    }
+    bool valid = true;
+    for (size_t i = 0; i < count && valid; ++i) {
+        valid = canon_perm_validate_scratch(gens + i * (size_t)degree, degree, bitmap);
+    }
+    free(bitmap);
+    return valid ? CANON_COMPLETE : CANON_INVALID_INPUT;
+}
+
+/* spec 8.4: the elements of the lift L over g are exactly lift(g, +1) and lift(g, -1), since L
+ * projects onto G with the kernel fixing Omega; so g is in G iff one of them is in L, and after
+ * validation (|L| = |G|, trivial kernel) at most one is.  One membership test for an even
+ * member, two otherwise. */
+canon_status canon_group_character_by(const canon_group *group, const void *lift,
+                                      canon_lift_member_fn member, const uint32_t *g,
+                                      uint32_t *scratch, int *sign)
+{
+    *sign = 0;
+    if (lift == NULL) {
+        return CANON_UNSUPPORTED_ACTION; /* an unsigned group has no character */
+    }
+    const uint32_t n = group->degree, m = n + 2u; /* fits: checked at creation (spec 11.1) */
+    canon_status st = CANON_COMPLETE;
+    uint32_t *own = NULL;
+    if (scratch == NULL) {
+        size_t words = 0;
+        if (!canon_group_character_words(n, &words)) {
+            return CANON_CAPACITY_LIMIT;
+        }
+        scratch = own = canon_alloc_array(words, sizeof *own, &st);
+        if (own == NULL) {
+            return st;
+        }
+    }
+    uint32_t *ext = scratch, *residue = scratch + m;
+    st = CANON_INVALID_INPUT; /* neither extension is in the lift: g is not in G */
+    for (int s = 1; s >= -1; s -= 2) {
+        canon_group_lift_element(g, n, s, ext);
+        if (member(lift, ext, residue)) {
+            *sign = s;
+            st = CANON_COMPLETE;
+            break;
+        }
+    }
+    free(own);
+    return st;
+}
+
 bool canon_group_character_words(uint32_t n, size_t *words)
 {
     /* the lifted element and the sift residue, n + 2 words each */

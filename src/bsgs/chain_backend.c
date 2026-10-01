@@ -71,42 +71,19 @@ static canon_status chain_enumerate(const canon_group *group, canon_coset_visito
     return canon_coset_enumerate(chain(group), visitor);
 }
 
-/* spec 8.4: chi(g) by membership of the two extensions of g in the lift (group.h contract):
- * one sift of lift(g, +1) and, if it fails, one of lift(g, -1), through the lift's single
- * membership rule (canon_bsgs_contains_scratch). */
+/* The lift's membership rule for canon_group_character_by: one sift through the lift's
+ * chain (canon_bsgs_contains_scratch, the chain's single membership rule). */
+static bool lift_member(const void *lift, const uint32_t *p, uint32_t *residue)
+{
+    return canon_bsgs_contains_scratch(lift, p, residue);
+}
+
+/* spec 8.4: chi(g) from the lift (src/bsgs/group.h). */
 static canon_status chain_character(const canon_group *group, const uint32_t *g, uint32_t *scratch,
                                     int *sign)
 {
-    *sign = 0;
     const chain_impl *c = group->impl;
-    if (c->lift == NULL) {
-        return CANON_UNSUPPORTED_ACTION; /* an unsigned group has no character */
-    }
-    const uint32_t n = group->degree, m = n + 2u; /* fits: checked at creation (spec 11.1) */
-    canon_status st = CANON_COMPLETE;
-    uint32_t *own = NULL;
-    if (scratch == NULL) {
-        size_t words = 0;
-        if (!canon_group_character_words(n, &words)) {
-            return CANON_CAPACITY_LIMIT;
-        }
-        scratch = own = canon_alloc_array(words, sizeof *own, &st);
-        if (own == NULL) {
-            return st;
-        }
-    }
-    uint32_t *ext = scratch, *residue = scratch + m;
-    st = CANON_INVALID_INPUT; /* neither extension is in the lift: g is not in G */
-    for (int s = 1; s >= -1; s -= 2) {
-        canon_group_lift_element(g, n, s, ext);
-        if (canon_bsgs_contains_scratch(c->lift, ext, residue)) {
-            *sign = s;
-            st = CANON_COMPLETE;
-            break;
-        }
-    }
-    free(own);
-    return st;
+    return canon_group_character_by(group, c->lift, lift_member, g, scratch, sign);
 }
 
 static const canon_group_ops chain_ops;
@@ -150,29 +127,10 @@ const canon_bsgs *canon_group_chain_of(const canon_group *group)
     return group != NULL && group->ops == &chain_ops ? chain(group) : NULL;
 }
 
-/* Validate the generators (spec 4.1, 9.1: bijections of the domain, one scratch bitmap). */
-static canon_status validate_generators(uint32_t degree, const uint32_t *generators,
-                                        size_t generator_count)
-{
-    if (degree == 0 || generator_count == 0) {
-        return CANON_COMPLETE;
-    }
-    canon_status st = CANON_COMPLETE;
-    uint64_t *bitmap = canon_alloc_array(((size_t)degree + 63u) / 64u, sizeof *bitmap, &st);
-    if (bitmap == NULL) {
-        return st;
-    }
-    bool valid = true;
-    for (size_t i = 0; i < generator_count && valid; ++i) {
-        valid = canon_perm_validate_scratch(generators + i * (size_t)degree, degree, bitmap);
-    }
-    free(bitmap);
-    return valid ? CANON_COMPLETE : CANON_INVALID_INPUT;
-}
-
-/* The shared constructor: signs NULL for an unsigned group. */
+/* The shared constructor: a signed group when is_signed (then signs holds one sign per
+ * generator, and may be NULL only without generators). */
 static canon_status create(uint32_t degree, const uint32_t *generators, size_t generator_count,
-                           const int8_t *signs, canon_group **out)
+                           bool is_signed, const int8_t *signs, canon_group **out)
 {
     *out = NULL;
     if (generator_count > 0 && degree > 0 && generators == NULL) {
@@ -181,12 +139,12 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
     if (generator_count > UINT32_MAX - 1u) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1: input indices are uint32 */
     }
-    if (signs != NULL && degree > UINT32_MAX - 2u) {
+    if (is_signed && degree > UINT32_MAX - 2u) {
         /* spec 11.1: "the initial lifted-character validator additionally requires
          * n+2 <= 2^32-1, checked before constructing its two sign points" */
         return CANON_CAPACITY_LIMIT;
     }
-    canon_status st = validate_generators(degree, generators, generator_count);
+    canon_status st = canon_group_validate_generators(degree, generators, generator_count);
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -204,7 +162,7 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
         free(c); /* the build left the chain empty */
         return st;
     }
-    if (signs != NULL) {
+    if (is_signed) {
         /* spec 8.4: "Validate chi by constructing the lifted generated group on Omega u {+,-}
          * ... chi exists exactly when the subgroup fixing every point of Omega in this lift is
          * trivial".  The projection L -> G (restriction to Omega) is onto with that subgroup
@@ -231,7 +189,7 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
         }
     }
     st = wrap(c, degree, out);
-    if (st == CANON_COMPLETE && signs != NULL) {
+    if (st == CANON_COMPLETE && is_signed) {
         st = canon_group_set_signs(*out, generators, generator_count, signs);
         if (st != CANON_COMPLETE) {
             canon_group_unshare(*out);
@@ -244,7 +202,7 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
 canon_status canon_group_chain_create(uint32_t degree, const uint32_t *generators,
                                       size_t generator_count, canon_group **out)
 {
-    return create(degree, generators, generator_count, NULL, out);
+    return create(degree, generators, generator_count, false, NULL, out);
 }
 
 canon_status canon_group_chain_create_signed(uint32_t degree, const uint32_t *generators,
@@ -255,6 +213,5 @@ canon_status canon_group_chain_create_signed(uint32_t degree, const uint32_t *ge
         *out = NULL;
         return CANON_INVALID_INPUT;
     }
-    static const int8_t none = 1; /* zero generators: a non-NULL sign array marks "signed" */
-    return create(degree, generators, generator_count, generator_count > 0 ? signs : &none, out);
+    return create(degree, generators, generator_count, true, signs, out);
 }

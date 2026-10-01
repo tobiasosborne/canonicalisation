@@ -77,15 +77,21 @@ endforeach()
 # Python end-to-end test of canon-cli against checks/review_checks.py and golden.json.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  # Slice S6 review item 8: under the sanitizers the e2e tiers run on seeded subsets
+  # (CANON_E2E_FAST=1, tests/python/README.md); without them, in full.
+  if(CANON_SANITIZE)
+    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1;CANON_E2E_FAST=1")
+  else()
+    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1")
+  endif()
   add_test(NAME test_e2e
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
-  set_tests_properties(test_e2e PROPERTIES
-    ENVIRONMENT "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1")
+  set_tests_properties(test_e2e PROPERTIES ENVIRONMENT "${CANON_E2E_ENV}")
   # Slice S3: the same end-to-end test with the explicit group backend (the test oracle).
   add_test(NAME test_e2e_explicit
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
   set_tests_properties(test_e2e_explicit PROPERTIES
-    ENVIRONMENT "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1;CANON_BACKEND=explicit")
+    ENVIRONMENT "${CANON_E2E_ENV};CANON_BACKEND=explicit")
 else()
   message(WARNING "python3 not found: test_e2e is not registered")
 endif()

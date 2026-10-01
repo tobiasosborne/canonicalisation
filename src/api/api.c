@@ -332,12 +332,10 @@ canon_status canon_group_character(const canon_group *group, const uint32_t *g, 
         return CANON_UNSUPPORTED_ACTION; /* spec 8.4: an unsigned group has no character */
     }
     /* a member of G is a bijection of the domain; validate before any group operation */
-    const int bijective = canon_perm_validate(g, group->degree);
-    if (bijective < 0) {
-        return CANON_RESOURCE_LIMIT;
-    }
-    if (bijective == 0) {
-        return CANON_INVALID_INPUT;
+    bool bijective = false;
+    const canon_status st = canon_perm_check(g, group->degree, &bijective);
+    if (st != CANON_COMPLETE || !bijective) {
+        return st != CANON_COMPLETE ? st : CANON_INVALID_INPUT;
     }
     return group->ops->character(group, g, NULL, sign_out); /* INVALID_INPUT if g is not in G */
 }
@@ -591,9 +589,10 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
         return CANON_INVALID_INPUT;
     }
     if (rho != NULL) {
-        const int bijective = canon_perm_validate(rho, object->root.n);
-        if (bijective <= 0) {
-            return bijective < 0 ? CANON_RESOURCE_LIMIT : CANON_INVALID_INPUT;
+        bool bijective = false;
+        const canon_status vs = canon_perm_check(rho, object->root.n, &bijective);
+        if (vs != CANON_COMPLETE || !bijective) {
+            return vs != CANON_COMPLETE ? vs : CANON_INVALID_INPUT;
         }
     }
     /* spec 3 table: the transporters relate x to a second object y on the same domain */

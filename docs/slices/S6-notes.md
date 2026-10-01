@@ -48,10 +48,10 @@ Files changed:
 10. **Signed: the fast path (§7.3).** "If every generator fixes x … Signed mode in this case tests χ on generators: any odd one proves zero, otherwise all of G=A is even."
     - The generators are those given to `canon_group_create_signed`, in input order, kept by the handle with their signs (`canon_group_signs`); the zero certificate is the first odd one.
     - The decision itself does not depend on the presentation: every generator fixes `x` iff `G` fixes `x`. Only the certificate, which is metadata, does.
-    - On the nonzero branch P1 still runs ("A caller requesting a trace certificate receives the prescribed trace"), so `c = x` comes with its trace and `t ∈ G = A`. χ(t) = +1 is asserted (`INTERNAL_ERROR` otherwise). `A = G` is built as a verified chain from the generators for the `Group(A)` evidence.
+    - On the nonzero branch P1 still runs ("A caller requesting a trace certificate receives the prescribed trace"), so `c = x` comes with its trace and `t ∈ G = A`. χ(t) = +1 is asserted (`INTERNAL_ERROR` otherwise). The `Group(A)` evidence uses the chain backend's own verified chain of `G` (since the review, item 3); only for the explicit backend is `A = G` built as a verified chain from the generators.
 11. **Signed: the reference route (§8.4).**
-    - The stabiliser enumeration of §8.2 evaluates χ on each hit before inserting it; the first odd hit stops the enumeration and is the zero certificate. It was verified by membership (it is a leaf of `G`'s enumeration, and χ found it in the lift) and by `x^a = x` (exact object equality).
-    - On exhaustion `A` is complete; "check χ=+1 on its generators" is done on the generators inserted into `A` (`INTERNAL_ERROR` if one is odd, which the per-hit test excludes).
+    - The stabiliser enumeration of §8.2 inserts each hit into `A_known` and evaluates χ on the hits that were inserted (since the review, item 1). Every inserted generator is checked even, so `A_known` is even throughout and an odd hit is never already a member: the first odd hit is the same as with a test on every hit. It stops the enumeration and is the zero certificate, verified by membership (it is a leaf of `G`'s enumeration, and χ found it in the lift) and by `x^a = x` (exact object equality).
+    - On exhaustion `A` is complete and each of its generators was checked even when it was inserted, which is "check χ=+1 on its generators".
     - Then P1 runs, and `s = χ(t)` for P1's witness `t` (the least attaining leaf witness). Any `t′ ∈ At` gives the same sign.
     - The enumeration runs before P1 (brief §3.3), so a zero is found without P1. SIGN-COVER is not used: the nonzero route always completes `A`.
 12. **Quota (§11.1).** "A logical work quota … counts the fixed reference traversal." One quota per solve, as in S4:
@@ -132,7 +132,9 @@ From `test_signed` (internal consumer, chain backend, every T1 group, every char
 
 | Fast path | Zero | Enumeration visits | Stabiliser hits | χ evaluations | P1 nodes | Verified rebuilds of A |
 |---|---|---|---|---|---|---|
-| 331 | 372 | 5 898 | 1 378 | 2 453 | 2 123 | 264 |
+| 331 | 372 | 5 898 | 1 378 | 1 287 | 2 123 | 476 |
+
+These are the values after review item 1 (χ only on inserted hits): before it, 2 453 χ evaluations and 264 rebuilds. An odd hit is now inserted, and so costs one verified rebuild, before it is recognised; that is one rebuild per zero found by the enumeration (212 here).
 
 From `test_labeling` (internal consumer, chain backend, every T1 group, subset and ρ: 11 827 runs on one workspace):
 
@@ -152,7 +154,27 @@ From `test_signed_group`: 113 sign vectors on the greedy generators of the 40 T1
 
 ## Timing and environment
 
-- `make check` without sanitizers: about 103 s wall-clock (41 s after S5). This is `review_checks.py`, the 52 Python tests with the chain backend (about 53 s) and the 32 tests of `test_e2e.py` with the explicit backend (about 51 s). L1 and Z1 take about 32 s per backend in total (the discover run went from 21 s to 53 s).
+- `make check` without sanitizers: about 103 s wall-clock (104.6 s after the review fixes) (41 s after S5). This is `review_checks.py`, the 52 Python tests with the chain backend (about 53 s) and the 32 tests of `test_e2e.py` with the explicit backend (about 51 s). L1 and Z1 take about 32 s per backend in total (the discover run went from 21 s to 53 s).
 - `make SANITIZE=1 BUILD=build/san test`: all 29 C tests pass under ASan/UBSan. The S6 Python class against the sanitizer-built CLI passes in about 283 s, and again with `UBSAN_OPTIONS=halt_on_error=1`.
 - CMake with `-DCANON_SANITIZE=ON`: all 32 ctest entries pass (14 min 51 s in total). Under ASan/UBSan, `test_e2e` takes about 442 s and `test_e2e_explicit` about 429 s (about 150 s each after S5), well inside ctest's default 1500 s timeout; `test_labeling` takes 12.6 s and `test_signed` 1.8 s.
 - As in S1–S5, the local clang has no ASan runtime; `make CC=clang BUILD=build/clang` builds with zero warnings and all 29 C tests pass.
+
+## Review fixes
+
+The review found no crash-class defect and raised seven findings plus one runtime item; the coordinator accepted the five decision points above as implemented. All eight are fixed. Every §5 command was run again: gcc, clang (zero warnings), `make SANITIZE=1 BUILD=build/san test` (29/29), `make check` with every tier in full on both backends, and the CMake sanitizer build with ctest (now with the fast e2e mode).
+
+1. **χ only on inserted hits** (`src/search/objectives.c`). The stabiliser consumer inserts each hit with `canon_bsgs_insert_verified` and evaluates χ only when the hit was inserted; the post-enumeration re-check of `A`'s generators and its second count of χ evaluations are gone (reading 11). `test_signed.c` now pins the exact zero certificate on every T1 zero case under both backends (744 cases): the first odd generator on the fast path, else the first odd leaf of the group's own §8.1 enumeration by the brute-force sign table. It is unchanged, and Z1 checks the same against the Python model of the traversal.
+2. **The explicit lift's bound reported distinctly** (`src/bsgs/explicit.c`). `build_table` reports through `*over_order` whether a `CAPACITY_LIMIT` is the `max_order` bound itself. `canon_group_explicit_create_signed` maps only that case to `INVALID_INPUT`; every other capacity path (a size that does not fit) stays `CAPACITY_LIMIT`. The size pre-check that had made the old mapping safe is removed.
+3. **The fast path reuses `G`'s chain** (`objectives.c`). With the chain backend the `Group(A)` evidence of a fast-path nonzero result is written from `canon_group_chain_of(g)`, the group's verified chain; the explicit backend still builds `A = G` from the generators.
+4. **One generator validation** (`src/bsgs/group.{h,c}`). `canon_group_validate_generators` (one bitmap, `canon_perm_validate_scratch`, one status mapping) is used by both backends' constructors.
+5. **One character rule** (`group.{h,c}`). `canon_group_character_by(group, lift, member, g, scratch, sign)` holds the spec 8.4 rule (scratch, the two extensions, the statuses) once, parameterised by the lift's membership test; the chain backend passes `canon_bsgs_contains_scratch`, the explicit backend a binary search of its lift's table (whose `explicit_group` now records its degree).
+6. **One `canon_perm_validate` status mapping** (`src/perm/perm.{h,c}`). `canon_perm_check(p, n, &ok)` is exported; `objectives.c` (which had it as a static helper) and `api.c` (`canon_group_character`, the ρ validation) use it.
+7. **`is_signed` parameter** (`src/bsgs/chain_backend.c`). The chain backend's shared constructor takes `bool is_signed` instead of a dummy one-element sign array.
+8. **Fast e2e mode under the sanitizers** (`tests/python/test_e2e.py`, `CMakeLists.txt`, `tests/python/README.md`). `CANON_E2E_FAST=1`, set by CMake for `test_e2e` and `test_e2e_explicit` exactly when `CANON_SANITIZE` is ON, runs the large tiers on seeded subsets (listed in `tests/python/README.md`); `make check` keeps the full tiers.
+   - Measured per test against the ASan/UBSan CLI before the change: L1 subsets 179 s, Z1 subsets 61 s, S4 T1 subsets 44 s, S2 G2 35 s, S4 G1 26 s, Z1 G1 22 s, L1 G1 19 s, S4 random 14 s, D1 13 s, S1 T1 12 s, S2 G1 8 s; about 436 s per run.
+   - Thinning only L1, Z1, D1 and the S4 random groups would have left about 130 s per run, so fast mode also thins the S4 T1 and G1 tiers and S2's G2 (see the remark below).
+   - One fast run takes about 108 s against the sanitizer CLI. The CMake sanitizer ctest time is given below.
+
+**Remarks.**
+- On item 1: the reviewer's form makes an odd hit cost one wasted verified rebuild before it is recognised (476 rebuilds instead of 264 on T1, χ evaluations 1 287 instead of 2 453). Testing membership with `canon_bsgs_contains_scratch` before χ, and inserting only even non-members, would avoid that at the price of a second sift per non-member hit; I followed the finding as written.
+- On item 8: the finding names L1, Z1, D1 and the S4 random tiers. Measured, those alone cannot bring a sanitizer run under five minutes, so the S4 T1/G1 and S2 G2 tiers are thinned too in fast mode. The S1 T1 tier, the S2 G1 tier, the golden cases, quotas and usage checks always run in full.

@@ -10,6 +10,7 @@
 #include "arena/alloc.h"
 #include "arena/checked.h"
 #include "bsgs/chain.h"
+#include "bsgs/chain_backend.h"
 #include "encoding/simple_upper.h"
 #include "perm/perm.h"
 
@@ -63,14 +64,6 @@ static canon_status prepare(canon_obj_search *s, uint32_t n)
     s->chi = block + 4u * (size_t)n;
     s->cap = n;
     return CANON_COMPLETE;
-}
-
-/* Status of canon_perm_validate as (status, *ok): -1 is an allocation failure. */
-static canon_status bijection(const uint32_t *p, uint32_t n, bool *ok)
-{
-    const int v = canon_perm_validate(p, n);
-    *ok = v == 1;
-    return v < 0 ? CANON_RESOURCE_LIMIT : CANON_COMPLETE;
 }
 
 /* ---- consumers (spec 8.2) ---- */
@@ -174,32 +167,33 @@ static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop
         return CANON_COMPLETE;
     }
     s->stats.hits += 1;
-    if (c->group != NULL) {
-        /* spec 8.4 (S6): "enumerate the stabiliser as in §8.2, stopping immediately if an odd
-         * witness is verified": r is in G (it is a leaf of G's enumeration) and fixes x (the
-         * exact test above), so chi(r) = -1 makes it a complete one-sided zero certificate
-         * ("If a in A and chi(a) = -1, then [x] = -[x], hence [x] = 0 over Q"). */
-        int sign = 0;
-        st = c->group->ops->character(c->group, r, s->chi, &sign);
-        s->stats.characters += 1;
-        if (st == CANON_INVALID_INPUT) {
-            return CANON_INTERNAL_ERROR; /* a leaf of G's enumeration is in G */
-        }
-        if (st != CANON_COMPLETE) {
-            return st;
-        }
-        if (sign < 0) {
-            if (c->x->n > 0) {
-                memcpy(s->best, r, (size_t)c->x->n * sizeof *s->best);
-            }
-            c->have = true;
-            *stop = true;
-            return CANON_COMPLETE;
-        }
-    }
     bool inserted = false;
     st = canon_bsgs_insert_verified(c->a, c->agens, r, s->work, &inserted);
     s->stats.stab_builds += inserted;
+    if (st != CANON_COMPLETE || !inserted || c->group == NULL) {
+        return st;
+    }
+    /* spec 8.4 (S6): "enumerate the stabiliser as in §8.2, stopping immediately if an odd
+     * witness is verified".  chi is evaluated only on hits that were not yet in A_known (S6
+     * review item 1): every inserted generator is checked even, so A_known is even throughout
+     * and an odd hit is never a member of it; the first odd hit is therefore the same as with a
+     * test on every hit.  r is in G (a leaf of G's enumeration) and fixes x (the exact test
+     * above), so chi(r) = -1 makes it a complete one-sided zero certificate ("If a in A and
+     * chi(a) = -1, then [x] = -[x], hence [x] = 0 over Q").  On exhaustion every generator of
+     * A was checked here, which is spec 8.4's "check chi=+1 on its generators". */
+    int sign = 0;
+    st = c->group->ops->character(c->group, r, s->chi, &sign);
+    s->stats.characters += 1;
+    if (st == CANON_INVALID_INPUT) {
+        return CANON_INTERNAL_ERROR; /* a leaf of G's enumeration is in G */
+    }
+    if (st == CANON_COMPLETE && sign < 0) {
+        if (c->x->n > 0) {
+            memcpy(s->best, r, (size_t)c->x->n * sizeof *s->best);
+        }
+        c->have = true; /* A_known now holds r; it is discarded with the run */
+        *stop = true;
+    }
     return st;
 }
 
@@ -221,10 +215,9 @@ static canon_status enumerate(const canon_group *g, canon_coset_visitor *v,
 
 /* The complete stabiliser A of x as a verified chain in *a (initialised here; the caller frees
  * it on every status).  With `odd` (S6, signed: g is a signed group) chi is evaluated on every
- * hit and the enumeration stops at the first odd one, with *odd = true and the hit in s->best
- * (A is then incomplete); otherwise *odd = false and, A being complete, spec 8.4 "check chi=+1
- * on its generators" is done here (an odd generator would contradict the per-hit test:
- * CANON_INTERNAL_ERROR). */
+ * hit that enlarges A_known and the enumeration stops at the first odd one, with *odd = true
+ * and the hit in s->best (A is then incomplete); otherwise *odd = false and every generator of
+ * the complete A was found even (consume_stabiliser). */
 static canon_status stabiliser_run(canon_obj_search *s, const canon_group *g, const canon_root *x,
                                    canon_coset_visitor *v, canon_bsgs *a, bool *odd)
 {
@@ -239,12 +232,6 @@ static canon_status stabiliser_run(canon_obj_search *s, const canon_group *g, co
     st = enumerate(g, v, consume_stabiliser, &c);
     if (odd != NULL) {
         *odd = st == CANON_COMPLETE && c.have;
-    }
-    for (uint32_t i = 0; st == CANON_COMPLETE && odd != NULL && !*odd && i < agens.count; ++i) {
-        int sign = 0;
-        st = g->ops->character(g, canon_perm_table_row(&agens, i), s->chi, &sign);
-        s->stats.characters += 1;
-        st = st == CANON_COMPLETE && sign != 1 ? CANON_INTERNAL_ERROR : st;
     }
     canon_perm_table_free(&agens);
     return st;
@@ -480,7 +467,7 @@ canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const 
     if (st == CANON_COMPLETE) {
         /* module contract (the API checks the same at creation): rho is a bijection
          * Omega -> D_n (spec 3.1) */
-        st = rho != NULL ? bijection(rho, x->n, &bijective) : CANON_INVALID_INPUT;
+        st = rho != NULL ? canon_perm_check(rho, x->n, &bijective) : CANON_INVALID_INPUT;
         st = st == CANON_COMPLETE && !bijective ? CANON_INVALID_INPUT : st;
     }
     if (st == CANON_COMPLETE) {
@@ -577,8 +564,14 @@ static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const
                 return CANON_COMPLETE;
             }
         }
-        /* A = G: its verified chain from the generators (spec 9.1), for the Group(A) evidence
-         * ("A caller requesting a trace certificate receives the prescribed trace": P1 runs) */
+        /* A = G, for the Group(A) evidence ("A caller requesting a trace certificate receives
+         * the prescribed trace": P1 runs).  The chain backend already holds G's verified chain
+         * (S6 review item 3); only the explicit backend's group is built as a verified chain
+         * from its generators (spec 9.1). */
+        const canon_bsgs *chain = canon_group_chain_of(g);
+        if (chain != NULL) {
+            return signed_nonzero(s, p1, g, x, chain, quota, true, out);
+        }
         st = canon_bsgs_build_verified(&a, n, n > 0 ? sg->gens.data : NULL,
                                        n > 0 ? sg->gens.count : 0);
         if (st == CANON_COMPLETE) {
@@ -682,7 +675,7 @@ canon_status canon_obj_check_witness(const canon_group *g, const canon_root *x, 
     }
     /* a witness must be a permutation of the domain before any group operation reads it */
     bool ok = false;
-    canon_status st = bijection(w, n, &ok);
+    canon_status st = canon_perm_check(w, n, &ok);
     if (st != CANON_COMPLETE || !ok) {
         return st;
     }
@@ -706,12 +699,12 @@ canon_status canon_obj_check_labeling(const canon_group *g, const canon_root *x,
         return CANON_INVALID_INPUT;
     }
     bool ok_rho = false, ok_t = false, ok_lambda = false;
-    canon_status st = bijection(rho, n, &ok_rho);
+    canon_status st = canon_perm_check(rho, n, &ok_rho);
     if (st == CANON_COMPLETE) {
-        st = bijection(t, n, &ok_t);
+        st = canon_perm_check(t, n, &ok_t);
     }
     if (st == CANON_COMPLETE) {
-        st = bijection(lambda, n, &ok_lambda);
+        st = canon_perm_check(lambda, n, &ok_lambda);
     }
     if (st != CANON_COMPLETE || !ok_rho || !ok_t || !ok_lambda) {
         return st;
