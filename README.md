@@ -2,7 +2,7 @@
 
 **An exact, native C engine for canonical forms under arbitrary finite permutation groups: specification, reviews and implementation plan.**
 
-> **Status: design stage.** This repository contains a reviewed architecture specification (v2.0), an implementation plan, lower-bound performance analysis, literature and formalisation audits, and finite mathematical sanity checks. **No production C code or Lean proofs exist yet.** The next milestone (M0) is two blind, independent reference implementations of the frozen semantics.
+> **Status: design stage, scaffolded.** This repository contains a reviewed architecture specification (v2.0), a milestone plan and a detailed work-package plan, lower-bound performance analysis, literature and formalisation audits, finite mathematical sanity checks, and a build/test scaffold with the public header, machine-readable golden vectors and the blind-reference comparison harness. **No production C algorithms or Lean proofs exist yet**: the C library implements only `canon_version()` and unsupported stubs. The next milestone (M0) is two blind, independent reference implementations of the frozen semantics.
 
 ## The problem
 
@@ -74,9 +74,21 @@ Permutations are arrays `p[v] = v^p` acting on the right, with left-to-right pro
 README.md                          this file
 LICENSE                            GNU AGPL v3
 HANDOFF.md                         current state and next steps for contributors/agents
+CLAUDE.md, CONTRIBUTING.md         agent and contributor rules (constraints, conventions)
+Makefile, CMakeLists.txt           C17 build: library, checker, tests; strict warnings, sanitizer option
+include/canon/                     public header (statuses, objective tags, frozen IDs, opaque handles)
+src/<module>/                      one directory per spec §5 module; only api/version.c and api/stubs.c have code
+checker/                           independent certificate checker (shares no code with src/)
+refs/                              M0: blind-reference protocol, seals, oracle, interchange format,
+                                   comparison script and refs/vectors/golden.json (spec §7.4 transcribed)
+tests/c, tests/python              C tests (ctest) and unittest suites (golden vectors, stream parser)
+tools/hexdump_stream.py            strict CDAG-2 stream dumper
+bench/                             benchmark programme placeholder and Δ/ρ/δ ledger schema
+lean/                              Lean 4 project skeleton for M1 (docstrings only; not built here)
 docs/
   specification.md                 architecture and implementation specification, v2.0
   implementation-plan.md           milestones M0–M8, H0/H1, gates, effort judgments
+  detailed-implementation-plan.md  work packages, internal interfaces, decided policies, tests, sequencing
   performance-lower-bounds.md      hardware model, lower-bound taxonomy, numeric envelopes
 reviews/
   referee-report.md                referee report on v1.0 (historical record)
@@ -96,7 +108,7 @@ review_sources/
 
 1. [docs/specification.md](docs/specification.md): §§3–4 (contracts and encoding), §7 (profile P1 and its correctness proof), §8 (complete reference algorithms).
 2. [reviews/referee-report.md](reviews/referee-report.md) and [reviews/review-response.md](reviews/review-response.md), which show what changed from v1.0 and why.
-3. [docs/implementation-plan.md](docs/implementation-plan.md): what gets built, in which order, and what evidence each gate requires.
+3. [docs/implementation-plan.md](docs/implementation-plan.md): what gets built, in which order, and what evidence each gate requires. [docs/detailed-implementation-plan.md](docs/detailed-implementation-plan.md) breaks each milestone into work packages with files, interfaces and tests.
 4. [docs/performance-lower-bounds.md](docs/performance-lower-bounds.md) and the two literature reviews, for depth.
 
 The reviewed v1.0 baseline is commit [`7ad98cb`](https://github.com/tobiasosborne/canonicalisation/tree/7ad98cb7ba778ba3599f2eca0de05ab76c6c954c). Referee line references point there.
@@ -120,13 +132,16 @@ python3 review_sources/fetch_sources.py           # offline verification only
 
 Vendor web pages change over time and are reported as `CHANGED` rather than silently accepted. Locally derived text and page images are listed with the command that produced them. See [review_sources/README.md](review_sources/README.md).
 
-## Checks
+## Build and checks
 
 ```sh
+make && make test            # gcc, -std=c17 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wvla -Werror
+make check                   # finite sanity checks plus the Python unit tests
+cmake -S . -B build && cmake --build build && ctest --test-dir build   # equivalent CMake definition
 python3 checks/review_checks.py
 ```
 
-This runs in under a second. Over every subgroup of Sₙ for n ≤ 4 it checks:
+The C build has no dependencies. `CANON_SANITIZE=ON` (CMake) or `SANITIZE=1` (make) adds AddressSanitizer and UndefinedBehaviorSanitizer. The Python tests verify that `refs/vectors/golden.json` reproduces the spec's §7.4 vectors through the Python model and that the stream dumper parses all six golden streams. The finite checks run in under a second. Over every subgroup of Sₙ for n ≤ 4 it checks:
 
 - the full-list leaf-map identity;
 - coset splitting;
