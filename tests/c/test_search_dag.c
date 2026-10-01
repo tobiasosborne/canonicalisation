@@ -16,6 +16,8 @@
 #include "encoding/cdag_encode.h"
 #include "encoding/group_stream.h"
 #include "object/dag.h"
+#include "object/object.h"
+#include "search/p1_tree.h"
 #include "t1_groups.h"
 
 static canon_context *CTX;
@@ -606,6 +608,123 @@ static void test_workspace_reuse(void)
     canon_workspace_release(ws);
 }
 
+static void put_perm(sbuf *s, const uint32_t *p, uint32_t n)
+{
+    uint32_t moved = 0;
+    for (uint32_t v = 0; v < n; ++v) {
+        moved += p[v] != v;
+    }
+    u32(s, moved);
+    for (uint32_t v = 0; v < n; ++v) {
+        if (p[v] != v) {
+            u32(s, v);
+            u32(s, p[v]);
+        }
+    }
+}
+
+static void random_perm4(uint32_t n, uint32_t *p)
+{
+    for (uint32_t v = 0; v < n; ++v) {
+        p[v] = v;
+    }
+    for (uint32_t v = n; v > 1; --v) {
+        uint32_t j = (uint32_t)(check_rng() % v), t = p[v - 1];
+        p[v - 1] = p[j];
+        p[j] = t;
+    }
+}
+
+/* S5 review item 6: the chain work per leaf image.  Objects as in tier D1 with subgroup and
+ * coset leaves (an atom, a subgroup given by 1-2 random generators, a coset with a random
+ * representative, under a tuple) under every T1 group, solved by the internal P1 search: with
+ * the verified chains kept at import every leaf image conjugates a stored chain and builds
+ * none; with the chains dropped (the behaviour before the review) every leaf image builds and
+ * verifies one.  Both give the same trace, bytes and witness. */
+static void test_chain_reuse(void)
+{
+    canon_dag_stats kept = {0, 0}, dropped = {0, 0};
+    uint64_t solves = 0;
+    const canon_dag_limits lim = {4096, UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    for (uint32_t n = 1; n <= 4; ++n) {
+        t1_sym sym;
+        t1_sym_init(&sym, n);
+        t1_group groups[T1_MAX_GROUPS];
+        const uint32_t count = t1_subgroups(&sym, groups);
+        for (uint32_t gi = 0; gi < count; ++gi) {
+            canon_group *g = NULL;
+            CHECK(canon_group_create(CTX, n, groups[gi].gens, groups[gi].gen_count, &g) ==
+                  CANON_COMPLETE);
+            for (int trial = 0; trial < 3; ++trial) {
+                sbuf st;
+                header(&st, n, 4);
+                u8(&st, 0x01);
+                u32(&st, (uint32_t)(check_rng() % n));
+                uint32_t p[4], r[4];
+                for (int coset = 0; coset < 2; ++coset) {
+                    const uint32_t k = 1 + (uint32_t)(check_rng() % 2);
+                    u8(&st, coset ? 0x08 : 0x07);
+                    u8(&st, 0x00);
+                    u32(&st, k);
+                    for (uint32_t j = 0; j < k; ++j) {
+                        random_perm4(n, p);
+                        put_perm(&st, p, n);
+                    }
+                    if (coset) {
+                        random_perm4(n, r);
+                        put_perm(&st, r, n);
+                    }
+                }
+                u8(&st, 0x03);
+                u32(&st, 3);
+                u32(&st, 2);
+                u32(&st, 0);
+                u32(&st, 1);
+                u32(&st, 3);
+                canon_root x;
+                CHECK(canon_root_import_stream(&x, n, st.b, st.len, &lim, NULL) == CANON_COMPLETE);
+                CHECK(x.kind == CANON_ROOT_DAG && x.u.dag.chains_cap > 0);
+                canon_p1_search a, b;
+                canon_p1_search_init(&a);
+                canon_p1_search_init(&b);
+                CHECK(canon_p1_search_run(&a, g, &x, 1u << 20) == CANON_COMPLETE);
+                /* drop the stored chains: every leaf image then rebuilds (the old path) */
+                for (uint32_t i = 0; i < x.u.dag.chains_cap; ++i) {
+                    if (x.u.dag.chains[i] != NULL) {
+                        canon_bsgs_free(x.u.dag.chains[i]);
+                        free(x.u.dag.chains[i]);
+                        x.u.dag.chains[i] = NULL;
+                    }
+                }
+                CHECK(canon_p1_search_run(&b, g, &x, 1u << 20) == CANON_COMPLETE);
+                CHECK(a.best_bytes.len == b.best_bytes.len &&
+                      memcmp(a.best_bytes.data, b.best_bytes.data, a.best_bytes.len) == 0 &&
+                      a.best_trace.len == b.best_trace.len &&
+                      memcmp(a.best_trace.data, b.best_trace.data, a.best_trace.len) == 0 &&
+                      memcmp(a.best_t, b.best_t, n * sizeof *a.best_t) == 0);
+                const canon_dag_stats *sa = &a.image.dag_scratch.stats;
+                const canon_dag_stats *sb = &b.image.dag_scratch.stats;
+                kept.chain_builds += sa->chain_builds;
+                kept.chain_conjugations += sa->chain_conjugations;
+                dropped.chain_builds += sb->chain_builds;
+                dropped.chain_conjugations += sb->chain_conjugations;
+                ++solves;
+                canon_p1_search_free(&a);
+                canon_p1_search_free(&b);
+                canon_root_free(&x);
+            }
+            canon_group_release(g);
+        }
+    }
+    printf("chain reuse (%llu solves, T1 groups, n = 1..4): stored chains: %llu builds, %llu "
+           "conjugations; chains dropped: %llu builds, %llu conjugations\n",
+           (unsigned long long)solves, (unsigned long long)kept.chain_builds,
+           (unsigned long long)kept.chain_conjugations, (unsigned long long)dropped.chain_builds,
+           (unsigned long long)dropped.chain_conjugations);
+    CHECK(kept.chain_builds == 0 && dropped.chain_conjugations == 0);
+    CHECK(kept.chain_conjugations > 0 && kept.chain_conjugations == dropped.chain_builds);
+}
+
 int main(void)
 {
     CHECK(canon_context_create(NULL, &CTX) == CANON_COMPLETE);
@@ -617,6 +736,7 @@ int main(void)
     test_dag_roots(ws);
     test_problem_capacity(ws);
     test_workspace_reuse();
+    test_chain_reuse();
     canon_workspace_release(ws);
     canon_context_release(CTX);
     return check_finish("test_search_dag");

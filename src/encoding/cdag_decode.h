@@ -71,14 +71,18 @@ typedef struct canon_cdag_reader {
     size_t len, pos;
 } canon_cdag_reader;
 
-/* Number of uint64 words the payload readers need as `bits` for degree n: two n-bit maps. */
+/* The `bits` contract of the payload readers below, stated once (S5 review item 2): `bits` is
+ * caller scratch of canon_cdag_bits_words(n) uint64 words (two n-bit maps) that is all zero on
+ * entry, and every reader leaves it all zero again on return, on every path, success or
+ * refusal.  A reader clears exactly the bits it set (it re-reads the points it marked), so its
+ * cost is proportional to the payload, not to n.  Whoever allocates the maps zeroes them once. */
 size_t canon_cdag_bits_words(uint32_t n);
 
 /* spec 4.1 Perm(p): "U32(s) followed by s pairs U32(i),U32(p[i]) in increasing i, exactly the
  * moved support ... Reject duplicate sources, fixed pairs, out-of-range targets or a
- * nonbijection."  Reads one Perm at r's position.  `bits` has canon_cdag_bits_words(n) zero
- * words and is zero again on return.  `dense` (n entries, may be NULL) receives p as an image
- * array.  CANON_INVALID_INPUT with *reason on a violation. */
+ * nonbijection."  Reads one Perm at r's position; `bits` under the contract above.  `dense`
+ * (n entries, may be NULL) receives p as an image array.  CANON_INVALID_INPUT with *reason on
+ * a violation. */
 canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bits, uint32_t *dense,
                                   canon_cdag_reason *reason);
 
@@ -88,7 +92,7 @@ canon_status canon_cdag_read_perm(canon_cdag_reader *r, uint32_t n, uint64_t *bi
  * canonical one is decided by re-encoding.  When `gens` is not NULL (degree n) a generating
  * set of H is appended to it: per rule-1 block the transposition of its first two points and
  * the cycle through all its points, per rule-2 entry the permutation; `tmp` has n entries
- * (needed only with gens).  `bits` as for canon_cdag_read_perm. */
+ * (needed only with gens).  `bits` under the contract above. */
 canon_status canon_cdag_read_group(canon_cdag_reader *r, uint32_t n, uint64_t *bits,
                                    canon_perm_table *gens, uint32_t *tmp,
                                    canon_cdag_reason *reason);
@@ -106,8 +110,8 @@ canon_status canon_cdag_read_graph(canon_cdag_reader *r, uint32_t n, canon_graph
  * strictly increasing, positive shortest Nat counts, atoms < n, strict Perm and Group
  * payloads, graph payloads as above), U32(root < q), no trailing bytes.  If expect_n is not
  * NULL, U32(n) must equal *expect_n (CANON_INVALID_INPUT otherwise); n above max_n is
- * CANON_CAPACITY_LIMIT.  out->root is set; the arena is not normalised.  `bits` scratch is
- * allocated internally. */
+ * CANON_CAPACITY_LIMIT.  out->root is set; the arena is not normalised.  The `bits` maps are
+ * allocated (zeroed) internally. */
 canon_status canon_cdag_decode(const uint8_t *stream, size_t length, const uint32_t *expect_n,
                                uint32_t max_n, canon_dag *out, canon_cdag_reason *reason);
 

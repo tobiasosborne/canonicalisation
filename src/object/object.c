@@ -211,7 +211,7 @@ void canon_root_counts(const canon_root *x, uint64_t *nodes, uint64_t *refs,
 }
 
 /* spec 7.1, docs/slices/S5.md 3.4: give the normalised arena d (consumed) its root kind. */
-static canon_status root_from_dag(canon_root *x, canon_dag *d, canon_cdag_reason *reason)
+static canon_status root_from_dag(canon_root *x, canon_dag *d)
 {
     const uint32_t n = d->n;
     const canon_rec *top = &d->recs[d->root];
@@ -235,16 +235,17 @@ static canon_status root_from_dag(canon_root *x, canon_dag *d, canon_cdag_reason
             x->kind = CANON_ROOT_SUBSET;
         }
     } else if (top->tag == CANON_REC_GRAPH) {
-        /* spec 7.1 "a top-level graph": the S2 graph object (its payload is already normalised;
-         * canon_graph_init builds the tables and the CSR/CSC index exactly as the builder) */
-        canon_cdag_reader rd = {canon_dag_payload(d, d->root), top->payload_len, 0};
-        canon_graph_init_empty(&x->u.graph);
-        st = canon_cdag_read_graph(&rd, n, &x->u.graph, reason);
-        if (st == CANON_COMPLETE) {
+        /* spec 7.1 "a top-level graph": the S2 graph object that the normaliser imported
+         * (canon_graph_init: tables, combined sorted arcs, CSR/CSC index, cached stream size,
+         * exactly as the builder) is handed over; the stream is not imported twice (S5 review
+         * item 7) */
+        if (d->graph != NULL) {
+            x->u.graph = *d->graph; /* moved: the arrays now belong to the root */
+            free(d->graph);
+            d->graph = NULL;
             x->kind = CANON_ROOT_GRAPH;
         } else {
-            canon_graph_free(&x->u.graph);
-            x->u.subset = (canon_subset){n, 0, NULL, NULL};
+            st = CANON_INTERNAL_ERROR; /* canon_cdag_import always keeps a graph root's object */
         }
     } else {
         /* spec 7.1: "on every other root it is the empty key": a DAG root keeps its arena */
@@ -273,5 +274,5 @@ canon_status canon_root_import_stream(canon_root *x, uint32_t degree, const uint
         canon_dag_free(&d);
         return st;
     }
-    return root_from_dag(x, &d, reason);
+    return root_from_dag(x, &d);
 }

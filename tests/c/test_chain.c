@@ -546,8 +546,49 @@ static void capacity_and_api(void)
     canon_context_release(ctx);
 }
 
+/* Slice S5 review item 6: the conjugate of a verified chain by g, obtained by relabelling
+ * points, passes the independent verifier against the conjugated inputs, has the same order,
+ * and its members are exactly the conjugates g^-1 h g (spec 2.1). */
+static void conjugation(void)
+{
+    uint32_t checked = 0;
+    for (uint32_t n = 0; n <= 4; ++n) {
+        t1_sym s;
+        t1_sym_init(&s, n);
+        t1_group g[T1_MAX_GROUPS];
+        const uint32_t count = t1_subgroups(&s, g);
+        for (uint32_t gi = 0; gi < count; ++gi) {
+            canon_bsgs c, k;
+            CHECK(canon_bsgs_build_verified(&c, n, g[gi].gens, g[gi].gen_count) == CANON_COMPLETE);
+            for (uint32_t e = 0; e < s.count; ++e) {
+                const uint32_t *x = s.elem[e]; /* the conjugator, any element of Sym(n) */
+                CHECK(canon_bsgs_conjugate(&c, x, &k) == CANON_COMPLETE);
+                CHECK(k.verified && k.order == c.order && k.depth == c.depth);
+                canon_bsgs_reason why = CANON_BSGS_UNCHECKED;
+                CHECK(canon_bsgs_verify(&k, k.inputs.data, k.inputs.count, &why) ==
+                          CANON_COMPLETE &&
+                      why == CANON_BSGS_VALID);
+                for (uint32_t h = 0; h < s.count; ++h) {
+                    uint32_t q[4];
+                    for (uint32_t v = 0; v < n; ++v) {
+                        q[x[v]] = x[s.elem[h][v]]; /* x^-1 h x */
+                    }
+                    bool member = false;
+                    CHECK(canon_bsgs_contains(&k, q, &member) == CANON_COMPLETE);
+                    CHECK(member == ((g[gi].mask >> h & 1u) != 0));
+                }
+                canon_bsgs_free(&k);
+                ++checked;
+            }
+            canon_bsgs_free(&c);
+        }
+    }
+    CHECK(checked == 1 + 1 + 2 * 2 + 6 * 6 + 30 * 24);
+}
+
 int main(void)
 {
+    conjugation();
     conventions();
     t1_tier();
     t2_tier();
