@@ -49,7 +49,7 @@ void canon_p1_scratch_free(canon_p1_scratch *s);
 /* Grow the scratch for refining x (degree x->n; for a graph root, 2e signature entries: each
  * arc is one out-entry of its source and one in-entry of its target).  Grow-only.
  * CANON_CAPACITY_LIMIT on size overflow, CANON_RESOURCE_LIMIT on allocation failure (the
- * scratch then holds no arrays and may be reserved again or freed). */
+ * scratch then keeps its previous arrays and capacities, and may be reserved again or freed). */
 canon_status canon_p1_scratch_reserve(canon_p1_scratch *s, const canon_root *x);
 
 /* spec 7.1: reset P (degree x->n) to the root partition of x: cells of equal initial key ordered
