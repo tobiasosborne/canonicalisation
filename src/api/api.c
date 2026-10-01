@@ -148,9 +148,12 @@ canon_status canon_context_create_with_options(const canon_capacity *defaults,
     if (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT) {
         return CANON_INVALID_INPUT;
     }
-    const canon_capacity builtin = {DEFAULT_MAX_N,           DEFAULT_MAX_GROUP_ORDER,
-                                    DEFAULT_MAX_SEARCH_NODES, DEFAULT_MAX_OUTPUT_BYTES,
-                                    DEFAULT_MAX_NODES,       DEFAULT_MAX_REFS,
+    const canon_capacity builtin = {DEFAULT_MAX_N,
+                                    DEFAULT_MAX_GROUP_ORDER,
+                                    DEFAULT_MAX_SEARCH_NODES,
+                                    DEFAULT_MAX_OUTPUT_BYTES,
+                                    DEFAULT_MAX_NODES,
+                                    DEFAULT_MAX_REFS,
                                     DEFAULT_MAX_LITERAL_BYTES};
     canon_context *ctx = malloc(sizeof *ctx);
     if (ctx == NULL) {
@@ -419,8 +422,8 @@ canon_status canon_object_create(canon_context *ctx, canon_schema schema, canon_
     /* spec 17: copies data; spec 4.1 strict decode, spec 4.2 normalisation, spec 11.1 limits
      * of the normal form against the context defaults, spec 7.1 root kind */
     const canon_dag_limits lim = dag_limits(&ctx->defaults);
-    canon_status st = canon_root_import_stream(&obj->root, degree, stream, stream_length, &lim,
-                                               NULL);
+    canon_status st =
+        canon_root_import_stream(&obj->root, degree, stream, stream_length, &lim, NULL);
     return finish_object(obj, st, out);
 }
 

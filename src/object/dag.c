@@ -110,9 +110,9 @@ static void set_height(canon_dag *d, canon_rec *r)
     r->height = h;
 }
 
-canon_status canon_dag_append(canon_dag *d, uint8_t tag, const uint8_t *payload,
-                              size_t payload_len, const uint32_t *children,
-                              const uint64_t *counts, uint32_t k, uint32_t *index)
+canon_status canon_dag_append(canon_dag *d, uint8_t tag, const uint8_t *payload, size_t payload_len,
+                              const uint32_t *children, const uint64_t *counts, uint32_t k,
+                              uint32_t *index)
 {
     for (uint32_t j = 0; j < k; ++j) {
         if (children[j] >= d->count) {
@@ -505,8 +505,7 @@ static void final_children(canon_dag_scratch *s, uint32_t id)
         s->pairs[j].count = s->nodes.mult[r->child_off + j];
     }
     if (r->tag != CANON_REC_TUPLE) {
-        canon_stable_sort(s->pairs, r->child_count, sizeof *s->pairs, s->pairs_tmp, pair_cmp,
-                          NULL);
+        canon_stable_sort(s->pairs, r->child_count, sizeof *s->pairs, s->pairs_tmp, pair_cmp, NULL);
     }
     for (uint32_t j = 0; j < r->child_count; ++j) {
         s->fchild[r->child_off + j] = s->pairs[j].id;
@@ -560,8 +559,7 @@ static canon_status renumber(canon_dag_scratch *s, canon_dag *out)
             ++hi;
         }
         /* spec 4.2: "within one height sort their exact record bytes" */
-        canon_stable_sort(s->order + lo, hi - lo, sizeof *s->order, s->order_tmp, record_cmp,
-                          &ctx);
+        canon_stable_sort(s->order + lo, hi - lo, sizeof *s->order, s->order_tmp, record_cmp, &ctx);
         for (uint32_t j = lo; j < hi; ++j) {
             /* spec 4.2 "Equal records are one node": interning already merged equal values,
              * and distinct interned nodes have distinct records (distinct tag, payload or
@@ -602,8 +600,7 @@ static canon_status summarise(canon_dag *d)
             !canon_u64_add(d->literal_bytes, (uint64_t)(r->payload_len - 4u), &d->literal_bytes)) {
             return CANON_CAPACITY_LIMIT;
         }
-        d->group_leaves = d->group_leaves || r->tag == CANON_REC_GROUP ||
-                          r->tag == CANON_REC_COSET;
+        d->group_leaves = d->group_leaves || r->tag == CANON_REC_GROUP || r->tag == CANON_REC_COSET;
     }
     d->image_bound = d->stream_size;
     return CANON_COMPLETE;

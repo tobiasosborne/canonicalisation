@@ -119,8 +119,8 @@ static void header(sbuf *s, uint32_t n, uint32_t q)
 
 static canon_status create(uint32_t n, const sbuf *s, canon_object **out)
 {
-    return canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n,
-                               s->b, s->len, out);
+    return canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n, s->b,
+                               s->len, out);
 }
 
 /* spec 7.4: "n=0, x=(b,b), b=empty literal ... Trace equals n=0 case above." */
@@ -169,8 +169,8 @@ static void test_create_statuses(void)
           CANON_UNSUPPORTED_ACTION);
     CHECK(canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 3, buf,
                               len, &x) == CANON_INVALID_INPUT); /* header n = 2 */
-    CHECK(canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 5000,
-                              buf, len, &x) == CANON_CAPACITY_LIMIT); /* above max_n */
+    CHECK(canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 5000, buf,
+                              len, &x) == CANON_CAPACITY_LIMIT); /* above max_n */
     CHECK(canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 2, NULL,
                               len, &x) == CANON_INVALID_INPUT);
     CHECK(canon_object_create(CTX, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 2, buf,
@@ -180,8 +180,9 @@ static void test_create_statuses(void)
     /* relations and nested graphs: recognised, unsupported (later slices) */
     CHECK(from_hex(2, "434e0200010001 00000002 00000001 0a 00000000 00000000", &x) ==
           CANON_UNSUPPORTED_ACTION);
-    CHECK(from_hex(1, "434e0200010001 00000001 00000002 09 00000000 00000000 03 00000001 "
-                      "00000000 00000001",
+    CHECK(from_hex(1,
+                   "434e0200010001 00000001 00000002 09 00000000 00000000 03 00000001 "
+                   "00000000 00000001",
                    &x) == CANON_UNSUPPORTED_ACTION);
     CHECK(x == NULL);
     CHECK(from_hex(2, ok, &x) == CANON_COMPLETE && x != NULL);
@@ -341,7 +342,8 @@ static void random_dag_stream(uint32_t n, sbuf *s)
             u32(&body, (uint32_t)(check_rng() % n));
         } else if (pick == 1 && n > 1) {
             /* Perm of the transposition (a b), a < b */
-            uint32_t a = (uint32_t)(check_rng() % (n - 1)), b = a + 1 + (uint32_t)(check_rng() % (n - 1 - a));
+            uint32_t a = (uint32_t)(check_rng() % (n - 1)),
+                     b = a + 1 + (uint32_t)(check_rng() % (n - 1 - a));
             u8(&body, 0x06);
             u32(&body, 2);
             u32(&body, a);
@@ -357,8 +359,8 @@ static void random_dag_stream(uint32_t n, sbuf *s)
     const uint32_t inner = 1 + (uint32_t)(check_rng() % 3);
     for (uint32_t i = 0; i < inner; ++i, ++q) {
         const uint32_t k = 1 + (uint32_t)(check_rng() % 3);
-        const uint8_t tag = (uint8_t)(i + 1 == inner ? (check_rng() % 2 ? 0x03 : 0x05)
-                                                     : 0x03 + check_rng() % 3);
+        const uint8_t tag =
+            (uint8_t)(i + 1 == inner ? (check_rng() % 2 ? 0x03 : 0x05) : 0x03 + check_rng() % 3);
         u8(&body, tag);
         if (tag == 0x03) {
             u32(&body, k);
@@ -513,17 +515,18 @@ static void test_problem_capacity(canon_workspace *ws)
     canon_object *x = NULL;
     /* ("ab", 0, 1): 4 records, 3 references, 2 literal bytes; stream of 15 + 5 + 5 + 7 + 17 + 4
      * = 53 bytes */
-    CHECK(from_hex(2, "434e0200010001 00000002 00000004 01 00000000 01 00000001 02 00000002 6162 "
-                      "03 00000003 00000002 00000000 00000001 00000003",
+    CHECK(from_hex(2,
+                   "434e0200010001 00000002 00000004 01 00000000 01 00000001 02 00000002 6162 "
+                   "03 00000003 00000002 00000000 00000001 00000003",
                    &x) == CANON_COMPLETE);
     canon_result *r = NULL;
     const struct {
         canon_capacity cap;
         canon_status want;
     } cases[] = {
-        {{0, 0, 0, 0, 3, 0, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 0, 4, 0, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 2, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 0, 0, 3, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 0, 1}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 0, 0, 0, 2}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 3, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 4, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 2, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 3, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 0, 1}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 0, 2}, CANON_COMPLETE},
         {{0, 0, 0, 52, 0, 0, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 53, 0, 0, 0}, CANON_COMPLETE},
     };
     for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i) {

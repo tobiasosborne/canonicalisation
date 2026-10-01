@@ -72,8 +72,8 @@ static void validate_is(const char *hex, canon_status want, int want_reason, int
     canon_cdag_reason reason = CANON_CDAG_OK;
     canon_status st = canon_cdag_validate(buf, len, &WIDE, &reason);
     if (st != want || (want_reason >= 0 && (int)reason != want_reason)) {
-        fprintf(stderr, "line %d: validate status %d reason %d, want %d reason %d\n", line,
-                (int)st, (int)reason, (int)want, want_reason);
+        fprintf(stderr, "line %d: validate status %d reason %d, want %d reason %d\n", line, (int)st,
+                (int)reason, (int)want, want_reason);
         CHECK(0);
     }
 }
@@ -157,9 +157,9 @@ static void test_rejections(void)
     UNSUP("434e03000100010000000000000001", CANON_CDAG_VERSION);
     UNSUP("434e0200020001 00000000 00000001 04 00000000 00000000", CANON_CDAG_SCHEMA_ACTION);
     UNSUP("434e0200010002 00000000 00000001 04 00000000 00000000", CANON_CDAG_SCHEMA_ACTION);
-    BAD(HDR "00000000 00000000 00000000", CANON_CDAG_EMPTY); /* q >= 1 */
+    BAD(HDR "00000000 00000000 00000000", CANON_CDAG_EMPTY);                    /* q >= 1 */
     CAP(HDR "00001001 00000001 04 00000000 00000000", CANON_CDAG_DEGREE_LIMIT); /* n > 4096 */
-    BAD(HDR "00000000 00000005 04 00000000 00000000", CANON_CDAG_TRUNCATED);   /* q too big */
+    BAD(HDR "00000000 00000005 04 00000000 00000000", CANON_CDAG_TRUNCATED);    /* q too big */
     /* tags */
     BAD(HDR "00000002 00000001 ff 00000000 00000000", CANON_CDAG_UNKNOWN_TAG);
     BAD(HDR "00000002 00000001 00 00000000 00000000", CANON_CDAG_UNKNOWN_TAG);
@@ -170,10 +170,8 @@ static void test_rejections(void)
           CANON_CDAG_RELATIONS);
     /* atoms and references */
     BAD(HDR "00000002 00000001 01 00000002 00000000", CANON_CDAG_ATOM_RANGE);
-    BAD(HDR "00000002 00000002 01 00000000 03 00000001 00000001 00000001",
-        CANON_CDAG_FORWARD_REF);
-    BAD(HDR "00000002 00000002 01 00000000 03 00000001 00000002 00000001",
-        CANON_CDAG_FORWARD_REF);
+    BAD(HDR "00000002 00000002 01 00000000 03 00000001 00000001 00000001", CANON_CDAG_FORWARD_REF);
+    BAD(HDR "00000002 00000002 01 00000000 03 00000001 00000002 00000001", CANON_CDAG_FORWARD_REF);
     BAD(HDR "00000002 00000003 01 00000000 01 00000001 04 00000002 00000001 00000000 00000002",
         CANON_CDAG_SET_ORDER);
     BAD(HDR "00000002 00000002 01 00000000 04 00000002 00000000 00000000 00000001",
@@ -290,8 +288,8 @@ static void test_noncanonical(void)
              CANON_CDAG_UNREACHABLE);
     /* the limits apply to the normal form (spec 11.1) */
     uint8_t buf[128];
-    size_t len = unhex(HDR "00000002 00000002 01 00000001 04 00000001 00000000 00000001", buf,
-                       sizeof buf);
+    size_t len =
+        unhex(HDR "00000002 00000002 01 00000001 04 00000001 00000000 00000001", buf, sizeof buf);
     canon_cdag_reason reason = CANON_CDAG_OK;
     canon_dag_limits lim = WIDE;
     lim.max_nodes = 1;
@@ -334,8 +332,8 @@ static void test_mutations(void)
         buf[at] = (uint8_t)(buf[at] ^ (1u << (check_rng() % 8)));
         canon_cdag_reason reason = CANON_CDAG_OK;
         canon_status st = canon_cdag_decode(buf, len, NULL, 4096, &d, &reason);
-        CHECK(st == CANON_COMPLETE || st == CANON_INVALID_INPUT ||
-              st == CANON_UNSUPPORTED_ACTION || st == CANON_CAPACITY_LIMIT);
+        CHECK(st == CANON_COMPLETE || st == CANON_INVALID_INPUT || st == CANON_UNSUPPORTED_ACTION ||
+              st == CANON_CAPACITY_LIMIT);
         CHECK((st == CANON_COMPLETE) == (reason == CANON_CDAG_OK));
         canon_status v = canon_cdag_validate(buf, len, &WIDE, &reason);
         CHECK(v != CANON_INTERNAL_ERROR && (st == CANON_COMPLETE || v == st));
