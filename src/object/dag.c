@@ -597,8 +597,10 @@ static canon_status summarise(canon_dag *d)
     d->group_leaves = false;
     for (uint32_t i = 0; i < d->count; ++i) {
         const canon_rec *r = &d->recs[i];
-        if (r->tag == CANON_REC_LITERAL) {
-            d->literal_bytes += r->payload_len - 4u; /* B(s): |s| = payload - U32 length */
+        /* B(s): |s| = payload - U32 length; the sum is checked (spec 11.1) */
+        if (r->tag == CANON_REC_LITERAL &&
+            !canon_u64_add(d->literal_bytes, (uint64_t)(r->payload_len - 4u), &d->literal_bytes)) {
+            return CANON_CAPACITY_LIMIT;
         }
         d->group_leaves = d->group_leaves || r->tag == CANON_REC_GROUP ||
                           r->tag == CANON_REC_COSET;
@@ -610,6 +612,10 @@ static canon_status summarise(canon_dag *d)
 canon_status canon_dag_normalise(const canon_dag *in, canon_dag *out, canon_dag_scratch *s,
                                  bool leaves_canonical)
 {
+    /* module contract: out is a separate arena, not part of the scratch */
+    if (out == in || out == &s->nodes || out == &s->raw) {
+        return CANON_INVALID_INPUT;
+    }
     canon_dag_reset(out, in->n);
     if (in->count == 0 || in->root >= in->count) {
         return CANON_INVALID_INPUT; /* spec 4.1: q >= 1 and root < q */
@@ -712,6 +718,12 @@ canon_status canon_dag_act(const canon_dag *x, const uint32_t *g, canon_dag *out
                            canon_dag_scratch *s)
 {
     const uint32_t n = x->n;
+    /* module contract: x is a normalised arena (its root is its last record) other than out
+     * and the scratch's arenas */
+    if (out == x || out == &s->nodes || out == &s->raw || x == &s->raw || x == &s->nodes ||
+        x->count == 0 || x->root != x->count - 1u) {
+        return CANON_INVALID_INPUT;
+    }
     canon_status st = reserve_points(s, n);
     if (st != CANON_COMPLETE) {
         return st;

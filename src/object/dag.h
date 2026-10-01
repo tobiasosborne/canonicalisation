@@ -157,8 +157,8 @@ void canon_dag_scratch_free(canon_dag_scratch *s);
  *      are (the action recomputes them itself);
  *   4. numbering by increasing height and, within a height, by exact record bytes with the
  *      already assigned child indices; the root is the last record.
- * Statuses: CANON_INVALID_INPUT for a root out of range, a child reference not smaller than
- * its parent or a malformed leaf payload; CANON_UNSUPPORTED_ACTION for a reachable graph
+ * Statuses: CANON_INVALID_INPUT for out == in or out one of the scratch's arenas, a root out of
+ * range, a child reference not smaller than its parent or a malformed leaf payload; CANON_UNSUPPORTED_ACTION for a reachable graph
  * record other than the root (slice S5 scope); CANON_CAPACITY_LIMIT for a merged multiset count
  * above uint64 (count-bit limit 64, detailed plan 2.1), an order above uint64 or a size that
  * does not fit; CANON_RESOURCE_LIMIT on allocation failure; CANON_INTERNAL_ERROR if an
@@ -172,8 +172,10 @@ canon_status canon_dag_normalise(const canon_dag *in, canon_dag *out, canon_dag_
  * preserved; a permutation leaf p -> g^-1 p g; a subgroup leaf H -> g^-1 H g; a labeling coset
  * H r -> (g^-1 H g)(g^-1 r); leaf payloads are recomputed canonically and the image is
  * re-normalised, since set and multiset child orders change.  g is a permutation of
- * {0..x->n-1}.  Statuses as canon_dag_normalise (a graph record is CANON_INTERNAL_ERROR: graph
- * roots are top-level graphs, src/object/graph.h). */
+ * {0..x->n-1}.  CANON_INVALID_INPUT when x is not normalised (its root is not its last record)
+ * or x or out is one of the scratch's arenas or out == x; otherwise statuses as
+ * canon_dag_normalise (a graph record is CANON_INTERNAL_ERROR: graph roots are top-level
+ * graphs, src/object/graph.h). */
 canon_status canon_dag_act(const canon_dag *x, const uint32_t *g, canon_dag *out,
                            canon_dag_scratch *s);
 
