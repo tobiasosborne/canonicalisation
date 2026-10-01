@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/alloc.h"
+
 /* spec section 3: (pq)[v] = q[p[v]]; p acts first. */
 void canon_perm_compose(const uint32_t *p, const uint32_t *q, uint32_t *out, uint32_t n)
 {
@@ -88,4 +90,52 @@ int canon_perm_validate(const uint32_t *p, uint32_t n)
     int ok = canon_perm_validate_scratch(p, n, bitmap) ? 1 : 0;
     free(bitmap);
     return ok;
+}
+
+/* ---- dense permutation table (perm.h) ---- */
+
+void canon_perm_table_init(canon_perm_table *t, uint32_t n)
+{
+    t->n = n;
+    t->count = 0;
+    t->cap = 0;
+    t->data = NULL;
+}
+
+void canon_perm_table_free(canon_perm_table *t)
+{
+    free(t->data);
+    t->data = NULL;
+    t->count = 0;
+    t->cap = 0;
+}
+
+canon_status canon_perm_table_push(canon_perm_table *t, const uint32_t *p, uint32_t *index)
+{
+    if (t->count == UINT32_MAX) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: row ids are uint32 */
+    }
+    if (t->count == t->cap) {
+        uint32_t new_cap = t->cap < 8u ? 8u : (t->cap > UINT32_MAX / 2u ? UINT32_MAX : t->cap * 2u);
+        size_t words = 0;
+        if (!canon_size_mul((size_t)new_cap, (size_t)t->n, &words)) {
+            return CANON_CAPACITY_LIMIT; /* spec 11.1: checked before allocation */
+        }
+        canon_status st = CANON_COMPLETE;
+        uint32_t *grown = canon_alloc_array(words, sizeof *grown, &st);
+        if (grown == NULL) {
+            return st;
+        }
+        if (t->count > 0 && t->n > 0) {
+            memcpy(grown, t->data, (size_t)t->count * t->n * sizeof *grown);
+        }
+        free(t->data);
+        t->data = grown;
+        t->cap = new_cap;
+    }
+    if (t->n > 0) {
+        memcpy(t->data + (size_t)t->count * t->n, p, (size_t)t->n * sizeof *p);
+    }
+    *index = t->count++;
+    return CANON_COMPLETE;
 }
