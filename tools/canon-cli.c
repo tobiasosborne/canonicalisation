@@ -151,8 +151,12 @@ int main(int argc, char **argv)
             }
         } else if (strcmp(opt, "--id") == 0) {
             id = val;
-            if (*id == '\0' || strpbrk(id, "\t\n\r") != NULL) {
-                return usage("--id must be nonempty without tabs or newlines");
+            /* refs/compare/FORMAT.md: one record per line, TAB-separated, and lines beginning
+             * with '#' are comments, so an id must be nonempty, must not start with '#' and
+             * must not contain TAB, CR or LF. */
+            if (*id == '\0' || *id == '#' || strpbrk(id, "\t\n\r") != NULL) {
+                return usage("--id must be nonempty, not start with '#', and have no tabs or "
+                             "newlines");
             }
         } else {
             return usage("unknown option");

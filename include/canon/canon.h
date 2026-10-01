@@ -128,7 +128,13 @@ canon_status canon_context_create(const canon_capacity *defaults, canon_context 
 void canon_context_release(canon_context *ctx);
 
 /* ---- Retain/release (spec 17: opaque handles; releasing a failed or partial handle is always
- * valid; release of NULL is a no-op; retain of NULL is a no-op). ---- */
+ * valid; release of NULL is a no-op; retain of NULL is a no-op).
+ * Sharing (spec 17: "immutable contexts/registries/groups can be shared"): reference counts
+ * are atomic, so groups, objects, problems and results may be shared between threads for
+ * retain/release and for read-only use (accessors, as arguments to builders and canon_solve).
+ * A count is bookkeeping, not logical state, which is why canon_problem_create may retain
+ * through its const group and object arguments.  A workspace has one active owner at a time;
+ * a context is not reference counted and must outlive only the calls that receive it. ---- */
 void canon_group_retain(canon_group *group);
 void canon_group_release(canon_group *group);
 void canon_object_retain(canon_object *object);

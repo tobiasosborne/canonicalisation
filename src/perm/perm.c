@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* spec section 3: (pq)[v] = q[p[v]]; p acts first. */
 void canon_perm_compose(const uint32_t *p, const uint32_t *q, uint32_t *out, uint32_t n)
@@ -54,31 +55,37 @@ bool canon_perm_is_identity(const uint32_t *p, uint32_t n)
 }
 
 /* spec sections 3, 4.1: range check and injectivity (hence bijectivity on a finite set). */
+bool canon_perm_validate_scratch(const uint32_t *p, uint32_t n, uint64_t *bitmap)
+{
+    size_t words = ((size_t)n + 63u) / 64u; /* no overflow: n <= 2^32 - 1 */
+    if (words > 0) {
+        memset(bitmap, 0, words * sizeof *bitmap);
+    }
+    for (uint32_t v = 0; v < n; ++v) {
+        uint32_t w = p[v];
+        if (w >= n) {
+            return false; /* spec 4.1: out-of-range target */
+        }
+        uint64_t bit = (uint64_t)1 << (w % 64u);
+        if ((bitmap[w / 64u] & bit) != 0) {
+            return false; /* spec 4.1: nonbijection (repeated target) */
+        }
+        bitmap[w / 64u] |= bit;
+    }
+    return true;
+}
+
 int canon_perm_validate(const uint32_t *p, uint32_t n)
 {
     if (n == 0) {
         return 1;
     }
-    /* spec section 11.1: size computed without overflow: ceil(n/64) words, n <= 2^32 - 1. */
     size_t words = ((size_t)n + 63u) / 64u;
-    uint64_t *seen = calloc(words, sizeof *seen);
-    if (seen == NULL) {
+    uint64_t *bitmap = malloc(words * sizeof *bitmap); /* words <= 2^26: no overflow */
+    if (bitmap == NULL) {
         return -1;
     }
-    int ok = 1;
-    for (uint32_t v = 0; v < n; ++v) {
-        uint32_t w = p[v];
-        if (w >= n) {
-            ok = 0; /* spec 4.1: out-of-range target */
-            break;
-        }
-        uint64_t bit = (uint64_t)1 << (w % 64u);
-        if ((seen[w / 64u] & bit) != 0) {
-            ok = 0; /* spec 4.1: nonbijection (repeated target) */
-            break;
-        }
-        seen[w / 64u] |= bit;
-    }
-    free(seen);
+    int ok = canon_perm_validate_scratch(p, n, bitmap) ? 1 : 0;
+    free(bitmap);
     return ok;
 }

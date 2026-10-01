@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "arena/checked.h"
+#include "arena/refcount.h"
 #include "bsgs/explicit.h"
 #include "bsgs/group.h"
 #include "canon/canon.h"
@@ -25,16 +26,23 @@ struct canon_context {
     canon_capacity defaults; /* every field nonzero */
 };
 
-/* S1 objects are subsets only (spec 7.1 top-level subset); S2/S5 add other kinds. */
+/* S1 objects are subsets only (spec 7.1 top-level subset); S2/S5 add other kinds.  Like
+ * canon_group, an object is immutable and shareable, so its reference count is reached through
+ * a pointer (src/arena/refcount.h): retain/release work through a const handle without a
+ * cast.  `block` is the allocation, used only to free it. */
 struct canon_object {
-    size_t refs;
+    canon_refcount *refs; /* = &refs_storage */
+    void *block;          /* = this handle's allocation */
+    canon_refcount refs_storage;
     canon_subset subset;
 };
 
+/* Problems, workspaces and results are retained through non-const handles only, so their
+ * counts are plain atomic members. */
 struct canon_problem {
-    size_t refs;
-    canon_group *group;
-    canon_object *object;
+    canon_refcount refs;
+    const canon_group *group;   /* shared, retained */
+    const canon_object *object; /* shared, retained */
     canon_objective objective;
     canon_profile profile;
     canon_encoding encoding;
@@ -43,12 +51,12 @@ struct canon_problem {
 };
 
 struct canon_workspace {
-    size_t refs;
+    canon_refcount refs;
     canon_p1_search search; /* spec 17: one active owner; storage reused across solves */
 };
 
 struct canon_result {
-    size_t refs;
+    canon_refcount refs;
     canon_status status;
     canon_result_flags flags;
     uint8_t *trace; /* owned copies, never aliasing the workspace */
@@ -106,49 +114,47 @@ void canon_context_release(canon_context *ctx)
     free(ctx);
 }
 
-/* ---- retain/release (spec 17) ---- */
+/* ---- retain/release (spec 17).  Group retain/release live in src/bsgs/group.c. ---- */
 
-void canon_group_retain(canon_group *group)
+/* Add/drop a reference through a const object handle (spec 17: shared immutable inputs). */
+static void object_share(const canon_object *object)
 {
-    if (group != NULL) {
-        group->refs += 1;
+    if (object != NULL) {
+        canon_ref_retain(object->refs);
     }
 }
 
-void canon_group_release(canon_group *group)
+static void object_unshare(const canon_object *object)
 {
-    if (group != NULL && --group->refs == 0) {
-        group->ops->destroy(group);
+    if (object != NULL && canon_ref_release(object->refs)) {
+        canon_object *owned = object->block; /* the allocation, now unreferenced */
+        canon_subset_free(&owned->subset);
+        free(owned);
     }
 }
 
 void canon_object_retain(canon_object *object)
 {
-    if (object != NULL) {
-        object->refs += 1;
-    }
+    object_share(object);
 }
 
 void canon_object_release(canon_object *object)
 {
-    if (object != NULL && --object->refs == 0) {
-        canon_subset_free(&object->subset);
-        free(object);
-    }
+    object_unshare(object);
 }
 
 void canon_problem_retain(canon_problem *problem)
 {
     if (problem != NULL) {
-        problem->refs += 1;
+        canon_ref_retain(&problem->refs);
     }
 }
 
 void canon_problem_release(canon_problem *problem)
 {
-    if (problem != NULL && --problem->refs == 0) {
-        canon_group_release(problem->group);
-        canon_object_release(problem->object);
+    if (problem != NULL && canon_ref_release(&problem->refs)) {
+        canon_group_unshare(problem->group);
+        object_unshare(problem->object);
         free(problem);
     }
 }
@@ -156,13 +162,13 @@ void canon_problem_release(canon_problem *problem)
 void canon_workspace_retain(canon_workspace *workspace)
 {
     if (workspace != NULL) {
-        workspace->refs += 1;
+        canon_ref_retain(&workspace->refs);
     }
 }
 
 void canon_workspace_release(canon_workspace *workspace)
 {
-    if (workspace != NULL && --workspace->refs == 0) {
+    if (workspace != NULL && canon_ref_release(&workspace->refs)) {
         canon_p1_search_free(&workspace->search);
         free(workspace);
     }
@@ -171,13 +177,13 @@ void canon_workspace_release(canon_workspace *workspace)
 void canon_result_retain(canon_result *result)
 {
     if (result != NULL) {
-        result->refs += 1;
+        canon_ref_retain(&result->refs);
     }
 }
 
 void canon_result_release(canon_result *result)
 {
-    if (result != NULL && --result->refs == 0) {
+    if (result != NULL && canon_ref_release(&result->refs)) {
         free(result->trace);
         free(result->bytes);
         free(result->witness);
@@ -224,7 +230,9 @@ canon_status canon_object_create_subset(canon_context *ctx, uint32_t degree,
     if (obj == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
-    obj->refs = 1;
+    obj->block = obj;
+    obj->refs = &obj->refs_storage;
+    canon_ref_init(obj->refs);
     /* spec 17: copies data; spec 4.2: duplicates deduplicated. */
     canon_status st = canon_subset_init(&obj->subset, degree, atoms, count);
     if (st != CANON_COMPLETE) {
@@ -279,13 +287,13 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
     if (pr == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
-    pr->refs = 1;
+    canon_ref_init(&pr->refs);
     /* spec 17: the problem retains its immutable inputs.  The handles are shared, not mutated:
-     * only their reference counts change. */
-    pr->group = (canon_group *)(uintptr_t)group;
-    pr->object = (canon_object *)(uintptr_t)object;
-    canon_group_retain(pr->group);
-    canon_object_retain(pr->object);
+     * only their reference counts (bookkeeping, src/arena/refcount.h) change. */
+    pr->group = group;
+    pr->object = object;
+    canon_group_share(group);
+    object_share(object);
     pr->objective = objective;
     pr->profile = profile;
     pr->encoding = encoding;
@@ -308,7 +316,7 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out)
     if (ws == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
-    ws->refs = 1;
+    canon_ref_init(&ws->refs);
     canon_p1_search_init(&ws->search); /* lazy: arrays are sized on the first solve */
     *out = ws;
     return CANON_COMPLETE;
@@ -320,7 +328,7 @@ static canon_result *new_result(canon_status status)
 {
     canon_result *r = calloc(1, sizeof *r);
     if (r != NULL) {
-        r->refs = 1;
+        canon_ref_init(&r->refs);
         r->status = status; /* spec 3.2: all flags false = unproved */
     }
     return r;
@@ -345,15 +353,8 @@ canon_status canon_solve(canon_workspace *workspace, const canon_problem *proble
     if (workspace == NULL || problem == NULL) {
         return CANON_INVALID_INPUT;
     }
-    /* Defensive re-validation (canon_problem_create already refused these). */
-    if (problem->objective != CANON_OBJECTIVE_CANONICAL_IMAGE ||
-        problem->profile != CANON_PROFILE_P1 || problem->encoding != CANON_ENCODING_CDAG_2 ||
-        problem->order != CANON_ORDER_CDAG_BYTE_1) {
-        return CANON_UNSUPPORTED_ACTION;
-    }
-    if (problem->group->degree != problem->object->subset.n) {
-        return CANON_INVALID_INPUT;
-    }
+    /* Objective, profile, encoding, order and degrees were validated once, in
+     * canon_problem_create; a problem is immutable, so they are not re-checked here. */
     canon_p1_search *s = &workspace->search;
     canon_status st = canon_p1_search_subset(s, problem->group, &problem->object->subset,
                                              problem->capacity.max_search_nodes);

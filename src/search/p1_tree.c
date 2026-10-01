@@ -11,7 +11,6 @@
 void canon_p1_search_init(canon_p1_search *s)
 {
     memset(s, 0, sizeof *s);
-    s->n = UINT32_MAX;
     canon_buf_init(&s->trace);
     canon_buf_init(&s->leaf_bytes);
     canon_buf_init(&s->best_trace);
@@ -32,11 +31,12 @@ static void free_arrays(canon_p1_search *s)
     free(s->best_t);
     s->scratch.fixed = s->scratch.u = s->scratch.orbit = s->scratch.sig = NULL;
     s->snaps = NULL;
-    s->snap_cap = 0;
+    s->snap_alloc = 0;
     s->leaf_t = s->leaf_atoms = s->best_t = NULL;
     s->leaf_bits = NULL;
     s->ready = false;
-    s->n = UINT32_MAX;
+    s->cap = 0;
+    s->n = 0;
 }
 
 void canon_p1_search_free(canon_p1_search *s)
@@ -48,45 +48,53 @@ void canon_p1_search_free(canon_p1_search *s)
     canon_buf_free(&s->best_bytes);
 }
 
-/* Size the per-degree arrays (lazily, on first use of a degree). */
+/* Size the per-point arrays to a capacity that only grows: a solve of degree n <= cap reuses
+ * them; a larger n reallocates them for n.  The snapshot stack keeps its words across degrees
+ * (it is indexed by the current snap_words). */
 static canon_status prepare(canon_p1_search *s, uint32_t n)
 {
-    if (s->ready && s->n == n) {
-        return CANON_COMPLETE;
-    }
-    free_arrays(s);
-    size_t entries = n > 0 ? (size_t)n : 1, bytes = 0, bit_bytes = 0;
-    size_t words = canon_bitset_words(n) > 0 ? canon_bitset_words(n) : 1;
-    if (!canon_size_mul(entries, sizeof(uint32_t), &bytes) ||
-        !canon_size_mul(words, sizeof(uint64_t), &bit_bytes)) {
-        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
-    }
-    canon_status st = canon_partition_init(&s->part, n);
-    if (st != CANON_COMPLETE) {
+    canon_status st = CANON_COMPLETE;
+    if (!s->ready || n > s->cap) {
+        uint32_t *snaps = s->snaps; /* keep the stack: snapshot_slot grows it as needed */
+        size_t snap_alloc = s->snap_alloc;
+        s->snaps = NULL;
         free_arrays(s);
-        return st;
+        s->snaps = snaps;
+        s->snap_alloc = snap_alloc;
+        size_t entries = n > 0 ? (size_t)n : 1, bytes = 0, bit_bytes = 0;
+        size_t words = canon_bitset_words(n) > 0 ? canon_bitset_words(n) : 1;
+        if (!canon_size_mul(entries, sizeof(uint32_t), &bytes) ||
+            !canon_size_mul(words, sizeof(uint64_t), &bit_bytes)) {
+            return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+        }
+        st = canon_partition_init(&s->part, n);
+        if (st != CANON_COMPLETE) {
+            free_arrays(s);
+            return st;
+        }
+        s->scratch.fixed = malloc(bytes);
+        s->scratch.u = malloc(bytes);
+        s->scratch.orbit = malloc(bytes);
+        s->scratch.sig = malloc(bytes);
+        s->leaf_t = malloc(bytes);
+        s->leaf_atoms = malloc(bytes);
+        s->best_t = malloc(bytes);
+        s->leaf_bits = malloc(bit_bytes);
+        if (s->scratch.fixed == NULL || s->scratch.u == NULL || s->scratch.orbit == NULL ||
+            s->scratch.sig == NULL || s->leaf_t == NULL || s->leaf_atoms == NULL ||
+            s->best_t == NULL || s->leaf_bits == NULL) {
+            free_arrays(s);
+            return CANON_RESOURCE_LIMIT;
+        }
+        s->cap = n;
+        s->ready = true;
     }
     st = canon_partition_snapshot_words(n, &s->snap_words);
     if (st != CANON_COMPLETE) {
-        free_arrays(s);
         return st;
     }
-    s->scratch.fixed = malloc(bytes);
-    s->scratch.u = malloc(bytes);
-    s->scratch.orbit = malloc(bytes);
-    s->scratch.sig = malloc(bytes);
-    s->leaf_t = malloc(bytes);
-    s->leaf_atoms = malloc(bytes);
-    s->best_t = malloc(bytes);
-    s->leaf_bits = malloc(bit_bytes);
-    if (s->scratch.fixed == NULL || s->scratch.u == NULL || s->scratch.orbit == NULL ||
-        s->scratch.sig == NULL || s->leaf_t == NULL || s->leaf_atoms == NULL ||
-        s->best_t == NULL || s->leaf_bits == NULL) {
-        free_arrays(s);
-        return CANON_RESOURCE_LIMIT;
-    }
+    canon_partition_set_degree(&s->part, n);
     s->n = n;
-    s->ready = true;
     return CANON_COMPLETE;
 }
 
@@ -94,15 +102,19 @@ static canon_status prepare(canon_p1_search *s, uint32_t n)
  * O(n * depth) words).  The returned pointer is invalidated by the next growth. */
 static canon_status snapshot_slot(canon_p1_search *s, uint32_t depth, uint32_t **slot)
 {
-    if ((size_t)depth >= s->snap_cap) {
-        size_t cap = s->snap_cap == 0 ? 4 : s->snap_cap;
-        while (cap <= (size_t)depth) {
-            if (!canon_size_mul(cap, 2u, &cap)) {
+    size_t need = 0;
+    if (!canon_size_mul((size_t)depth + 1u, s->snap_words, &need)) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    if (need > s->snap_alloc) {
+        size_t words = s->snap_alloc < 64 ? 64 : s->snap_alloc;
+        while (words < need) {
+            if (!canon_size_mul(words, 2u, &words)) {
                 return CANON_CAPACITY_LIMIT;
             }
         }
         size_t bytes = 0;
-        if (!canon_size_mul3(cap, s->snap_words, sizeof(uint32_t), &bytes)) {
+        if (!canon_size_mul(words, sizeof(uint32_t), &bytes)) {
             return CANON_CAPACITY_LIMIT;
         }
         uint32_t *grown = realloc(s->snaps, bytes);
@@ -110,7 +122,7 @@ static canon_status snapshot_slot(canon_p1_search *s, uint32_t depth, uint32_t *
             return CANON_RESOURCE_LIMIT;
         }
         s->snaps = grown;
-        s->snap_cap = cap;
+        s->snap_alloc = words;
     }
     *slot = s->snaps + (size_t)depth * s->snap_words;
     return CANON_COMPLETE;
@@ -214,13 +226,12 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
     }
     canon_partition_save(&s->part, snap);
     const uint32_t lo = s->part.start[target], hi = s->part.start[target + 1];
-    const size_t lab_offset = 1u + (size_t)s->n + 1u; /* lab inside a snapshot */
     /* spec 7.1: "for EACH a in that cell: replace cell C in place by [{a}, C minus {a}];
      * recurse at depth+1, with a fresh node refinement loop".  Members are taken in the cell's
      * current (non-semantic) order from the snapshot. */
     for (uint32_t j = lo; j < hi; ++j) {
         snap = s->snaps + (size_t)depth * s->snap_words; /* the stack may have moved */
-        uint32_t a = snap[lab_offset + j];
+        uint32_t a = canon_partition_snapshot_lab(snap, s->n)[j];
         canon_partition_restore(&s->part, snap); /* spec 11.2 rollback */
         canon_partition_individualise(&s->part, target, a);
         if (depth == UINT32_MAX) {

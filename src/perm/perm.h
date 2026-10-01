@@ -32,10 +32,15 @@ int canon_perm_lex_compare(const uint32_t *a, const uint32_t *b, uint32_t n);
 /* spec section 3: true iff p[v] = v for every v < n (true for n = 0). */
 bool canon_perm_is_identity(const uint32_t *p, uint32_t n);
 
-/* spec sections 3, 4.1 ("reject ... out-of-range targets or a nonbijection"): returns 1 iff p
- * is a bijection of {0..n-1} (every entry < n, no entry repeated), 0 if it is not, and -1 if
- * the O(n)-bit scratch bitmap could not be allocated (the caller maps this to
- * CANON_RESOURCE_LIMIT, spec section 17). */
+/* spec sections 3, 4.1 ("reject ... out-of-range targets or a nonbijection"): true iff p is a
+ * bijection of {0..n-1} (every entry < n, no entry repeated).  `bitmap` is caller scratch of
+ * (n + 63) / 64 words, overwritten (cleared on entry); no allocation, so a caller validating
+ * many permutations allocates it once. */
+bool canon_perm_validate_scratch(const uint32_t *p, uint32_t n, uint64_t *bitmap);
+
+/* As canon_perm_validate_scratch with its own bitmap: returns 1 if p is a bijection, 0 if not,
+ * and -1 if the bitmap could not be allocated (the caller maps this to CANON_RESOURCE_LIMIT,
+ * spec section 17). */
 int canon_perm_validate(const uint32_t *p, uint32_t n);
 
 #endif /* CANON_SRC_PERM_PERM_H */

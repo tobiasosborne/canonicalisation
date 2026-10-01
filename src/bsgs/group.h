@@ -14,11 +14,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arena/refcount.h"
 #include "canon/canon.h"
 
 typedef struct canon_group_ops {
-    /* Free the backend state (called once, when the last reference is released). */
-    void (*destroy)(canon_group *group);
+    /* Free the backend state `impl` (called once, when the last reference is released; the
+     * handle itself is freed by src/bsgs/group.c). */
+    void (*destroy)(void *impl);
     /* spec 9.2: exact group order.  S1 admits orders that fit uint64 only (capacity bound). */
     uint64_t (*order)(const canon_group *group);
     /* spec 9.1: exact membership of the permutation p (length `degree`). */
@@ -36,12 +38,30 @@ typedef struct canon_group_ops {
                               uint32_t *t_out, uint32_t *orbit_id_out);
 } canon_group_ops;
 
-/* The opaque public handle (spec section 17).  `refs` is managed by src/api. */
+/* The opaque public handle (spec section 17).  Create it only with canon_group_alloc, which
+ * establishes the reference-count invariant (one reference, owned by the creator); the fields
+ * below are read-only after creation.  The count is bookkeeping, reached through `refs` so that
+ * a const handle can be shared and retained without a cast (src/arena/refcount.h); `block` is
+ * the allocation that holds the handle, used only to free it. */
 struct canon_group {
     const canon_group_ops *ops;
     uint32_t degree;
-    size_t refs;
-    void *impl; /* backend state */
+    void *impl;                   /* backend state, freed by ops->destroy */
+    canon_refcount *refs;         /* = &refs_storage */
+    void *block;                  /* = this handle's allocation */
+    canon_refcount refs_storage;  /* the count itself; access only through refs */
 };
+
+/* Allocate a group handle for a backend: ops, degree and impl are stored, the count starts at
+ * one.  On CANON_RESOURCE_LIMIT *out is NULL and impl is NOT freed (the backend still owns
+ * it). */
+canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void *impl,
+                               canon_group **out);
+
+/* Add a reference through a const handle (spec 17: immutable groups can be shared). */
+void canon_group_share(const canon_group *group);
+/* Drop a reference through a const handle; the last one frees the backend and the handle.
+ * NULL is a no-op. */
+void canon_group_unshare(const canon_group *group);
 
 #endif /* CANON_SRC_BSGS_GROUP_H */

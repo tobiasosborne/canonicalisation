@@ -6,7 +6,8 @@ model in checks/review_checks.py over the exhaustive T1 subset tier: every subgr
 for n <= 4 and every subset, with two generating sets per group (the full element list and the
 greedy generating sequence of review_checks.run_v2), which must also agree with each other
 (metamorphic test, spec section 5).  Also runs every subset entry of refs/vectors/golden.json
-and checks the spec 11.1 node quota.  Standard library only; requires a prior build.
+and checks the spec 11.1 node quota.  Standard library only.  Without a built CLI the tests
+skip, unless CANON_REQUIRE_CLI=1, which makes them fail.
 """
 import json
 import os
@@ -55,13 +56,23 @@ def witness_field(n, witness):
     return "-" if n == 0 else ",".join(str(v) for v in witness)
 
 
-class CliAvailable(unittest.TestCase):
-    def test_cli_built(self):
-        self.assertTrue(CLI.is_file(), f"canon-cli not found at {CLI}; run `make` or set CANON_CLI")
+# A fresh checkout has no CLI: skip with a clear message so that a standalone
+# `python3 -m unittest discover -s tests/python` passes.  CANON_REQUIRE_CLI=1 (set by
+# `make check`, CMake's test_e2e and CI) turns the skip into a failure.
+REQUIRE_CLI = os.environ.get("CANON_REQUIRE_CLI") == "1"
+MISSING_CLI = (f"canon-cli not found at {CLI}: run `make` (or set CANON_CLI); "
+               "set CANON_REQUIRE_CLI=1 to make this a failure")
 
 
-@unittest.skipUnless(CLI.is_file(), "canon-cli not built (reported by CliAvailable)")
-class T1SubsetTier(unittest.TestCase):
+class CliTestCase(unittest.TestCase):
+    def setUp(self):
+        if not CLI.is_file():
+            if REQUIRE_CLI:
+                self.fail(MISSING_CLI)
+            self.skipTest(MISSING_CLI)
+
+
+class T1SubsetTier(CliTestCase):
     def test_all_subgroups_all_subsets(self):
         cases = 0
         for n in range(5):
@@ -96,8 +107,7 @@ class T1SubsetTier(unittest.TestCase):
         self.assertEqual(cases, 2 * (1 * 1 + 1 * 2 + 2 * 4 + 6 * 8 + 30 * 16))
 
 
-@unittest.skipUnless(CLI.is_file(), "canon-cli not built (reported by CliAvailable)")
-class GoldenSubsetCases(unittest.TestCase):
+class GoldenSubsetCases(CliTestCase):
     def test_golden_subsets(self):
         subset_cases = [c for c in GOLDEN["p1_cases"] if c["object"]["kind"] == "subset"]
         self.assertEqual(len(subset_cases), 4)
@@ -113,8 +123,7 @@ class GoldenSubsetCases(unittest.TestCase):
                                           witness_field(n, case["expected_witness"])])
 
 
-@unittest.skipUnless(CLI.is_file(), "canon-cli not built (reported by CliAvailable)")
-class CliStatuses(unittest.TestCase):
+class CliStatuses(CliTestCase):
     def test_node_quota(self):
         # spec 11.1: the n=2 empty subset under Sym(2) has three NODE tokens.
         code, fields, _ = run_cli(2, [(1, 0)], [], "quota", max_nodes=1)
@@ -133,7 +142,11 @@ class CliStatuses(unittest.TestCase):
     def test_usage_errors(self):
         for args in (["p1-subset"], ["nope", "--n", "1"], ["p1-subset", "--n", "x"],
                      ["p1-subset", "--n", "2", "--gens", "0"],
-                     ["p1-subset", "--n", "2", "--atoms", "a"]):
+                     ["p1-subset", "--n", "2", "--atoms", "a"],
+                     # FORMAT.md treats '#' lines as comments; ids must be nonempty.
+                     ["p1-subset", "--n", "1", "--id", "#c"],
+                     ["p1-subset", "--n", "1", "--id", ""],
+                     ["p1-subset", "--n", "1", "--id", "a\tb"]):
             with self.subTest(args):
                 proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
                                       check=False)
