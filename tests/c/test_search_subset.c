@@ -365,7 +365,15 @@ int main(void)
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
         CHECK(r == NULL);
         cap = (canon_capacity){0, 1, 0, 0};
-        CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
+        /* S3 brief 2.5: max_group_order bounds the explicit backend only, so this S1 check
+         * selects it; the default chain backend admits the problem. */
+        canon_context *ectx = NULL;
+        CHECK(canon_context_create(NULL, &ectx) == CANON_COMPLETE);
+        CHECK(canon_context_set_group_backend(ectx, CANON_BACKEND_EXPLICIT) == CANON_COMPLETE);
+        CHECK(solve_case(ectx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
+        canon_context_release(ectx);
+        CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_COMPLETE);
+        canon_result_release(r);
         cap = (canon_capacity){0, 0, 0, 32}; /* one-atom stream is 33 bytes */
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
         cap = (canon_capacity){0, 0, 0, 33};
@@ -375,6 +383,8 @@ int main(void)
         canon_context *small = NULL;
         canon_capacity d = {1, 1, 0, 0};
         CHECK(canon_context_create(&d, &small) == CANON_COMPLETE);
+        /* S3 brief 2.5: the group-order limit is the explicit backend's (see above). */
+        CHECK(canon_context_set_group_backend(small, CANON_BACKEND_EXPLICIT) == CANON_COMPLETE);
         canon_group *g = (canon_group *)&d;
         canon_object *x = (canon_object *)&d;
         CHECK(canon_group_create(small, 2, swap, 1, &g) == CANON_CAPACITY_LIMIT && g == NULL);
@@ -384,6 +394,10 @@ int main(void)
         d.max_n = 2;
         canon_context_release(small);
         CHECK(canon_context_create(&d, &small) == CANON_COMPLETE);
+        /* The default chain backend ignores max_group_order (S3 brief 2.5). */
+        CHECK(canon_group_create(small, 2, swap, 1, &g) == CANON_COMPLETE);
+        canon_group_release(g);
+        CHECK(canon_context_set_group_backend(small, CANON_BACKEND_EXPLICIT) == CANON_COMPLETE);
         CHECK(canon_group_create(small, 2, id2, 1, &g) == CANON_COMPLETE);
         canon_group_release(g);
         CHECK(canon_group_create(small, 2, swap, 1, &g) == CANON_CAPACITY_LIMIT && g == NULL);

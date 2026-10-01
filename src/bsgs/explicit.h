@@ -6,6 +6,7 @@
 #ifndef CANON_SRC_BSGS_EXPLICIT_H
 #define CANON_SRC_BSGS_EXPLICIT_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,5 +21,9 @@
 canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *generators,
                                          size_t generator_count, uint64_t max_order,
                                          canon_group **out);
+
+/* True iff `group` was created by canon_group_explicit_create (slice S3: the capacity
+ * descriptor's max_group_order applies to this backend only, docs/slices/S3.md 2.5). */
+bool canon_group_is_explicit(const canon_group *group);
 
 #endif /* CANON_SRC_BSGS_EXPLICIT_H */

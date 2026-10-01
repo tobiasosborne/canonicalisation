@@ -2,7 +2,8 @@
 # CMakeLists.txt is a parallel definition of the same targets.
 #   make            build library, checker, canon-cli and C tests
 #   make test       run the C tests
-#   make check      review_checks.py plus the Python tests (vectors, hexdump, CLI end to end)
+#   make check      review_checks.py plus the Python tests (vectors, hexdump, CLI end to end
+#                   with the chain backend, then again with the explicit backend)
 #   make format     clang-format (no-op with a message if unavailable)
 #   make clean
 # Options: CC=clang  SANITIZE=1 (address,undefined)  LTO=1  BUILD=dir
@@ -27,7 +28,9 @@ LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/perm/perm.c src/encoding/wire.c src/encoding/subset_stream.c \
            src/encoding/graph_stream.c src/encoding/simple_upper.c \
            src/object/subset.c src/object/graph.c src/object/object.c \
-           src/bsgs/group.c src/bsgs/explicit.c src/partition/partition.c \
+           src/bsgs/group.c src/bsgs/explicit.c src/bsgs/provenance.c src/bsgs/chain.c \
+           src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c \
+           src/partition/partition.c \
            src/util/sort.c \
            src/refine/p1.c src/search/p1_tree.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
@@ -74,9 +77,12 @@ test: all
 	@set -e; for t in $(TESTS); do echo "run $$t"; $$t; done
 
 # make check builds the CLI first: tests/python/test_e2e.py drives it through CANON_CLI.
+# The discover run uses the default (chain) group backend; the second run repeats the CLI end
+# to end test with the explicit backend (slice S3: both must agree with the model).
 check: $(CLI)
 	nice -n 19 python3 checks/review_checks.py
 	CANON_CLI=$(abspath $(CLI)) CANON_REQUIRE_CLI=1 nice -n 19 python3 -m unittest discover -s tests/python -q
+	CANON_CLI=$(abspath $(CLI)) CANON_REQUIRE_CLI=1 CANON_BACKEND=explicit nice -n 19 python3 tests/python/test_e2e.py
 
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \

@@ -1,10 +1,12 @@
-/* canon-cli: command-line driver for the canon library (slices S1 and S2, docs/slices/S1.md
- * 4.9, S2.md 3.6).
+/* canon-cli: command-line driver for the canon library (slices S1, S2 and S3,
+ * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
  *                       [--max-nodes K] [--id CASE]
  *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."]
  *                       [--arcs "s,t,labelhex,m;..."] [--max-nodes K] [--id CASE]
+ *   both also accept [--backend chain|explicit] (slice S3, docs/slices/S3.md 3): the group
+ *   backend, default chain; the explicit backend is the test oracle.
  *
  * Prints one refs/compare/FORMAT.md record:
  *   CASE \t 0001 \t STATUS \t trace_hex \t bytes_hex \t witness
@@ -32,7 +34,8 @@ static int usage(const char *msg)
             "usage: canon-cli p1-subset --n N [--gens \"a0,a1,...;b0,...\"] [--atoms \"x,y,...\"]\n"
             "                 [--max-nodes K] [--id CASE]\n"
             "       canon-cli p1-graph --n N [--gens \"...\"] [--colours \"hex;hex;...\"]\n"
-            "                 [--arcs \"s,t,labelhex,m;...\"] [--max-nodes K] [--id CASE]\n",
+            "                 [--arcs \"s,t,labelhex,m;...\"] [--max-nodes K] [--id CASE]\n"
+            "       both: [--backend chain|explicit]\n",
             msg);
     return 2;
 }
@@ -274,6 +277,7 @@ int main(int argc, char **argv)
     const char *n_arg = NULL, *gens = "", *atoms_arg = "", *id = argv[1];
     const char *colours_arg = "", *arcs_arg = "";
     uint64_t max_nodes = 0;
+    canon_backend backend = CANON_BACKEND_CHAIN;
     for (int i = 2; i < argc; i += 2) {
         if (i + 1 >= argc) {
             return usage("option without a value");
@@ -292,6 +296,14 @@ int main(int argc, char **argv)
         } else if (strcmp(opt, "--max-nodes") == 0) {
             if (!parse_u64(val, strlen(val), UINT64_MAX, &max_nodes)) {
                 return usage("--max-nodes expects an unsigned decimal");
+            }
+        } else if (strcmp(opt, "--backend") == 0) {
+            if (strcmp(val, "chain") == 0) {
+                backend = CANON_BACKEND_CHAIN;
+            } else if (strcmp(val, "explicit") == 0) {
+                backend = CANON_BACKEND_EXPLICIT;
+            } else {
+                return usage("--backend expects chain or explicit");
             }
         } else if (strcmp(opt, "--id") == 0) {
             id = val;
@@ -370,6 +382,9 @@ int main(int argc, char **argv)
     canon_result *result = NULL;
     canon_capacity cap = {0, 0, max_nodes, 0};
     canon_status st = canon_context_create(NULL, &ctx);
+    if (st == CANON_COMPLETE) {
+        st = canon_context_set_group_backend(ctx, backend);
+    }
     if (st == CANON_COMPLETE) {
         st = canon_group_create(ctx, n, gen, gen_count, &group);
     }

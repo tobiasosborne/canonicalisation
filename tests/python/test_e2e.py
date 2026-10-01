@@ -21,6 +21,11 @@ CLI receives the arcs shuffled, with some multiplicities split into duplicate ar
 must parse with tools/hexdump_stream.py.  Also the spec 7.4 graph entry of golden.json and a
 --max-nodes capacity case.
 
+Slice S3: the group backend is a verified stabiliser chain by default.  Setting
+CANON_BACKEND=explicit (or chain) passes `--backend` to every CLI call, so the whole file runs
+against either backend; `make check` runs it with both, and both runs must agree with the model
+byte for byte.
+
 Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
 makes them fail.
 """
@@ -42,6 +47,17 @@ import hexdump_stream as hs  # noqa: E402  (no side effects on import)
 
 GOLDEN = json.loads((ROOT / "refs" / "vectors" / "golden.json").read_text(encoding="utf-8"))
 CLI = pathlib.Path(os.environ.get("CANON_CLI") or (ROOT / "build" / "make" / "canon-cli"))
+# Slice S3: the group backend under test ("" = the CLI default, the chain).
+BACKEND = os.environ.get("CANON_BACKEND", "")
+if BACKEND not in ("", "chain", "explicit"):
+    raise SystemExit(f"CANON_BACKEND must be chain or explicit, not {BACKEND!r}")
+
+
+def cli(args):
+    """Run canon-cli with the selected backend appended (options may come in any order)."""
+    extra = ["--backend", BACKEND] if BACKEND else []
+    return subprocess.run([str(CLI)] + list(args) + extra, capture_output=True, text=True,
+                          check=False)
 
 
 def gens_arg(n, gens):
@@ -52,11 +68,11 @@ def gens_arg(n, gens):
 
 
 def run_cli(n, gens, atoms, case_id="e2e", max_nodes=None):
-    args = [str(CLI), "p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
+    args = ["p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
             "--atoms", ",".join(str(a) for a in sorted(atoms)), "--id", case_id]
     if max_nodes is not None:
         args += ["--max-nodes", str(max_nodes)]
-    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    proc = cli(args)
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
@@ -66,11 +82,11 @@ def run_graph_cli(n, gens, colours, arcs, case_id="e2e", max_nodes=None):
     """canon-cli p1-graph; colours is a tuple of n byte strings, arcs (s, t, label, m)."""
     colour_arg = "" if all(c == b"" for c in colours) else ";".join(c.hex() for c in colours)
     arc_arg = ";".join(f"{a},{b},{label.hex()},{m}" for a, b, label, m in arcs)
-    args = [str(CLI), "p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
+    args = ["p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
             "--colours", colour_arg, "--arcs", arc_arg, "--id", case_id]
     if max_nodes is not None:
         args += ["--max-nodes", str(max_nodes)]
-    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    proc = cli(args)
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
@@ -279,8 +295,7 @@ class GraphTiers(CliTestCase):
                      ["p1-graph", "--n", "4294967295", "--arcs", "0,1,,1", "--id", "huge"],
                      ["p1-subset", "--n", "4294967295", "--id", "huge"]):
             with self.subTest(args):
-                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
-                                      check=False)
+                proc = cli(args)
                 self.assertEqual(proc.returncode, 3)
                 self.assertEqual(proc.stdout.splitlines(),
                                  ["huge\t0001\tCAPACITY_LIMIT\t\t\t-"])
@@ -301,8 +316,7 @@ class GraphTiers(CliTestCase):
                      ["p1-subset", "--n", "2", "--arcs", "0,1,,1"],        # graph option
                      ["p1-graph", "--n", "1", "--id", "#c"]):
             with self.subTest(args):
-                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
-                                      check=False)
+                proc = cli(args)
                 self.assertEqual(proc.returncode, 2)
                 self.assertEqual(proc.stdout, "")
 
@@ -332,8 +346,7 @@ class CliStatuses(CliTestCase):
                      ["p1-subset", "--n", "1", "--id", ""],
                      ["p1-subset", "--n", "1", "--id", "a\tb"]):
             with self.subTest(args):
-                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
-                                      check=False)
+                proc = cli(args)
                 self.assertEqual(proc.returncode, 2)
                 self.assertEqual(proc.stdout, "")
 
