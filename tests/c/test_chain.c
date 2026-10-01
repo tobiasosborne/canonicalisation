@@ -497,7 +497,7 @@ static void capacity_and_api(void)
         } else {
             /* 21! = 51090942171709440000 > 2^64 - 1: the order does not fit uint64, the
              * count-bit limit of this release (detailed plan 2.1; spec 11.1), so the chain
-             * backend refuses the group.  S4's multi-limb order lifts this. */
+             * backend refuses the group (multi-limb orders are deferred). */
             CHECK(st == CANON_CAPACITY_LIMIT && g == NULL);
         }
         canon_group_release(g);

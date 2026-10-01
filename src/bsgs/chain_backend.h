@@ -15,7 +15,8 @@
  * array of generator_count * degree images (p[v] = v^p); identities and repeats are allowed
  * (degree 0: not read, may be NULL).  Returns CANON_INVALID_INPUT if a generator is not a
  * bijection of the domain, CANON_CAPACITY_LIMIT if |G| exceeds uint64 (spec 11.1 count-bit
- * limit 64, detailed plan 2.1; S4's canon_nat lifts this) or a size does not fit,
+ * limit 64, detailed plan 2.1; the multi-limb canon_nat that would lift this is deferred,
+ * docs/slices/S4-notes.md) or a size does not fit,
  * CANON_RESOURCE_LIMIT on allocation failure, CANON_INTERNAL_ERROR if the independent verifier
  * rejects the constructed chain.  There is no limit on the order other than uint64: the
  * capacity descriptor's max_group_order applies to the explicit backend only (S3 brief 2.5).

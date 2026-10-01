@@ -87,8 +87,8 @@ static void product_side(void)
     canon_bsgs one;
     CHECK(canon_bsgs_build_verified(&one, 2, NULL, 0) == CANON_COMPLETE);
     const uint32_t swap[2] = {1, 0};
-    CHECK(canon_coset_least(&one, 0, swap, NULL, 0, out, &found, NULL) == CANON_COMPLETE &&
-          found && eq(out, swap, 2));
+    CHECK(canon_coset_least(&one, 0, swap, NULL, 0, out, &found, NULL) == CANON_COMPLETE && found &&
+          eq(out, swap, 2));
     canon_bsgs_free(&one);
 }
 
@@ -103,9 +103,9 @@ static void random_constraints(uint32_t n, canon_coset_constraint *cons, uint32_
     }
 }
 
-static void compare_one(const canon_bsgs *c, uint32_t level, const uint32_t *elems,
-                        uint32_t count, uint32_t n, const uint32_t *r,
-                        const canon_coset_constraint *cons, uint32_t k, uint64_t *found_count)
+static void compare_one(const canon_bsgs *c, uint32_t level, const uint32_t *elems, uint32_t count,
+                        uint32_t n, const uint32_t *r, const canon_coset_constraint *cons,
+                        uint32_t k, uint64_t *found_count)
 {
     uint32_t want[MAXN], got[MAXN];
     bool found = false;
@@ -317,8 +317,7 @@ static void invalid(void)
     const canon_coset_constraint bad = {3, 0}, bad_image = {0, 3};
     CHECK(canon_coset_least(&c, 0, NULL, &bad, 1, out, &found, NULL) == CANON_INVALID_INPUT &&
           !found);
-    CHECK(canon_coset_least(&c, 0, NULL, &bad_image, 1, out, &found, NULL) ==
-          CANON_INVALID_INPUT);
+    CHECK(canon_coset_least(&c, 0, NULL, &bad_image, 1, out, &found, NULL) == CANON_INVALID_INPUT);
     CHECK(canon_coset_least(&c, c.depth + 1, NULL, NULL, 0, out, &found, NULL) ==
           CANON_INVALID_INPUT);
     /* two images for one point: empty, not invalid */

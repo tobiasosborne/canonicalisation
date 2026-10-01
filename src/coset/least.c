@@ -32,7 +32,7 @@ typedef struct least_scratch {
     uint32_t *mark;  /* n: visit stamps for the orbit traversal */
     uint32_t *order; /* n: orbit points sorted by image (least_outside) */
     uint32_t *sort_tmp;
-    uint32_t *g;     /* n: sift residue (least_outside) */
+    uint32_t *g; /* n: sift residue (least_outside) */
     uint32_t stamp;
 } least_scratch;
 

@@ -21,9 +21,9 @@
 
 /* How a Group(H) payload was produced (tests and the notes' counters). */
 typedef struct canon_group_bytes_stats {
-    uint32_t rule;     /* 1 (orbit blocks) or 2 (greedy generator sequence) */
-    uint32_t k;        /* blocks (rule 1) or generators (rule 2) */
-    uint64_t k_builds; /* rule 2: verified rebuilds of K */
+    uint32_t rule;           /* 1 (orbit blocks) or 2 (greedy generator sequence) */
+    uint32_t k;              /* blocks (rule 1) or generators (rule 2) */
+    uint64_t k_builds;       /* rule 2: verified rebuilds of K */
     canon_coset_stats coset; /* descents and transient rebuilds */
 } canon_group_bytes_stats;
 

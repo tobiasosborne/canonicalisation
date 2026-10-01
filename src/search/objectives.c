@@ -68,9 +68,9 @@ typedef struct obj_ctx {
     const canon_root *y; /* transporter target; for the stabiliser, x itself */
     canon_order order;
     bool deterministic;
-    bool have;          /* minimum: an incumbent exists; transporter: a hit was found */
-    canon_bsgs *a;      /* stabiliser: verified chain of A_known */
-    uint32_t a_count;   /* generators inserted into A_known (rows of s->agens) */
+    bool have;        /* minimum: an incumbent exists; transporter: a hit was found */
+    canon_bsgs *a;    /* stabiliser: verified chain of A_known */
+    uint32_t a_count; /* generators inserted into A_known (rows of s->agens) */
 } obj_ctx;
 
 /* spec 8.2 Minimum: "Compare the exact selected order key of x^r; retain the least.  Exhaust
@@ -334,8 +334,7 @@ canon_status canon_obj_run(canon_obj_search *s, const canon_group *g, const cano
 }
 
 canon_status canon_obj_deterministic_witness(canon_obj_search *s, const canon_group *g,
-                                             const canon_root *x, const uint32_t *t,
-                                             uint64_t quota)
+                                             const canon_root *x, const uint32_t *t, uint64_t quota)
 {
     memset(&s->stats, 0, sizeof s->stats);
     if (g->degree != x->n) {
