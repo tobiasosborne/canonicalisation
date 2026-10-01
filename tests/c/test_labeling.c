@@ -15,7 +15,8 @@
  *    payload (every k for n <= 3, a fifth of G for n = 4); coordinate rename by one mu per case
  *    keeps c and gives mu^-1 lambda (spec 3.1);
  *  - a graph and a nested object; verify_witness (and tampered t, lambda); validation, quota,
- *    workspace reuse. */
+ *    workspace reuse; the consumer's module contract and counters on T1 (printed for
+ *    docs/slices/S6-notes.md). */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +24,10 @@
 #include "bsgs/group.h"
 #include "canon/canon.h"
 #include "check.h"
+#include "object/object.h"
 #include "perm/perm.h"
+#include "search/objectives.h"
+#include "search/p1_tree.h"
 #include "t1_groups.h"
 
 static canon_context *ctx_of[2]; /* chain, explicit */
@@ -493,6 +497,7 @@ static void checks_and_errors(void)
     memcpy(lambda, l0, sizeof l0);
     verify_ok(r);
     canon_result_release(r); /* the problem was already released: the result kept rho */
+    CHECK(canon_result_labeling(NULL, &deg) == NULL && deg == 0);
 
     /* validation (canon.h order): missing rho, rho for another objective, non-bijective rho,
      * profile NO_TREE, a deterministic witness */
@@ -551,6 +556,75 @@ static void checks_and_errors(void)
     canon_object_release(x);
 }
 
+/* Counters of the labeling consumer on every T1 group, subset and rho (chain backend; printed
+ * for docs/slices/S6-notes.md). */
+static void counters(void)
+{
+    uint64_t runs = 0, p1 = 0, visits = 0, hits = 0, builds = 0, descents = 0;
+    canon_obj_search s;
+    canon_p1_search p1s;
+    canon_obj_search_init(&s);
+    canon_p1_search_init(&p1s);
+    for (uint32_t n = 0; n <= 4; ++n) {
+        t1_sym sym;
+        t1_sym_init(&sym, n);
+        t1_group groups[T1_MAX_GROUPS];
+        const uint32_t ng = t1_subgroups(&sym, groups);
+        for (uint32_t gi = 0; gi < ng; ++gi) {
+            canon_group *g = group_of(0, n, groups[gi].gens, groups[gi].gen_count);
+            for (uint32_t mask = 0; mask < (1u << n); ++mask) {
+                uint32_t atoms[4], k = 0;
+                for (uint32_t a = 0; a < n; ++a) {
+                    if (mask >> a & 1u) {
+                        atoms[k++] = a;
+                    }
+                }
+                canon_root x;
+                memset(&x, 0, sizeof x);
+                x.kind = CANON_ROOT_SUBSET;
+                x.n = n;
+                CHECK(canon_subset_init(&x.u.subset, n, atoms, k) == CANON_COMPLETE);
+                for (uint32_t ri = 0; ri < sym.count; ++ri) {
+                    canon_obj_outcome o;
+                    CHECK(canon_obj_labeling(&s, &p1s, g, &x, sym.elem[ri], 1u << 20, &o) ==
+                          CANON_COMPLETE);
+                    CHECK(o.labeling && o.group && o.p1 && o.sign == 0);
+                    runs += 1;
+                    p1 += s.stats.p1_nodes;
+                    visits += s.stats.nodes;
+                    hits += s.stats.hits;
+                    builds += s.stats.stab_builds;
+                    descents += s.stats.coset.descents;
+                }
+                canon_subset_free(&x.u.subset);
+            }
+            canon_group_release(g);
+        }
+    }
+    /* module contract: rho must be a bijection */
+    canon_obj_outcome o;
+    canon_group *g = group_of(0, 2, NULL, 0);
+    canon_root x;
+    memset(&x, 0, sizeof x);
+    x.kind = CANON_ROOT_SUBSET;
+    x.n = 2;
+    CHECK(canon_subset_init(&x.u.subset, 2, NULL, 0) == CANON_COMPLETE);
+    const uint32_t bad[2] = {1, 1};
+    CHECK(canon_obj_labeling(&s, &p1s, g, &x, bad, 10, &o) == CANON_INVALID_INPUT);
+    CHECK(canon_obj_labeling(&s, &p1s, g, &x, NULL, 10, &o) == CANON_INVALID_INPUT);
+    CHECK(!o.flags.witness_valid && !o.labeling);
+    CHECK(canon_obj_signed(&s, &p1s, g, &x, 10, &o) == CANON_UNSUPPORTED_ACTION); /* unsigned */
+    canon_subset_free(&x.u.subset);
+    canon_group_release(g);
+    canon_obj_search_free(&s);
+    canon_p1_search_free(&p1s);
+    printf("T1 labeling consumer (%llu runs, one workspace): P1 nodes %llu, stabiliser visits "
+           "%llu, hits %llu, verified A rebuilds %llu, descents %llu (one conjugated group per "
+           "run)\n",
+           (unsigned long long)runs, (unsigned long long)p1, (unsigned long long)visits,
+           (unsigned long long)hits, (unsigned long long)builds, (unsigned long long)descents);
+}
+
 int main(void)
 {
     const canon_context_options chain = {CANON_BACKEND_CHAIN}, expl = {CANON_BACKEND_EXPLICIT};
@@ -562,6 +636,7 @@ int main(void)
     t1_tier();
     other_kinds();
     checks_and_errors();
+    counters();
     canon_context_release(ctx_of[0]);
     canon_context_release(ctx_of[1]);
     return check_finish("test_labeling");

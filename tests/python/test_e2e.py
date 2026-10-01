@@ -1,5 +1,5 @@
-"""End-to-end test of the slice S1 to S5 C paths (docs/slices/S1.md section 5, S2.md section 4,
-S4.md section 4, S5.md section 4).
+"""End-to-end test of the slice S1 to S6 C paths (docs/slices/S1.md section 5, S2.md section 4,
+S4.md section 4, S5.md section 4, S6.md section 4).
 
 Drives tools/canon-cli (located through the CANON_CLI environment variable, else
 build/make/canon-cli) and compares its refs/compare/FORMAT.md records with the finite Python
@@ -52,6 +52,24 @@ leaves, with the least t attaining it.  Every canonical output must pass `canon-
 own normal form.  The enumeration objectives run on some D1 objects against brute force.  The
 malformed streams of tools/hexdump_stream.py's rule list are refused by the tool and by the
 CLI alike.
+
+Slice S6 (class LabelingAndSigned), on the T1 subsets and the G1 digraphs under both backends:
+  L1 CANONICAL_LABELING_COSET (`canon-cli labeling --rho`) for every rho in Sym(n): lambda lies
+     in G rho, c, the trace and t equal review_checks.p1 on the transformed problem
+     (x^rho, rho^-1 G rho), the payload equals group_bytes(A) + perm_bytes(min(A lambda)), and,
+     as in review_checks.run_v2's labeling loop, A lambda is the set of labelings in G rho
+     taking x to c, a representative change k rho (k in G) keeps c, the trace and the payload,
+     and a coordinate rename by mu keeps c with lambda_new = mu^-1 lambda (for n = 4 these two
+     run on two seeded rho per case);
+  Z1 SIGNED_CANONICAL_IMAGE (`canon-cli signed --signs`) for every sign vector on the greedy
+     generators: the non-characters are INVALID_INPUT; for every character (the sign tables of
+     the vector, equal to review_checks.characters where that enumeration is affordable,
+     |G| <= 12) and every object: zero iff an odd stabiliser element exists, with the exact
+     certificate (the first odd generator on the spec 7.3 fast path, else the first odd hit of
+     the spec 8.1 traversal); a nonzero sign equals chi[t] with c, the trace and t of the
+     unsigned P1 image and group_hex = group_bytes(A); covariance s(x^h) = chi(h) s(x) with c
+     unchanged (every h, three seeded h for n = 4); the cross-feed s(C(x)) = +1 (spec 20).
+Every canonical output of both tiers passes `canon-cli validate` and tools/hexdump_stream.py.
 
 Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
 makes them fail.
@@ -1317,6 +1335,340 @@ class NestedObjects(CliTestCase):
                 self.assertEqual(proc.returncode, 2)
                 self.assertIn(message, proc.stderr)
 
+
+
+# ---- Slice S6: labeling cosets and signed images (docs/slices/S6.md section 4) ----
+
+
+def conjugate_group(group, rho):
+    """spec 3.1: G' = rho^-1 G rho (rho^-1 acts first, spec 3), as a set."""
+    rho_inv = rc.inverse(rho)
+    return frozenset(rc.mul(rc.mul(rho_inv, g), rho) for g in group)
+
+
+def fixes(n, kind, x, g):
+    return rc.act_object(kind, x, g) == x if kind == "subset" else \
+        object_bytes(n, kind, rc.act_object(kind, x, g)) == object_bytes(n, kind, x)
+
+
+def stabiliser_of(n, group, kind, x):
+    return frozenset(g for g in group if fixes(n, kind, x, g))
+
+
+def sign_tables(group, gens, n):
+    """Every sign vector on the generators and its sign table, by a walk of the Cayley graph
+    from the identity (sign(e g_k) = sign(e) s_k); the table is None when two signs meet, i.e.
+    when the vector is not a character (spec 8.4: "Arbitrary signs attached to generators are
+    not automatically a well-defined character")."""
+    identity = tuple(range(n))
+    out = []
+    for signs in product((1, -1), repeat=len(gens)):
+        table, todo, ok = {identity: 1}, [identity], True
+        while todo and ok:
+            e = todo.pop()
+            for g, sgn in zip(gens, signs):
+                f = rc.mul(e, g)
+                if f not in table:
+                    table[f] = table[e] * sgn
+                    todo.append(f)
+                elif table[f] != table[e] * sgn:
+                    ok = False
+        out.append((signs, table if ok else None))
+    return out
+
+
+def signs_arg(signs):
+    return "".join("-" if s < 0 else "+" for s in signs)
+
+
+class LabelingAndSigned(CliTestCase):
+    """S6 tiers L1 (CANONICAL_LABELING_COSET, spec 3.1, 8.2) and Z1 (SIGNED_CANONICAL_IMAGE,
+    spec 8.4, 7.3) on the T1 subsets and the G1 digraphs, against the constructions of
+    review_checks.run_v2: its labeling loop (lambda = rho t on the transformed problem, A
+    lambda the complete set of labelings, representative change, coordinate rename) and its
+    signed loop (zero iff an odd stabiliser element exists, covariance), with the model's
+    characters."""
+
+    def setUp(self):
+        super().setUp()
+        self.p1_cache = {}
+        self.validated = set()
+
+    def p1(self, n, group, kind, x):
+        key = (n, group, kind, x)
+        if key not in self.p1_cache:
+            self.p1_cache[key] = rc.p1(n, group, kind, x)
+        return self.p1_cache[key]
+
+    def check_stream(self, data):
+        """canon_stream_validate and the hexdump tool on every canonical output (cached)."""
+        if data not in self.validated:
+            self.assertEqual(validate_cli(data), "COMPLETE")
+            hs.parse_stream(data)
+            self.validated.add(data)
+
+    def run_ok(self, cmd, n, gens, kind, x, extra, cid):
+        code, fields, proc = run_objective(cmd, n, gens, kind, x, None, extra, cid)
+        self.assertEqual(code, 0, proc.stderr)
+        self.assertIsNotNone(fields, proc.stdout)
+        self.assertEqual(fields[2], "COMPLETE")
+        return fields
+
+    # -- L1 --
+
+    def labeling_case(self, n, group, gens, kind, x, rho, cid, rng, extras=True):
+        """One labeling problem and, with `extras`, a representative change and a rename."""
+        # spec 3.1: x' = x^rho, G' = rho^-1 G rho, P1 on D_n for t, lambda = rho t
+        target = conjugate_group(group, rho)
+        transformed = rc.act_object(kind, x, rho)
+        trace, data, t = self.p1(n, target, kind, transformed)
+        lam = rc.mul(rho, t)
+        self.assertIn(lam, {rc.mul(g, rho) for g in group})  # lambda in G rho
+        self.assertEqual(object_bytes(n, kind, rc.act_object(kind, x, lam)), data)
+        stab = stabiliser_of(n, group, kind, x)
+        coset = {rc.mul(a, lam) for a in stab}
+        # run_v2: the complete set of labelings in G rho taking x to c is A lambda
+        self.assertEqual(coset, {rc.mul(g, rho) for g in group
+                                 if object_bytes(n, kind, rc.act_object(kind, x, rc.mul(g, rho)))
+                                 == data})
+        payload = rc.group_bytes(stab) + rc.perm_bytes(min(coset))
+        rho_arg = ("--rho", ",".join(map(str, rho)))
+        f = self.run_ok("labeling", n, gens, kind, x, rho_arg, cid)
+        self.assertEqual(f[1:], ["0005", "COMPLETE", trace.hex(), data.hex(),
+                                 witness_field(n, lam), payload.hex()])
+        self.check_stream(data)
+        runs = 1
+        if not extras:
+            return runs
+        # representative change rho' = k rho, k in G: same c, trace and coset payload
+        k = rng.choice(sorted(group))
+        rho2 = rc.mul(k, rho)
+        f2 = self.run_ok("labeling", n, gens, kind, x, ("--rho", ",".join(map(str, rho2))),
+                         cid + "-k")
+        self.assertEqual(f2[3:5] + f2[6:], [trace.hex(), data.hex(), payload.hex()])
+        self.assertIn(parse_witness(n, f2[5]), {rc.mul(g, rho) for g in group})
+        # coordinate rename by mu: x^mu, mu^-1 G mu, mu^-1 rho; same target problem, so the
+        # same c and t, lambda_new = mu^-1 lambda, A_new = mu^-1 A mu
+        symmetric = tuple(permutations(range(n)))
+        mu = rng.choice(symmetric)
+        mu_inv = rc.inverse(mu)
+        x3 = rc.act_object(kind, x, mu)
+        gens3 = [rc.mul(rc.mul(mu_inv, g), mu) for g in gens]
+        rho3 = rc.mul(mu_inv, rho)
+        self.assertEqual(rc.act_object(kind, x3, rho3), transformed)  # run_v2's assertion
+        stab3 = frozenset(rc.mul(rc.mul(mu_inv, a), mu) for a in stab)
+        lam3 = rc.mul(mu_inv, lam)
+        payload3 = rc.group_bytes(stab3) + rc.perm_bytes(min(rc.mul(a, lam3) for a in stab3))
+        f3 = self.run_ok("labeling", n, gens3, kind, x3, ("--rho", ",".join(map(str, rho3))),
+                         cid + "-mu")
+        self.assertEqual(f3[3:], [trace.hex(), data.hex(), witness_field(n, lam3),
+                                  payload3.hex()])
+        return runs + 2
+
+    def test_l1_t1_subsets(self):
+        # every subgroup of Sym(n), n <= 4, every subset, every rho; the representative change
+        # and the rename run for every rho when n <= 3 and for two seeded rho per case when
+        # n = 4 (S6 notes: run time)
+        rng = random.Random(6001)
+        cases = runs = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for mask in range(1 << n):
+                    x = frozenset(a for a in range(n) if mask >> a & 1)
+                    extra = set(range(len(symmetric))) if n < 4 else \
+                        set(rng.sample(range(len(symmetric)), 2))
+                    for ri, rho in enumerate(symmetric):
+                        cid = f"l1-n{n}-g{gi}-m{mask}-r{ri}"
+                        with self.subTest(cid):
+                            runs += self.labeling_case(n, group, gens, "subset", x, rho, cid,
+                                                       rng, extras=ri in extra)
+                        cases += 1
+        # subgroups times subsets times labelings: 1, 1 * 2 * 1, 2 * 4 * 2, 6 * 8 * 6, 30 * 16 * 24
+        self.assertEqual(cases, 1 + 2 + 2 * 4 * 2 + 6 * 8 * 6 + 30 * 16 * 24)
+        # one run per case, two more per case with extras (all of n <= 3, two per n = 4 case)
+        self.assertEqual(runs, cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
+
+    def test_l1_g1_digraphs(self):
+        # the G1 digraphs (n <= 2, every subgroup, every multiplicity vector, both colourings)
+        # under every rho
+        rng = random.Random(6002)
+        cases = 0
+        for n in range(3):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for multiplicities, distinct in product(product(range(3), repeat=n * n),
+                                                        (False, True)):
+                    colours = tuple(bytes([a % 2]) if distinct else b"" for a in range(n))
+                    arcs = tuple((a, b, b"", multiplicities[a * n + b])
+                                 for a in range(n) for b in range(n)
+                                 if multiplicities[a * n + b])
+                    for ri, rho in enumerate(symmetric):
+                        cid = "l1g-n%d-g%d-m%s-c%d-r%d" % (
+                            n, gi, "".join(map(str, multiplicities)), distinct, ri)
+                        with self.subTest(cid):
+                            self.labeling_case(n, group, gens, "graph", (colours, arcs), rho,
+                                               cid, rng, extras=ri == 0)
+                        cases += 1
+        self.assertEqual(cases, 2 * (1 + 3 + 2 * 81 * 2))
+
+    def test_l1_golden_and_usage(self):
+        # spec 7.4: "If Omega=(a,b), rho=[1,0], G=1, x={a}, then t=id on D_2 and lambda=rho,
+        # c={1}, A lambda={rho}; returning id as the source labeling is wrong."
+        payload = next(gp["payload_hex"] for gp in GOLDEN["group_payload_cases"]
+                       if gp["kind"] != "Group")
+        f = self.run_ok("labeling", 2, [], "subset", frozenset({0}), ("--rho", "1,0"), "lg")
+        self.assertEqual(f[4:], [rc.subset_bytes(2, frozenset({1})).hex(), "1,0", payload])
+        # a non-bijective rho is INVALID_INPUT; a missing or short rho a usage error
+        code, f, _ = run_objective("labeling", 2, [], "subset", frozenset(), None,
+                                   ("--rho", "0,0"), "lb")
+        self.assertEqual((code, f), (3, ["lb", "0005", "INVALID_INPUT", "", "", "-", "-"]))
+        for args in (["labeling", "--n", "2"], ["labeling", "--n", "2", "--rho", "1"],
+                     ["labeling", "--n", "2", "--rho", "1,0,2"],
+                     ["p1-subset", "--n", "2", "--rho", "1,0"],
+                     ["signed", "--n", "2", "--gens", "1,0"],
+                     ["signed", "--n", "2", "--gens", "1,0", "--signs", "+-"],
+                     ["signed", "--n", "2", "--gens", "1,0", "--signs", "x"],
+                     ["labeling", "--n", "2", "--rho", "1,0", "--signs", "-"]):
+            with self.subTest(args):
+                proc = cli(args)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+
+    # -- Z1 --
+
+    def signed_expect(self, n, group, gens, chi, kind, x):
+        """The expected record fields 3.. of `canon-cli signed` (spec 8.4, 7.3)."""
+        stab = stabiliser_of(n, group, kind, x)
+        if all(fixes(n, kind, x, g) for g in gens):
+            # spec 7.3 fast path: A = G; any odd generator proves zero (the first one)
+            odd = next((g for g in gens if chi[g] < 0), None)
+        else:
+            # spec 8.4: the stabiliser enumeration stops at the first odd hit of the spec 8.1
+            # traversal
+            leaves, _ = enumerate_81(group, n)
+            odd = next((g for g in leaves if g in stab and chi[g] < 0), None)
+        has_odd = any(chi[a] < 0 for a in stab)
+        self.assertEqual(odd is not None, has_odd)  # zero iff A has an odd element
+        if odd is not None:
+            return ["", "00", witness_field(n, odd) + ";sign=0", "-"], 0, None
+        trace, data, t = self.p1(n, group, kind, x)
+        s = chi[t]
+        return ([trace.hex(), data.hex(), witness_field(n, t) + ";sign=%+d" % s,
+                 rc.group_bytes(stab).hex()], s, data)
+
+    def signed_case(self, n, group, gens, signs, chi, kind, x, cid, hs_):
+        f = self.run_ok("signed", n, gens, kind, x, ("--signs", signs_arg(signs)), cid)
+        expect, s, data = self.signed_expect(n, group, gens, chi, kind, x)
+        self.assertEqual(f[1:3] + f[3:], ["0007", "COMPLETE"] + expect)
+        if data is not None:
+            self.check_stream(data)
+        # covariance (spec 8.4): s(x^h) = chi(h) s(x), c unchanged
+        for h in hs_:
+            xh = rc.act_object(kind, x, h)
+            fh = self.run_ok("signed", n, gens, kind, xh, ("--signs", signs_arg(signs)),
+                             cid + "-h")
+            sign_h = int(fh[5].split(";sign=")[1])
+            self.assertEqual(sign_h, chi[h] * s)
+            if s != 0:
+                self.assertEqual(fh[4], f[4])
+        if s != 0:
+            # cross-feed (spec 20): the returned monomial C(x) has sign +1 and C(C(x)) = C(x)
+            c_obj = rc.act_object(kind, x, parse_witness(n, f[5].split(";")[0]))
+            fc = self.run_ok("signed", n, gens, kind, c_obj, ("--signs", signs_arg(signs)),
+                             cid + "-c")
+            self.assertEqual((fc[4], fc[5].split(";sign=")[1]), (f[4], "+1"))
+        return s
+
+    def characters_of(self, group, gens, n):
+        tables = sign_tables(group, gens, n)
+        chars = [(signs, t) for signs, t in tables if t is not None]
+        if len(group) <= 12:
+            # the model's characters (review_checks.characters) are exactly these tables
+            model = sorted(sorted(c.items()) for c in rc.characters(group))
+            self.assertEqual(sorted(sorted(t.items()) for _, t in chars), model)
+        return tables, chars
+
+    def test_z1_t1_subsets(self):
+        rng = random.Random(6003)
+        cases = zeros = invalid = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                tables, chars = self.characters_of(group, gens, n)
+                for signs, table in tables:
+                    if table is None:
+                        # spec 8.4: "Reject inconsistent signs as INVALID_INPUT"
+                        code, f, _ = run_objective("signed", n, gens, "subset", frozenset(), None,
+                                                   ("--signs", signs_arg(signs)), "zi")
+                        self.assertEqual((code, f[2:]),
+                                         (3, ["INVALID_INPUT", "", "", "-", "-"]))
+                        invalid += 1
+                for ci, (signs, chi) in enumerate(chars):
+                    for mask in range(1 << n):
+                        x = frozenset(a for a in range(n) if mask >> a & 1)
+                        members = sorted(group)
+                        hs_ = members if n < 4 else rng.sample(members, min(3, len(members)))
+                        cid = f"z1-n{n}-g{gi}-c{ci}-m{mask}"
+                        with self.subTest(cid):
+                            zeros += self.signed_case(n, group, gens, signs, chi, "subset", x,
+                                                      cid, hs_) == 0
+                        cases += 1
+        self.assertGreater(invalid, 0)
+        self.assertTrue(0 < zeros < cases)
+
+    def test_z1_g1_digraphs(self):
+        cases = zeros = 0
+        for n in range(3):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                _, chars = self.characters_of(group, gens, n)
+                for ci, (signs, chi) in enumerate(chars):
+                    for multiplicities, distinct in product(product(range(3), repeat=n * n),
+                                                            (False, True)):
+                        colours = tuple(bytes([a % 2]) if distinct else b"" for a in range(n))
+                        arcs = tuple((a, b, b"", multiplicities[a * n + b])
+                                     for a in range(n) for b in range(n)
+                                     if multiplicities[a * n + b])
+                        cid = "z1g-n%d-g%d-c%d-m%s-c%d" % (
+                            n, gi, ci, "".join(map(str, multiplicities)), distinct)
+                        with self.subTest(cid):
+                            zeros += self.signed_case(n, group, gens, signs, chi, "graph",
+                                                      (colours, arcs), cid, sorted(group)) == 0
+                        cases += 1
+        # n = 0 and n = 1: one group with the trivial character, 1 and 3 multiplicity vectors;
+        # n = 2: the trivial group (one character) and Sym(2) (two), 81 vectors; two colourings
+        self.assertEqual(cases, 2 * 1 + 2 * 3 + 2 * 81 * 3)
+        self.assertTrue(0 < zeros < cases)
+
+    def test_z1_golden(self):
+        # spec 7.4: "For n=2 empty subset with transposition character -1, [1,0] fixes x and
+        # certifies signed zero.  For x={0} in the same signed group, A=1, P1 returns {1} with
+        # sign -1; {1} returns itself with sign +1."
+        cases = [(frozenset(), "00", "1,0;sign=0"),
+                 (frozenset({0}), rc.subset_bytes(2, frozenset({1})).hex(), "1,0;sign=-1"),
+                 (frozenset({1}), rc.subset_bytes(2, frozenset({1})).hex(), "0,1;sign=+1")]
+        for x, data, witness in cases:
+            f = self.run_ok("signed", 2, [(1, 0)], "subset", x, ("--signs", "-"), "zg")
+            self.assertEqual(f[4:6], [data, witness])
+        # the identity marked odd, and one generator listed twice with both signs, are
+        # inconsistent (spec 8.4; review_checks: "An identity generator marked odd gives a
+        # forbidden projection kernel")
+        for gens, signs in (([(0, 1)], "-"), ([(1, 0), (1, 0)], "+-")):
+            code, f, _ = run_objective("signed", 2, gens, "subset", frozenset(), None,
+                                       ("--signs", signs), "zi")
+            self.assertEqual((code, f[2]), (3, "INVALID_INPUT"))
+        # spec 11.1: the quota counts the stabiliser enumeration (3 visits for Sym(2)) and the
+        # P1 NODE tokens (1 for {0}: the root is discrete)
+        code, f, _ = run_objective("signed", 2, [(1, 0)], "subset", frozenset({0}), None,
+                                   ("--signs", "-", "--max-nodes", "3"), "zq")
+        self.assertEqual((code, f[2:]), (3, ["CAPACITY_LIMIT", "", "", "-", "-"]))
+        code, f, _ = run_objective("signed", 2, [(1, 0)], "subset", frozenset({0}), None,
+                                   ("--signs", "-", "--max-nodes", "4"), "zq")
+        self.assertEqual(f[2], "COMPLETE")
 
 if __name__ == "__main__":
     unittest.main()
