@@ -168,31 +168,49 @@ static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop
     }
     s->stats.hits += 1;
     bool inserted = false;
-    st = canon_bsgs_insert_verified(c->a, c->agens, r, s->work, &inserted);
-    s->stats.stab_builds += inserted;
-    if (st != CANON_COMPLETE || !inserted || c->group == NULL) {
+    if (c->group == NULL) {
+        st = canon_bsgs_insert_verified(c->a, c->agens, r, s->work, &inserted);
+        s->stats.stab_builds += inserted;
         return st;
     }
     /* spec 8.4 (S6): "enumerate the stabiliser as in §8.2, stopping immediately if an odd
-     * witness is verified".  chi is evaluated only on hits that were not yet in A_known (S6
-     * review item 1): every inserted generator is checked even, so A_known is even throughout
-     * and an odd hit is never a member of it; the first odd hit is therefore the same as with a
-     * test on every hit.  r is in G (a leaf of G's enumeration) and fixes x (the exact test
-     * above), so chi(r) = -1 makes it a complete one-sided zero certificate ("If a in A and
-     * chi(a) = -1, then [x] = -[x], hence [x] = 0 over Q").  On exhaustion every generator of
-     * A was checked here, which is spec 8.4's "check chi=+1 on its generators". */
+     * witness is verified".  Membership in A_known first (the chain's one sift rule,
+     * canon_bsgs_contains_scratch; A_known is the verified chain this module builds, whatever
+     * the backend of G), then chi only on non-members, and only an even non-member is inserted
+     * (S6 follow-up to review item 1).  Every generator of A_known was checked even before its
+     * insertion and chi is a homomorphism, so A_known is even throughout and an odd hit is never
+     * a member of it: skipping chi on members loses no odd hit, and the first odd hit is the
+     * same as with a test on every hit.  r is in G (a leaf of G's enumeration) and fixes x (the
+     * exact test above), so chi(r) = -1 makes it a complete one-sided zero certificate ("If a
+     * in A and chi(a) = -1, then [x] = -[x], hence [x] = 0 over Q"); it is not inserted, so it
+     * costs no verified rebuild.  On exhaustion every generator of A was checked here, which is
+     * spec 8.4's "check chi=+1 on its generators". */
+    if (canon_bsgs_contains_scratch(c->a, r, s->work)) {
+        return CANON_COMPLETE; /* already in A_known, hence even */
+    }
     int sign = 0;
     st = c->group->ops->character(c->group, r, s->chi, &sign);
     s->stats.characters += 1;
     if (st == CANON_INVALID_INPUT) {
         return CANON_INTERNAL_ERROR; /* a leaf of G's enumeration is in G */
     }
-    if (st == CANON_COMPLETE && sign < 0) {
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    if (sign < 0) {
         if (c->x->n > 0) {
             memcpy(s->best, r, (size_t)c->x->n * sizeof *s->best);
         }
-        c->have = true; /* A_known now holds r; it is discarded with the run */
+        c->have = true; /* A_known (even, without r) is discarded with the run */
         *stop = true;
+        return CANON_COMPLETE;
+    }
+    /* spec 8.2 "insert every hit into a verified subgroup": an even non-member, so the sift
+     * inside canon_bsgs_insert_verified finds it absent again and it is always inserted */
+    st = canon_bsgs_insert_verified(c->a, c->agens, r, s->work, &inserted);
+    s->stats.stab_builds += inserted;
+    if (st == CANON_COMPLETE && !inserted) {
+        return CANON_INTERNAL_ERROR; /* the membership test above said non-member */
     }
     return st;
 }
