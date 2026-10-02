@@ -1,6 +1,6 @@
 # S8 reading: the spec's batch semantics (`canon_solve_batch`)
 
-**Status: reading for maintainer review; no code.** `canon_solve_batch` stays a stub returning `CANON_UNSUPPORTED_ACTION` (`src/api/stubs.c`). This note records what `docs/specification.md` v2.0 pins about batch solving, what it leaves open, and what S8 must decide before implementing it.
+**Status: reading; decided by the maintainer on 2 October 2026 (§5); no code.** `canon_solve_batch` stays a stub returning `CANON_UNSUPPORTED_ACTION` (`src/api/stubs.c`). This note records what `docs/specification.md` v2.0 pins about batch solving, what it leaves open, and what S8 must decide before implementing it.
 
 ## 1. Every sentence that mentions batches
 
@@ -38,7 +38,28 @@ Plans (process, not normative):
 
 ## 4. Recommendation for S8
 
+*Superseded by §5 (2 October 2026); kept as the record of what was recommended.*
+
 - Decide items 1-3 in the S8 brief and send them as v2.1 spec items; the simplest reading consistent with §17 is: call-level `INVALID_INPUT` (no results written beyond NULL/`INVALID_INPUT` fill) only for NULL workspace/arrays or size overflow; otherwise every input is attempted in order, `statuses[i]`/`results[i]` exactly as `canon_solve` would give for that input alone, and the call returns `COMPLETE` iff it ran to the end (per-input failures live only in `statuses[]`).
 - Pin byte identity: under `CALLER_THREADS` a batch must reproduce, input by input, the status, flags, trace, bytes and witness of separate `canon_solve` calls (PROFILE-EQUIV); test this on T1 for every objective, plus a batch of 0 and a batch with one invalid input.
 - Decide admission scope (item 4) together with the ledger: per-input admission keeps §11.1's per-problem determinism trivially; a batch-wide reservation must still yield per-input verdicts independent of order.
 - Keep cancellation (item 2) and pool execution (item 6) out of the first `solve_batch`; land the sequential path first, with the pool behind the same contract in M6.
+
+## 5. Decided (2 October 2026)
+
+The maintainer's decision (D12) settles §3 items 1, 3, 4 (admission and quota scope), 5 and 6, and the non-cancellation part of 2; whether `CANCELLED` (§14.3) on one input cancels the rest is not decided. The contract now lives in `docs/specification.md` §17 v2.1, which is normative; this section restates it and supersedes §4.
+
+1. **Call-level rejection.** `canon_solve_batch` rejects the whole batch with `INVALID_INPUT`, writing nothing, only for a NULL workspace, NULL `problems`/`results`/`statuses` arrays with `count > 0`, or a `count` whose byte size overflows.
+2. **Per-input attempt.** Otherwise every input is attempted in caller order, and `statuses[i]`/`results[i]` are exactly what `canon_solve` would return for that input alone. A NULL entry in `problems[]` gives `INVALID_INPUT` for that entry only.
+3. **Return status.** The call returns `COMPLETE` iff every input was attempted; per-input failures appear only in `statuses[]`.
+4. **Admission and quota.** Capacity admission and the quota are per input.
+5. **Execution mode.** Under `CALLER_THREADS` the batch runs sequentially on the one workspace; pool execution (§14.1) must reproduce the same statuses and bytes.
+
+Tests S8 must carry:
+
+- A batch of 0 inputs.
+- Byte identity with separate `canon_solve` calls on every T1 objective (status, flags, trace, bytes and witness, input by input).
+- One invalid input among valid ones: only its status is `INVALID_INPUT`; the others are unaffected and the call returns `COMPLETE`.
+- A NULL entry in `problems[]`: `INVALID_INPUT` for that entry only.
+- A NULL array with `count > 0`: rejected at call level with `INVALID_INPUT`, nothing written.
+- Per-input `CAPACITY_LIMIT`: a tiny quota on one input only gives `CAPACITY_LIMIT` for that input, with every other input's status and bytes unchanged.
