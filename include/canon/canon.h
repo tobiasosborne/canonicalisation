@@ -1,7 +1,7 @@
 /*
  * canon.h: public C17 API of the canon library (opaque handles only).
  *
- * Normative text: docs/specification.md v2.0.  Sections cited below refer to it.
+ * Normative text: docs/specification.md v2.1 (v2.0 plus the 2 October 2026 editorial decisions).  Sections cited below refer to it.
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *

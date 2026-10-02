@@ -26,7 +26,7 @@ static int failures;
 int main(void)
 {
     CHECK(CANON_VERSION_MAJOR == 0 && CANON_VERSION_MINOR == 0 && CANON_VERSION_PATCH == 1);
-    CHECK(strcmp(CANON_SPEC_VERSION, "2.0") == 0);
+    CHECK(strcmp(CANON_SPEC_VERSION, "2.1") == 0);
     CHECK(canon_version() == (uint32_t)CANON_VERSION_PACK(0, 0, 1));
     CHECK(strcmp(canon_version_string(), "0.0.1") == 0);
 

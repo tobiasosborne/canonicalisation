@@ -1,4 +1,4 @@
-/* Version constants for the canon library.  Governing text: docs/specification.md (v2.0). */
+/* Version constants for the canon library.  Governing text: docs/specification.md (v2.1). */
 #ifndef CANON_CANON_VERSION_H
 #define CANON_CANON_VERSION_H
 
@@ -7,7 +7,7 @@
 #define CANON_VERSION_PATCH 1
 
 /* Version of docs/specification.md that this tree targets. */
-#define CANON_SPEC_VERSION "2.0"
+#define CANON_SPEC_VERSION "2.1"
 
 /* Must agree with MAJOR.MINOR.PATCH above (checked by tests/c/test_version.c). */
 #define CANON_VERSION_STRING "0.0.1"
