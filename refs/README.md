@@ -4,6 +4,8 @@
 
 **Layout.** `ref-a/`, `ref-b/` (the blind implementations), `oracle/` (exhaustive enumeration), `compare/` (interchange format and comparison script), `vectors/` (machine-readable golden cases from spec §7.4).
 
+**Brief and schema.** `BRIEF.md` is the brief handed to a blind reference author (ref-b in Julia). `CASES.md` documents the JSON case-input schema (the existing `vectors/golden.json` `p1_cases` form plus the provisional WP0.2 fields).
+
 ## The blind protocol
 
 1. **ref-a and ref-b are written by different people or agents, from the specification alone** (`docs/specification.md`: §§3, 4, 7, 8, 11, 17 at minimum). They share **no code**.
