@@ -1,8 +1,20 @@
 # A native C engine for canonicalisation under permutation groups
 
-**Architecture and implementation specification · 30 September 2026 · version 2.0**
+**Architecture and implementation specification · 2 October 2026 · version 2.1**
 
-Prepared for Tobias J. Osborne. Reviewed baseline: **v1.0**, 29 September 2026, commit **`7ad98cb`**, SHA-256 **`924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`**. The [referee report](../reviews/referee-report.md) remains a historical record. The [response](../reviews/review-response.md) maps its 18 findings and TensorGR T1–T14 to this revision; the [implementation plan](implementation-plan.md) defines future gates.
+Prepared for Tobias J. Osborne. Reviewed baseline: **v1.0**, 29 September 2026, commit **`7ad98cb`**, SHA-256 **`924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`**. Revision of v2.0 (30 September 2026, commit **`cb76c0d`**). The [referee report](../reviews/referee-report.md) remains a historical record. The [response](../reviews/review-response.md) maps its 18 findings and TensorGR T1–T14 to this revision; the [implementation plan](implementation-plan.md) defines future gates.
+
+**Revision v2.1** (2 October 2026):
+
+- §3.1: the reported complete stabiliser of a labeling is A on Ω, not A′; the signed labeling orientation σ_ρ is deferred (`UNSUPPORTED_ACTION` permitted).
+- §3.2: status numeric values 0…7 in the listed order, frozen for the C ABI.
+- §4.4: for n≤1 the `SIMPLE-UPPER-1` key is exactly `U32(n)`.
+- §7.4: (0,2)^(pq)=(2,1) is stated as cycle conjugation.
+- §8.2: the labeling objective computes and reports A on the source domain Ω.
+- §9.1: the verifier checks level nesting of strong generator sets.
+- §9.4: rule 1 blocks are disjoint and ordered (decoders reject otherwise); Group(1)=`01 00000000` at every degree n.
+- §11.1: the logical work quota counts the profile-fixed traversal; default 2²⁰.
+- §17: the `solve_batch` contract.
 
 This is an executable design specification, not a claim that C code, Lean proofs, benchmarks or the release gates already exist. Estimates below are engineering judgments. Native C means a C17 library with controlled allocation and ordinary OS services, not a freestanding kernel.
 
@@ -62,13 +74,15 @@ A deterministic witness is optional metadata: minimise the image array among all
 
 Let Ω be the source, D_n={0,…,n−1} the ordered target, ρ:Ω→D_n a bijection, and Λ=Gρ. Compute x′=x^ρ and G′=ρ⁻¹Gρ ≤ Sym(D_n). Solve on D_n for t∈G′; return **λ=ρt:Ω→D_n**, c=(x^ρ)^t=x^λ. Since t=ρ⁻¹gρ, λ=gρ∈Λ. λ is not generally an element of G. The complete set of labelings taking x to c is **Aλ**: if κ∈Λ and x^κ=c, κλ⁻¹∈A, and conversely every aλ works.
 
-For μ:Ω→Ω′, use x^μ, Λ_new=μ⁻¹Λ and output μ⁻¹λ, with A_new=μ⁻¹Aμ. If ρ_new=kρ, k∈G, G′ is unchanged and x^ρ_new is in the same G′ orbit, hence the canonical target bytes are unchanged. A′ on the target reconstructs to A=ρA′ρ⁻¹. Each view retains its source/target domain handle and explicit bijection; never cast a labeling as an endomorphism.
+For μ:Ω→Ω′, use x^μ, Λ_new=μ⁻¹Λ and output μ⁻¹λ, with A_new=μ⁻¹Aμ. If ρ_new=kρ, k∈G, G′ is unchanged and x^ρ_new is in the same G′ orbit, hence the canonical target bytes are unchanged. A′ on the target reconstructs to A=ρA′ρ⁻¹; the reported complete stabiliser is A on Ω, never A′ (§8.2). Each view retains its source/target domain handle and explicit bijection; never cast a labeling as an endomorphism.
 
 The same reconstruction applies to signed problems using χ′(ρ⁻¹gρ)=χ(g). Supply an orientation σ_ρ∈{±1} with the convention [x]=σ_ρ[x^ρ]; return s=σ_ρχ′(t). On replacing ρ by kρ, set σ_(kρ)=χ(k)σ_ρ. On a pure coordinate rename μ use the same orientation for μ⁻¹ρ. These rules make the reconstructed sign independent of the labeling representative. An arbitrary bijection has no intrinsic χ value outside G.
 
+The signed labeling orientation σ_ρ is deferred: an implementation may return `UNSUPPORTED_ACTION` for a signed labeling problem until it supports σ_ρ; M0 references return `UNSUPPORTED_ACTION`.
+
 ### 3.2 Completion versus validity
 
-Status is a separate enum: `COMPLETE`, `CANCELLED`, `CAPACITY_LIMIT`, `RESOURCE_LIMIT`, `INVALID_INPUT`, `UNSUPPORTED_ACTION`, `OUTPUT_ERROR`, `INTERNAL_ERROR`. It is never encoded as a sign. Each result independently records `witness_valid`, `image_canonical`, `minimum_proved`, `subgroup_verified`, `stabiliser_complete`, `transport_exhausted`, `zero_certified`, `nonzero_certified`, and `encoding_complete`. False means unproved, not mathematically false.
+Status is a separate enum: `COMPLETE`, `CANCELLED`, `CAPACITY_LIMIT`, `RESOURCE_LIMIT`, `INVALID_INPUT`, `UNSUPPORTED_ACTION`, `OUTPUT_ERROR`, `INTERNAL_ERROR`. Their numeric values are 0…7 in this listed order (`COMPLETE`=0 … `INTERNAL_ERROR`=7) and are frozen for the C ABI. It is never encoded as a sign. Each result independently records `witness_valid`, `image_canonical`, `minimum_proved`, `subgroup_verified`, `stabiliser_complete`, `transport_exhausted`, `zero_certified`, `nonzero_certified`, and `encoding_complete`. False means unproved, not mathematically false.
 
 Interrupted results may contain a valid candidate or verified subgroup. `COMPLETE` is relative to the requested objective: a positive transporter witness needs no negative-search coverage; an empty transporter, minimum, canonical image, nonzero sign or complete stabiliser needs its applicable coverage evidence. A zero certificate can complete signed search early without a canonical monomial. Incomplete bytes cannot be used as a canonical database key.
 
@@ -128,7 +142,7 @@ For a nonzero signed result the payload is the canonical monomial bytes; the ret
 
 ### 4.4 A second frozen minimum order
 
-`SIMPLE-UPPER-1` (order `0x0002`) is available only for uncoloured simple undirected graphs (empty vertex/arc labels, no loops, and exactly one arc in each direction for each edge): `U32(n)` followed by upper-triangle bits in order (0,1),(0,2),(1,2),(0,3),…; pack most significant bit first, pad the final byte with zero low bits. Compare unsigned bytes. It is the minimum-search order; return the selected graph in CDAG-2 plus its order key. The fixed n header and padding cannot change comparisons within an orbit.
+`SIMPLE-UPPER-1` (order `0x0002`) is available only for uncoloured simple undirected graphs (empty vertex/arc labels, no loops, and exactly one arc in each direction for each edge): `U32(n)` followed by upper-triangle bits in order (0,1),(0,2),(1,2),(0,3),…; pack most significant bit first, pad the final byte with zero low bits. For n≤1 there are no triangle bits and no padding byte: the key is exactly `U32(n)`. Compare unsigned bytes. It is the minimum-search order; return the selected graph in CDAG-2 plus its order key. The fixed n header and padding cannot change comparisons within an orbit.
 
 Its first k(k−1)/2 bits are zero in some relabeling exactly when an independent k-set exists. An all-zero prefix beats every prefix containing one; thus computing this minimum for G=Sym(n) decides Independent Set. This proves the public minimum interface includes NP-hard cases using the local Karp source (§23). It proves neither that arbitrary canonical-image output is NP-hard, nor an unconditional exponential bound, nor the same reduction for CDAG-BYTE-1.
 
@@ -233,7 +247,7 @@ For the second case CDAG-BYTE-1 minimum is {0}, with identity witness, whereas P
 
 Hand-checked group payloads: `Group(1)=01 00000000`; on degree two, `Group(Sym(2))=01 00000001 00000002 00000000 00000001`. On degree three, C₃ generated by [1,2,0] is not the full symmetric group on its orbit; its greedy sequence has just [1,2,0], so `Group(C₃)=00 00000001 00000003 00000000 00000001 00000001 00000002 00000002 00000000`. For a labeling-coset payload on degree two, H=1 and r=[1,0] give `01 00000000 00000002 00000000 00000001 00000001 00000000` (Group then Perm). Each support pair lists source then target.
 
-Public convention vectors use p=[1,0,2], q=[0,2,1]: pq=[2,0,1], qp=[1,2,0], p⁻¹=p, and (0,2)^(pq)=(2,1). If Ω=(a,b), ρ=[1,0], G=1, x={a}, then t=id on D_2 and λ=ρ, c={1}, Aλ={ρ}; returning id as the source labeling is wrong. Under μ swapping source coordinates, μ⁻¹ρ=id and the same target c results.
+Public convention vectors use p=[1,0,2], q=[0,2,1]: pq=[2,0,1], qp=[1,2,0], p⁻¹=p, and (0,2)^(pq)=(2,1). The last is cycle conjugation: the cycle (a b) maps to (a^(pq) b^(pq)). If Ω=(a,b), ρ=[1,0], G=1, x={a}, then t=id on D_2 and λ=ρ, c={1}, Aλ={ρ}; returning id as the source labeling is wrong. Under μ swapping source coordinates, μ⁻¹ρ=id and the same target c results.
 
 Wrapper gates must add graph loops/duplicate arcs, multiset counts, subgroup/coset presentations, free versus dummy tensor indices, error/status and ownership vectors before exposing those entry points. The vectors here pin the core, not the correctness of an unimplemented tensor reduction. Blind implementations must derive them from the rules, not copy expected constants (§20).
 
@@ -263,7 +277,7 @@ Any transporter t_b suffices for coverage; the least choice freezes reference tr
 | Transporter one | Test exact x^r=y; stop successfully on one hit. Declare empty only after exhaustion. |
 | Stabiliser | Test x^r=x; insert every hit into a verified subgroup. Exhaustion proves every member of A was inserted and no other one was. |
 | Transporter coset | Find one g, then run complete stabiliser consumer for x; return A g. All solutions r satisfy r g⁻¹∈A. If no g, return exhausted empty. |
-| Canonical labeling coset | Run §7 on target coordinates, then complete stabiliser; reconstruct §3.1 and return Aλ. |
+| Canonical labeling coset | Run §7 on target coordinates, then complete stabiliser; reconstruct §3.1 and return Aλ. A is computed and reported on the source domain Ω (A=Aut_G(x)≤Sym(Ω)); its conjugate A′=ρ⁻¹Aρ on D_n is not the reported group. |
 | Constraint one/enumeration | Evaluate the registered total Boolean predicate P(r); stop on first hit, or emit each hit exactly once and exhaust. No closure or coset claim follows from an arbitrary P. |
 
 For internal subgroup intersection H∩K, enumerate H and test K-membership. For a normaliser inside ambient G enumerate G and test g⁻¹Hg=H. For subgroup conjugacy to K enumerate G and test g⁻¹Hg=K; the complete solution, when nonempty, is N_G(H)g. Coset intersections can use a known ambient enumeration with exact membership in both. These deliberately slow services specify reference semantics; specialised public APIs beyond `CONSTRAINT_*` are deferred until their cost/certificate gates. Predicate enumeration remains available within capacities. Callback nontermination is not repaired by finite group coverage.
@@ -296,7 +310,7 @@ For ordered base (0,…,n−1), use a deterministic Schreier construction. At a 
 
 The practical deterministic closure constructor sifts residues into lower levels, inserts failed residues with straight-line provenance, recomputes affected orbits/Schreier checks, and repeats until all checks pass. Each insertion must strictly enlarge the represented subgroup at a deficient level; finite subgroup growth bounds termination. A randomised constructor may propose the same data but exact verification is mandatory. The implementation milestone must fix insertion/rebuild policies and their operation bounds before performance claims.
 
-The independent verifier checks input bijections, each generator's derivation from the original input, base-prefix fixation, orbit reachability via stored tree edges, orbit closure under level generators, transversal images, all Schreier residues' membership in the certified next subgroup, input-generator membership at the root, and terminal triviality. Induction gives both inclusions at every level and completeness. Testing only input generators against a guessed chain is insufficient.
+The independent verifier checks input bijections, each generator's derivation from the original input, base-prefix fixation, orbit reachability via stored tree edges, orbit closure under level generators, transversal images, all Schreier residues' membership in the certified next subgroup, input-generator membership at the root, and terminal triviality. It also checks nesting: the strong generators certified at level i+1 are a subset of those at level i (as sets of image arrays), so K_(i+1)≤K_i is part of the certificate; without it a chain for Sym(3) of order 4 passes every other listed check. Induction gives both inclusions at every level and completeness. Testing only input generators against a guessed chain is insufficient.
 
 ### 9.2 Costs, provenance and operations
 
@@ -314,7 +328,7 @@ Dense permutations use uint32 images; tagged identities, sparse support and exac
 
 Use this deterministic priority, never whichever representation the caller supplied:
 
-1. Compute the H-orbits on the ordered domain. H embeds in the product of symmetric groups on those orbits. If its exact order equals the product of orbit factorials, equality follows by finite containment. Encode `01 || U32(k)` followed by each non-singleton orbit as `U32(size), U32(points...)`; points increase, blocks order by least point. Omit singleton orbits. This includes trivial H as `01 00000000`, including n=0,1.
+1. Compute the H-orbits on the ordered domain. H embeds in the product of symmetric groups on those orbits. If its exact order equals the product of orbit factorials, equality follows by finite containment. Encode `01 || U32(k)` followed by each non-singleton orbit as `U32(size), U32(points...)`; points increase, blocks order by least point. Omit singleton orbits. This includes trivial H as `01 00000000`, including n=0,1. Blocks are pairwise disjoint and ordered by least point; a decoder rejects overlapping or unordered blocks as `INVALID_INPUT`. Group(1) is `01 00000000` for every degree n (rule 1 with zero non-singleton orbits); the payload does not carry n, and decoders take n from context.
 2. Otherwise encode `00 || U32(k) || Perm(g_1)...Perm(g_k)`. Start K=1; repeatedly choose the lexicographically least image-array g∈H\K and set K←⟨K,g⟩ until K=H. This canonical sequence depends only on H. Each step at least doubles |K|, so k≤floor(log₂|H|)≤log₂(n!)≤n log₂ n for n≥2; n=0,1 use rule 1. Sparse Perm records have at most n pairs, hence O(n² log n) point entries in the worst case.
 
 To find the least outside element without enumerating H, descend in point-image lexicographic order through exact constrained cosets. For C=Jr, C⊆K iff r∈K and J≤K; discard exactly these branches and choose the least surviving point-image branch. Every level fixes another point; complete membership/containment and stabiliser operations make this constructive. The [local canonical-generators lemma](../review_sources/algorithms/1803.06858v1/articles/canonization.tex), lines 140–175, supports this approach; the proof above fixes our product convention and subgroup variant.
@@ -339,7 +353,7 @@ The initial machine API uses 0≤n,N≤2³²−1, uint32 IDs/counts for wire lis
 
 A problem-time capacity descriptor fixes degree/node/reference/literal/output/count-bit limits. Validation is deterministic over the normalised input. For data-dependent output size, use a count-only canonical traversal/encoder or a conservative input-derived bound; the same policy must be used across executions. Exceeding that policy yields `CAPACITY_LIMIT`, a function of semantic input, objective and descriptor, independent of worker count or lucky early discovery. An API promising this property may conservatively reject an instance with a smaller actual output.
 
-Requested managed-memory budgets use a deterministic admission plan: reserve a complete serial reference workspace plus bounded output/verification buffers; run optional work only from separate reserved slack. Spill/recompute/serialise before declaring a budget failure. A logical work quota, if offered, counts the fixed reference traversal (including regions physically pruned) or is omitted; wall-time/observed-node cutoffs are cancellation policies, not semantic capacity. A remaining unforeseen allocation failure is `RESOURCE_LIMIT` with cause `EXTERNAL_ALLOCATION`, and no claim of schedule-independent OS availability. Never let race-dependent transient peaks cause a purported input-capacity failure.
+Requested managed-memory budgets use a deterministic admission plan: reserve a complete serial reference workspace plus bounded output/verification buffers; run optional work only from separate reserved slack. Spill/recompute/serialise before declaring a budget failure. A logical work quota, if offered, counts the nodes of the traversal fixed by the profile's policy for the objective: P1 `NODE` tokens plus §8.1 enumerator visits; the §7.3 root shortcuts are part of profile P1's policy and visit no tree nodes. A pruning policy that changes the count carries its own profile ID (PROFILE-EQUIV) and must give the same count in every execution mode and worker count. The count is a function of input, objective, descriptor and profile. The default quota when none is given is 2²⁰ (matching `include/canon/canon.h`). Wall-time/observed-node cutoffs are cancellation policies, not semantic capacity. A remaining unforeseen allocation failure is `RESOURCE_LIMIT` with cause `EXTERNAL_ALLOCATION`, and no claim of schedule-independent OS availability. Never let race-dependent transient peaks cause a purported input-capacity failure.
 
 For a higher-layer rational collector, either exact arbitrary precision plus canonical final-range validation, or a deterministic conservative bound on all intermediate numerators/denominators, is required for schedule-independent capacity. Checking machine overflow in the arrival order is disallowed for that guarantee. Exact rational collection remains a higher-layer operation (§2.2), with its own budget contract.
 
@@ -467,7 +481,7 @@ Normalised group-refiner keys include G, ordered fixed tuple F (or M with its ve
 
 ## 17. API, wrappers, ownership and failures
 
-Opaque retain/release handles: context, registry, group, object, problem, workspace, result, checkpoint. Input builders copy data by default. Explicit borrowed immutable buffers require a release callback and remain unchanged/alive until the last referencing handle is released. Transformed views retain their source and coordinate map. A workspace has one active owner; immutable contexts/registries/groups can be shared. `solve_batch` returns per-input statuses and preserves caller input order regardless of scheduling.
+Opaque retain/release handles: context, registry, group, object, problem, workspace, result, checkpoint. Input builders copy data by default. Explicit borrowed immutable buffers require a release callback and remain unchanged/alive until the last referencing handle is released. Transformed views retain their source and coordinate map. A workspace has one active owner; immutable contexts/registries/groups can be shared. `solve_batch` returns per-input statuses and preserves caller input order regardless of scheduling. It rejects the whole batch with `INVALID_INPUT`, writing nothing, only for a NULL workspace, NULL problem/result/status arrays with count>0, or a count whose byte size overflows; otherwise every input is attempted in caller order, and statuses[i]/results[i] are exactly what `solve` would return for that input alone (a NULL problem entry gives `INVALID_INPUT` for that entry only). The call returns `COMPLETE` iff every input was attempted; per-input failures appear only in statuses[]. Capacity admission and the quota are per input. Under `CALLER_THREADS` the batch runs sequentially on the one workspace; pool execution (§14.1) must reproduce the same statuses and bytes.
 
 `group_create`, `object_create`, `problem_create`, `workspace_create`, `solve`, `solve_batch`, `result_verify_witness`, `result_encode`, `checkpoint_write/read` specify their domain/action/mode arguments explicitly. `result_verify_witness` checks membership and exact action, not canonicity. Hot small-instance entry points use plain fixed-layout descriptors and preallocated workspace, with no callbacks/heap allocation after successful admission; the general API may use bounded stage callbacks.
 
