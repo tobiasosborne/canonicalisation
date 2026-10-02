@@ -415,5 +415,5 @@ The milestone plan's ranges are not re-estimated here. Within them, the decided 
 
 1. Implement slice S1 from its brief (`docs/slices/S1.md`); review; land.
 2. S2 through S8 in order, each with its brief under `docs/slices/` and a closing review.
-3. After S6: extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2), write the case input schema and the blind brief `refs/BRIEF.md`, and commission ref-b in Julia.
+3. After S6: extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2), write the case input schema and the blind brief `refs/BRIEF.md`, and commission ref-b in Julia. (2 October 2026: `refs/BRIEF.md` and `refs/CASES.md` are written; `CASES.md` follows the `golden.json` field names, which differ from WP0.2's, and the brief's fourteen questions for the maintainer are open before commissioning.)
 4. After S8 and the M0 gate: `lean/ASSUMPTIONS.md` and M1.
