@@ -145,7 +145,7 @@ Machine-readable transcription of every §7.4 case, verified against `checks/rev
 
 ### WP0.2 Case schema and interchange format
 
-The case input schema (JSON, one object per case) is: `case_id`, `n`, `generators` (list of image arrays), `character` (optional list of ±1 per generator), `object` (`{"kind": "subset"|"tuple"|"graph"|"dag", ...}`), `objective` (hex tag), `order` (for minimum), `labeling` (optional `rho` image array), `witness_mode` (`"any"|"deterministic"`), `capacity` (the descriptor; at least `max_search_nodes`). The output format is `refs/compare/FORMAT.md`, which already carries the sign as a `;sign=±1` suffix on the witness field. **Decided:** before any reference is written, FORMAT.md and `compare.py` gain one trailing field `group_hex` (canonical `Group(H)` bytes for the stabiliser objective, `Group(H) || Perm(r₀)` for coset objectives, `-` otherwise), so that group and coset answers are compared as canonical bytes rather than as generator lists.
+The case input schema (JSON, one object per case; amended 2 October 2026 to the `golden.json` field names, defined in full in `refs/CASES.md`) is: `id`, `n`, `group_generators` (list of image arrays), `object` (`{"kind": "subset"|"tuple"|"graph"|"dag", ...}`; a tuple is `{"kind": "tuple", "points": [...]}`), `objective` (the spec §3 name), `objective_tag` (decimal), `profile`, `encoding`, `target` (transporter objectives; same schema as `object`), `character` (optional list of ±1 per generator), `order` (`"CDAG-BYTE-1"|"SIMPLE-UPPER-1"`, for minimum), `labeling` (optional `{"rho": image array}`), `witness_mode` (`"any"|"deterministic"`), `capacity` (`{"max_search_nodes": ...}`; default 2^20). DAG records keep the `golden.json` keys for tags 2 and 3 and use the spec §4.1 record names for the others. A generated case file is a JSON object with one array `cases`; `golden.json` keeps `p1_cases`, and runners accept both. The output format is `refs/compare/FORMAT.md`, which already carries the sign as a `;sign=±1` suffix on the witness field. **Decided:** before any reference is written, FORMAT.md and `compare.py` gain one trailing field `group_hex` (canonical `Group(H)` bytes for the stabiliser objective, `Group(H) || Perm(r₀)` for coset objectives, `-` otherwise), so that group and coset answers are compared as canonical bytes rather than as generator lists.
 
 ### WP0.3 Exhaustive oracle (`refs/oracle/`)
 
@@ -153,14 +153,14 @@ Python, standard library. For a case with `|G| ≤ 2·10⁵` it enumerates `G` e
 
 ### WP0.4 Blind reference A and WP0.5 blind reference B
 
-**Decided:** ref-a in C17 (so that, after sealing, its unpruned consumers can be reviewed as a candidate for the M4 reference path); ref-b in Julia. Each author receives the same brief:
+**Decided:** ref-a in C17 (so that, after sealing, its unpruned consumers can be reviewed as a candidate for the M4 reference path); ref-b in Julia. **Amended 2 October 2026 (§0a item 6):** ref-a is the sealed snapshot of the unpruned production C path, not a separately briefed author; its seal row records that it is not blind with respect to `checks/` and `tools/`. ref-b is the blind implementation, and spec §20's "two blind independently written" implementations is read as "two independently written". The ref-b brief (`refs/BRIEF.md`) is:
 
 - Inputs: the specification (§§3, 4, 7, 8, 9.4, 11.1 are normative for M0), `refs/compare/FORMAT.md`, the case schema, and the golden corpus **inputs only**; the expected outputs are withheld until the first comparison.
 - Forbidden before sealing: reading `checks/review_checks.py`, the `expected_*` and `payload_hex` fields of the golden corpus, the other reference, or any M2–M4 code (`refs/README.md`).
-- Scope: objectives `0x0001` to `0x0007` on subsets, atom tuples, coloured directed multigraphs and nested tuple/set/multiset DAGs with literal leaves; `Group(H)` and `Perm` encodings per §9.4 for the stabiliser and coset objectives; status and all nine flags; the logical work quota `max_search_nodes` applied to the unpruned P1 tree and to the §8.1 enumeration so that `CAPACITY_LIMIT` is a function of the input (§11.1).
+- Scope: objectives `0x0001` to `0x0007` on subsets, atom tuples, coloured directed multigraphs and nested tuple/set/multiset DAGs with literal leaves; `Group(H)` and `Perm` encodings per §9.4 for the stabiliser and coset objectives; status (the nine §3.2 flags are out of M0 scope and are not compared); the logical work quota `max_search_nodes` applied to the unpruned P1 tree and to the §8.1 enumeration so that `CAPACITY_LIMIT` is a function of the input (§11.1).
 - Group operations may be naive (explicit element lists for small groups; for larger groups a simple Schreier–Sims of the author's own writing). Nothing is shared.
-- Deterministic witness mode: minimise the image array over `Aut_G(x)·t` after a complete stabiliser enumeration (§3).
-- Sealing: author records the commit hash, language and toolchain in `refs/SEALS.md`. The implementation is then read-only.
+- Deterministic witness mode, requested on every M0 case and compared on every case: minimise the image array over `Aut_G(x)·t` after a complete stabiliser enumeration (§3).
+- Sealing: author records the commit hash, language, toolchain and what the implementation is blind with respect to in `refs/SEALS.md`. The implementation is then read-only.
 
 ### WP0.6 Generated corpus (`refs/vectors/generated/`)
 
@@ -172,7 +172,7 @@ A seeded generator (`tools/gen_cases.py`) writes three tiers:
 | T2 | random 1–3 generators, `n ≤ 8`, `|G| ≤ 2·10⁵` | random subsets, tuples, labelled digraphs, DAGs of depth `≤ 4` with sharing | yes | 2,000 per objective |
 | T3 | structured families, `n ≤ 48`: cyclic, dihedral, direct products, wreath products `Sym(a) ≀ Sym(b)`, grid `C_a × C_b`, intransitive sums | as T2 plus identical-factor tensor skeletons encoded as labelled digraphs | no | 500 per objective |
 
-T3 cases are filtered by both references returning `COMPLETE` under a fixed `max_search_nodes` of 10⁶; cases where both return `CAPACITY_LIMIT` are retained as status-agreement cases. Deterministic witnesses are requested only where `|G| ≤ 10⁶`.
+T3 cases are filtered by both references returning `COMPLETE` under a fixed `max_search_nodes` of 10⁶; cases where both return `CAPACITY_LIMIT` are retained as status-agreement cases. Every case requests the deterministic witness (2 October 2026).
 
 ### WP0.7 Comparison and corruption sensitivity
 
@@ -415,5 +415,5 @@ The milestone plan's ranges are not re-estimated here. Within them, the decided 
 
 1. Implement slice S1 from its brief (`docs/slices/S1.md`); review; land.
 2. S2 through S8 in order, each with its brief under `docs/slices/` and a closing review.
-3. After S6: extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2), write the case input schema and the blind brief `refs/BRIEF.md`, and commission ref-b in Julia. (2 October 2026: `refs/BRIEF.md` and `refs/CASES.md` are written; `CASES.md` follows the `golden.json` field names, which differ from WP0.2's, and the brief's fourteen questions for the maintainer are open before commissioning.)
+3. After S6: extend `refs/compare/FORMAT.md` and `compare.py` with the `group_hex` field (WP0.2), write the case input schema and the blind brief `refs/BRIEF.md`, and commission ref-b in Julia. (2 October 2026: `refs/BRIEF.md` and `refs/CASES.md` are written; `CASES.md` follows the `golden.json` field names, which differ from WP0.2's, and the brief's fourteen questions for the maintainer are open before commissioning. Later on 2 October 2026 the questions were answered in the brief per spec v2.1, WP0.2 was amended to the `golden.json` names and `CASES.md` Part B was made definitive.)
 4. After S8 and the M0 gate: `lean/ASSUMPTIONS.md` and M1.
