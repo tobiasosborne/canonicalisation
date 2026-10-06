@@ -248,6 +248,17 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
 canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const canon_root *x,
                                  uint64_t max_nodes)
 {
+    return canon_p1_search_run_policy(s, g, x, max_nodes, CANON_WORK_POLICY_REFERENCE);
+}
+
+canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g,
+                                        const canon_root *x, uint64_t max_nodes,
+                                        canon_work_policy work_policy)
+{
+    if (work_policy != CANON_WORK_POLICY_REFERENCE &&
+        work_policy != CANON_WORK_POLICY_ORBIT_PRUNE) {
+        return CANON_UNSUPPORTED_ACTION; /* spec 11.1 v2.1: work-policy IDs */
+    }
     if (g->degree != x->n) {
         return CANON_INVALID_INPUT;
     }

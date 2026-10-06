@@ -66,4 +66,11 @@ void canon_p1_search_free(canon_p1_search *s);
 canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const canon_root *x,
                                  uint64_t max_nodes);
 
+/* spec 11.1 v2.1 (slice S7): as canon_p1_search_run under the work policy `work_policy`
+ * (CANON_WORK_POLICY_REFERENCE: exactly canon_p1_search_run; CANON_WORK_POLICY_ORBIT_PRUNE:
+ * see docs/pruning-rules.md).  Any other value is CANON_UNSUPPORTED_ACTION. */
+canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g,
+                                        const canon_root *x, uint64_t max_nodes,
+                                        canon_work_policy work_policy);
+
 #endif /* CANON_SRC_SEARCH_P1_TREE_H */

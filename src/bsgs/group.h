@@ -8,6 +8,9 @@
  * and 8).  Slice S4 adds `enumerate` (spec 8.1).  Slice S6 adds `character` (spec 8.4: chi(g)
  * of a signed group, validated by the lifted group) and `conjugate` (spec 3.1: rho^-1 G rho for
  * the labeling objective), and the signed generators of a signed group (canon_group_signs).
+ * Slice S7 adds the input generators of every group made by a constructor
+ * (canon_group_input_generators), the source (i) of the pruning subgroup A_known (spec 7.3;
+ * docs/slices/S7.md 3.1).
  *
  * Convention (spec section 3): permutations are dense image arrays p[v] = v^p of length
  * `degree`; lists act on the right, L^g = (g[L[0]], g[L[1]], ...).
@@ -100,6 +103,10 @@ struct canon_group {
     void *impl;                   /* backend state, freed by ops->destroy */
     canon_group_signs *signs;     /* S6: NULL for an unsigned group; owned, freed with the
                                      handle (canon_group_set_signs) */
+    canon_perm_table *inputs;     /* S7: the generators as given to an unsigned constructor
+                                     (canon_group_set_inputs), identities and repeats kept;
+                                     NULL for a signed group (its signs->gens are the same
+                                     list) and for a group made by `conjugate`; owned */
     canon_refcount *refs;         /* = &refs_storage */
     void *block;                  /* = this handle's allocation */
     canon_refcount refs_storage;  /* the count itself; access only through refs */
@@ -117,6 +124,19 @@ canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void
  * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
 canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, size_t count,
                                    const int8_t *signs);
+
+/* Slice S7 (docs/slices/S7.md 3.1 source i): give a handle that was just allocated (and not
+ * yet shared) a copy of the `count` generators it was built from, in input order (flat image
+ * arrays of length degree, not read for degree 0), identities and repeats KEPT (the pruning
+ * code filters them by membership).  On failure the handle is unchanged (inputs NULL).
+ * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
+canon_status canon_group_set_inputs(canon_group *group, const uint32_t *gens, size_t count);
+
+/* Slice S7: the generators the group was built from, as given (rows in input order, degree
+ * group->degree): the unsigned constructors' copy (canon_group_set_inputs) or a signed group's
+ * signs->gens; NULL when none were recorded (a group made by the `conjugate` op).  Both
+ * backends record them, so the pruning subgroup is the same whatever the backend. */
+const canon_perm_table *canon_group_input_generators(const canon_group *group);
 
 /* spec 8.4 (slice S6): the lift of g with sign s: "each generator acts on Omega as given and
  * swaps the last two points iff its sign is -1".  out (n + 2 entries) receives g on {0..n-1}

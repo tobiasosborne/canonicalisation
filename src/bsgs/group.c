@@ -20,7 +20,8 @@ canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void
     g->ops = ops;
     g->degree = degree;
     g->impl = impl;
-    g->signs = NULL; /* unsigned until canon_group_set_signs (S6) */
+    g->signs = NULL;  /* unsigned until canon_group_set_signs (S6) */
+    g->inputs = NULL; /* none until canon_group_set_inputs (S7) */
     g->block = g;
     g->refs = &g->refs_storage;
     canon_ref_init(g->refs); /* one reference, owned by the creator */
@@ -45,8 +46,29 @@ void canon_group_unshare(const canon_group *group)
             free(owned->signs->signs);
             free(owned->signs);
         }
+        if (owned->inputs != NULL) {
+            canon_perm_table_free(owned->inputs);
+            free(owned->inputs);
+        }
         free(owned);
     }
+}
+
+/* Copy `count` flat generators of degree n into a new table (rows not read for n = 0). */
+static canon_status copy_rows(uint32_t n, const uint32_t *gens, size_t count,
+                              canon_perm_table *t)
+{
+    canon_perm_table_init(t, n);
+    canon_status st = CANON_COMPLETE;
+    for (size_t i = 0; i < count && st == CANON_COMPLETE; ++i) {
+        uint32_t row = 0;
+        /* degree 0: the row is the empty permutation and is not read */
+        st = canon_perm_table_push(t, n > 0 ? gens + i * (size_t)n : NULL, &row);
+    }
+    if (st != CANON_COMPLETE) {
+        canon_perm_table_free(t);
+    }
+    return st;
 }
 
 canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, size_t count,
@@ -63,15 +85,8 @@ canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, siz
         free(copy);
         return st;
     }
-    canon_perm_table_init(&s->gens, group->degree);
-    for (size_t i = 0; i < count && st == CANON_COMPLETE; ++i) {
-        uint32_t row = 0;
-        /* degree 0: the row is the empty permutation and is not read */
-        st = canon_perm_table_push(
-            &s->gens, group->degree > 0 ? gens + i * (size_t)group->degree : NULL, &row);
-    }
+    st = copy_rows(group->degree, gens, count, &s->gens);
     if (st != CANON_COMPLETE) {
-        canon_perm_table_free(&s->gens);
         free(s);
         free(copy);
         return st; /* spec 17: the handle is unchanged */
@@ -82,6 +97,33 @@ canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, siz
     s->signs = copy;
     group->signs = s;
     return CANON_COMPLETE;
+}
+
+canon_status canon_group_set_inputs(canon_group *group, const uint32_t *gens, size_t count)
+{
+    if (count > UINT32_MAX - 1u) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: generator indices are uint32 */
+    }
+    canon_status st = CANON_COMPLETE;
+    canon_perm_table *t = canon_alloc_array(1, sizeof *t, &st);
+    if (t == NULL) {
+        return st;
+    }
+    st = copy_rows(group->degree, gens, count, t);
+    if (st != CANON_COMPLETE) {
+        free(t);
+        return st; /* spec 17: the handle is unchanged */
+    }
+    group->inputs = t;
+    return CANON_COMPLETE;
+}
+
+const canon_perm_table *canon_group_input_generators(const canon_group *group)
+{
+    if (group->inputs != NULL) {
+        return group->inputs;
+    }
+    return group->signs != NULL ? &group->signs->gens : NULL;
 }
 
 /* spec 8.4: "each generator acts on Omega as given and swaps the last two points iff its sign

@@ -189,8 +189,11 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
         }
     }
     st = wrap(c, degree, out);
-    if (st == CANON_COMPLETE && is_signed) {
-        st = canon_group_set_signs(*out, generators, generator_count, signs);
+    if (st == CANON_COMPLETE) {
+        /* S6: a signed handle keeps its generators with their signs; S7 (brief 3.1 source i):
+         * an unsigned one keeps its generators as given, for A_known */
+        st = is_signed ? canon_group_set_signs(*out, generators, generator_count, signs)
+                       : canon_group_set_inputs(*out, generators, generator_count);
         if (st != CANON_COMPLETE) {
             canon_group_unshare(*out);
             *out = NULL;

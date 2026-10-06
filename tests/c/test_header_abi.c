@@ -12,6 +12,9 @@ _Static_assert(sizeof(canon_profile) == 2 && sizeof(canon_encoding) == 2 &&
                    sizeof(canon_order) == 2,
                "uint16 IDs");
 _Static_assert(sizeof(canon_status) <= sizeof(int), "status is a plain enum");
+_Static_assert(sizeof(canon_work_policy) == 2, "work-policy IDs are uint16 (spec 11.1 v2.1)");
+_Static_assert(CANON_WORK_POLICY_REFERENCE == 0x0001 && CANON_WORK_POLICY_ORBIT_PRUNE == 0x0002,
+               "work-policy IDs (docs/slices/S7.md 6.2 D14)");
 
 _Static_assert(CANON_OBJECTIVE_CANONICAL_IMAGE == 0x0001, "spec section 3");
 _Static_assert(CANON_OBJECTIVE_LEX_MIN_IMAGE == 0x0002, "spec section 3");

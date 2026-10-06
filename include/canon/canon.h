@@ -6,7 +6,8 @@
  * right, (pq)[v] = q[p[v]].
  *
  * Status of this header: slices S1 to S6 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
- * S6.md).
+ * S6.md) and step 1 of slice S7 (docs/slices/S7.md: the work policy of the capacity
+ * descriptor and orbit pruning of the canonical image, docs/pruning-rules.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
@@ -121,6 +122,20 @@ const char *canon_version_string(void);
 
 /* ---- Capacity descriptor and context (spec sections 11.1, 17).  PROVISIONAL until M4. ---- */
 
+/* spec 11.1 (v2.1), slice S7 (docs/slices/S7.md 6.2, D14): the work-policy ID names which
+ * traversal the logical work quota max_search_nodes counts; the profile ID names the output
+ * semantics only.  0 in a descriptor means "the context default". */
+typedef uint16_t canon_work_policy;
+enum {
+    /* the unpruned reference traversal (P1 NODE tokens plus spec 8.1 enumerator visits); the
+     * engine then runs unpruned */
+    CANON_WORK_POLICY_REFERENCE = 0x0001,
+    /* the S7 sequential orbit-prune policy: the canonical image prunes children by verified
+     * input generators fixing x (docs/pruning-rules.md) and the quota counts the nodes it
+     * actually explores; every other objective runs and counts as under 0x0001 */
+    CANON_WORK_POLICY_ORBIT_PRUNE = 0x0002
+};
+
 /* spec 11.1: problem-time capacity descriptor.  Zero means "use the context default". */
 typedef struct canon_capacity {
     uint32_t max_n;            /* degree admitted */
@@ -137,13 +152,21 @@ typedef struct canon_capacity {
     uint64_t max_nodes;
     uint64_t max_refs;
     uint64_t max_literal_bytes;
+    /* S7, spec 11.1 v2.1 "a work-policy ID in the capacity descriptor": which traversal
+     * max_search_nodes counts, CANON_WORK_POLICY_REFERENCE (0x0001) or
+     * CANON_WORK_POLICY_ORBIT_PRUNE (0x0002); 0 selects the context default.  Any other value
+     * is refused with CANON_UNSUPPORTED_ACTION (spec 3.2/4.1: unsupported identifiers are
+     * refused, never reinterpreted). */
+    canon_work_policy work_policy;
 } canon_capacity;
 
 /* spec 17: create an immutable context holding the capacity defaults and the default options
  * (canon_context_create_with_options).  `defaults` may be NULL; a NULL
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
- * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5).
+ * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5),
+ * work_policy = CANON_WORK_POLICY_ORBIT_PRUNE (S7, brief 6.2 D14 (c)).
+ * CANON_UNSUPPORTED_ACTION for a work_policy other than 0, 0x0001 and 0x0002.
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -167,7 +190,8 @@ typedef struct canon_context_options {
 } canon_context_options;
 
 /* spec 17: as canon_context_create, with options.  `options` may be NULL (every option at its
- * default).  CANON_INVALID_INPUT for NULL `out` or an unknown backend value. */
+ * default).  CANON_INVALID_INPUT for NULL `out` or an unknown backend value, then
+ * CANON_UNSUPPORTED_ACTION for an unknown work policy in `defaults` (S7). */
 canon_status canon_context_create_with_options(const canon_capacity *defaults,
                                                const canon_context_options *options,
                                                canon_context **out);
@@ -329,7 +353,8 @@ canon_status canon_stream_validate(canon_context *ctx, const uint8_t *stream, si
  * Validation, in this order (for CANONICAL_IMAGE; see canon_problem_create_with_options for
  * the other objectives):
  * CANON_UNSUPPORTED_ACTION for an unsupported objective, a profile other than P1, an encoding
- * other than CDAG-2 or an order other than CDAG-BYTE-1;
+ * other than CDAG-2 or an order other than CDAG-BYTE-1, or (S7) a capacity work_policy other
+ * than 0, 0x0001 and 0x0002;
  * CANON_INVALID_INPUT for a degree mismatch between group and object; CANON_CAPACITY_LIMIT
  * when the degree exceeds max_n, the group was built by the explicit backend and its order
  * exceeds max_group_order (S3: the chain backend has no such limit), the object's normal form
@@ -346,8 +371,11 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
                                   const canon_capacity *capacity, canon_problem **out);
 
 /* Witness choice (spec 3, slice S4; PROVISIONAL until M4).  CANON_WITNESS_ANY: the witness the
- * reference traversal finds first (for CANONICAL_IMAGE the least attaining leaf witness of the
- * unpruned P1 tree, as before).  CANON_WITNESS_DETERMINISTIC: spec 3 "minimise the image array
+ * traversal finds (for CANONICAL_IMAGE under work policy 0x0001 the least attaining leaf
+ * witness of the unpruned P1 tree; under 0x0002 (S7) the least attaining leaf witness among
+ * the leaves the pruned traversal explores, which is a valid witness of the same canonical
+ * image but may differ from the unpruned one: spec 14.3 "ordinary mode may return different
+ * valid witnesses").  CANON_WITNESS_DETERMINISTIC: spec 3 "minimise the image array
  * among all solutions sending x to the selected c": for CANONICAL_IMAGE by completing the
  * stabiliser A and taking the least element of A t; for LEX_MIN_IMAGE the least g among all
  * attaining the minimum; for TRANSPORTER_COSET the least element r0 of A g.  Not available for
@@ -388,7 +416,9 @@ typedef struct canon_problem_options {
  * Validation, in this order: CANON_INVALID_INPUT for NULL ctx/group/object/out or an unknown
  * witness mode; CANON_UNSUPPORTED_ACTION for a combination not listed above (including a
  * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
- * SIGNED_CANONICAL_IMAGE) or SIGNED_CANONICAL_IMAGE on an unsigned group; CANON_INVALID_INPUT
+ * SIGNED_CANONICAL_IMAGE), SIGNED_CANONICAL_IMAGE on an unsigned group or (S7) a capacity
+ * work_policy other than 0, 0x0001 and 0x0002 (0 resolves to the context's; every objective
+ * accepts both IDs, and only CANONICAL_IMAGE prunes under 0x0002); CANON_INVALID_INPUT
  * for a degree mismatch, a missing, superfluous or mismatched target, or a missing, superfluous
  * or non-bijective rho; CANON_UNSUPPORTED_ACTION for SIMPLE-UPPER-1 on an object outside the
  * spec 4.4 class; CANON_CAPACITY_LIMIT as for canon_problem_create, where the output size is
@@ -426,8 +456,10 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out);
  *   nonzero_certified, image_canonical, witness_valid, subgroup_verified, stabiliser_complete,
  *   encoding_complete (the nonzero route always completes the stabiliser A, spec 8.4
  *   SIGN-COVER);
- * CANON_CAPACITY_LIMIT when the solve's reference traversals exceed max_search_nodes (spec
- * 11.1: P1 NODE tokens plus coset-enumeration visits), with a result that has no trace, no
+ * CANON_CAPACITY_LIMIT when the solve's traversals exceed max_search_nodes (spec 11.1: P1 NODE
+ * tokens plus coset-enumeration visits, counted under the problem's work policy: S7, for
+ * CANONICAL_IMAGE under 0x0002 the NODE tokens of the nodes the pruned traversal explores, no
+ * count of pruned subtrees), with a result that has no trace, no
  * bytes, no witness and all flags false; CANON_RESOURCE_LIMIT on allocation failure (a result
  * is returned when it could itself be allocated).  CANON_INVALID_INPUT for NULL arguments (no
  * result).  Evidence mode: TRUSTED_ENGINE (spec 3.2), exhaustion asserted by this engine. */
@@ -445,13 +477,15 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
 /* spec 3: the witness t as an image array of length *degree, only when witness_valid; NULL and
  * *degree = 0 otherwise.  For degree 0 a produced witness is a non-NULL pointer with
  * *degree = 0.  CANONICAL_IMAGE: x^t = the canonical image.  With CANON_WITNESS_ANY this is
- * the least LEAF witness attaining the minimal (trace, bytes) key, as spec 7.4's preamble
- * prescribes ("minimise among the witnesses that actually attain that key"); with
- * CANON_WITNESS_DETERMINISTIC (S4) it is the spec 3 deterministic witness, the least element
- * of Aut_G(x) t, computed from the complete stabiliser.  For the UNPRUNED tree the two
- * coincide (tree equivariance, spec 7.2: the attaining leaves carry exactly Aut_G(x) t); S4's
- * tests check this, and once pruning lands (S7) only the deterministic mode keeps the
- * guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
+ * the least LEAF witness attaining the minimal (trace, bytes) key among the leaves the
+ * traversal visits, as spec 7.4's preamble prescribes ("minimise among the witnesses that
+ * actually attain that key"); with CANON_WITNESS_DETERMINISTIC (S4) it is the spec 3
+ * deterministic witness, the least element of Aut_G(x) t, computed from the complete
+ * stabiliser.  For the UNPRUNED tree (work policy 0x0001) the two coincide (tree equivariance,
+ * spec 7.2: the attaining leaves carry exactly Aut_G(x) t); S4's tests check this.  Under work
+ * policy 0x0002 (S7) the pruned traversal skips leaves, so the ANY witness is still valid
+ * (x^t = c, t in G) but may differ; only the deterministic mode keeps the guarantee.
+ * LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
  * for the coset in deterministic mode the least element r0 of A g).
@@ -495,6 +529,16 @@ canon_status canon_result_sign(const canon_result *result, int *sign_out);
  * *degree = 0 otherwise.  For degree 0 a produced labeling is a non-NULL pointer with
  * *degree = 0. */
 const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degree);
+
+/* spec 11.1 v2.1 (slice S7): the work policy "recorded in results ... beside the profile".
+ * *policy_out = the EFFECTIVE policy of a completed solve: CANON_WORK_POLICY_ORBIT_PRUNE only
+ * when the pruned traversal actually ran (CANONICAL_IMAGE solved under 0x0002), else
+ * CANON_WORK_POLICY_REFERENCE (every other objective runs the reference traversal whatever the
+ * descriptor says).  PROVISIONAL reading of "recorded in results": the spec names no accessor,
+ * and the descriptor's value (rather than the effective one) would be the other reading
+ * (docs/slices/S7-notes.md).  CANON_INVALID_INPUT (*policy_out = 0 when given) for NULL
+ * arguments or a result of a solve that did not complete. */
+canon_status canon_result_work_policy(const canon_result *result, canon_work_policy *policy_out);
 
 /* spec section 17: per-input statuses, input order preserved regardless of scheduling.
  * STUB until slice S8: returns CANON_UNSUPPORTED_ACTION. */

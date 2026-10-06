@@ -34,6 +34,8 @@
 #define DEFAULT_MAX_NODES ((uint64_t)1 << 20)
 #define DEFAULT_MAX_REFS ((uint64_t)1 << 22)
 #define DEFAULT_MAX_LITERAL_BYTES ((uint64_t)1 << 26)
+/* S7 brief 6.2 D14 (c): "The default descriptor value is 0x0002 (prune on)" */
+#define DEFAULT_WORK_POLICY CANON_WORK_POLICY_ORBIT_PRUNE
 
 /* Largest chunk handed to a sink in one call (spec 17: ordered borrowed chunks). */
 #define SINK_CHUNK ((size_t)1 << 16)
@@ -95,6 +97,7 @@ struct canon_result {
     uint32_t *rho;      /* S6: the problem's rho, for canon_result_verify_witness; else NULL */
     int sign;           /* S6: +1/-1 nonzero, 0 certified zero (SIGNED_CANONICAL_IMAGE) */
     canon_objective objective;
+    canon_work_policy work_policy; /* S7, spec 11.1: the effective policy; 0 if not complete */
     /* S4, for canon_result_verify_witness: the problem's immutable inputs, retained (owned
      * references, not borrowed pointers); NULL in a status-only result. */
     const canon_group *group;
@@ -130,8 +133,19 @@ static canon_capacity resolve_capacity(const canon_capacity *given, const canon_
         if (given->max_literal_bytes != 0) {
             c.max_literal_bytes = given->max_literal_bytes;
         }
+        if (given->work_policy != 0) {
+            c.work_policy = given->work_policy;
+        }
     }
     return c;
+}
+
+/* spec 11.1 v2.1 work-policy IDs (S7 brief 6.2 D14): 0x0001 the unpruned reference
+ * traversal, 0x0002 the S7 sequential prune policy.  Anything else is an unsupported
+ * identifier (spec 3.2, 4.1: refused, never reinterpreted). */
+static bool work_policy_known(canon_work_policy p)
+{
+    return p == CANON_WORK_POLICY_REFERENCE || p == CANON_WORK_POLICY_ORBIT_PRUNE;
 }
 
 /* ---- context ---- */
@@ -154,13 +168,19 @@ canon_status canon_context_create_with_options(const canon_capacity *defaults,
     if (backend != CANON_BACKEND_CHAIN && backend != CANON_BACKEND_EXPLICIT) {
         return CANON_INVALID_INPUT;
     }
+    /* spec 11.1 v2.1: the descriptor names the work policy; an unknown ID is refused */
+    if (defaults != NULL && defaults->work_policy != 0 &&
+        !work_policy_known(defaults->work_policy)) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
     const canon_capacity builtin = {DEFAULT_MAX_N,
                                     DEFAULT_MAX_GROUP_ORDER,
                                     DEFAULT_MAX_SEARCH_NODES,
                                     DEFAULT_MAX_OUTPUT_BYTES,
                                     DEFAULT_MAX_NODES,
                                     DEFAULT_MAX_REFS,
-                                    DEFAULT_MAX_LITERAL_BYTES};
+                                    DEFAULT_MAX_LITERAL_BYTES,
+                                    DEFAULT_WORK_POLICY};
     canon_context *ctx = malloc(sizeof *ctx);
     if (ctx == NULL) {
         return CANON_RESOURCE_LIMIT;
@@ -580,6 +600,12 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     if (objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE && group->signs == NULL) {
         return CANON_UNSUPPORTED_ACTION;
     }
+    /* spec 11.1 v2.1: an unknown work-policy ID is an unsupported identifier (S7); 0 selects
+     * the context default, which canon_context_create_with_options already checked */
+    if (capacity != NULL && capacity->work_policy != 0 &&
+        !work_policy_known(capacity->work_policy)) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
     if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
     }
@@ -828,6 +854,12 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     r->flags = a->flags;
     r->sign = a->sign;
     r->objective = problem->objective;
+    /* spec 11.1 v2.1: the work policy is "recorded in results ... beside the profile".  S7
+     * reading (canon.h canon_result_work_policy): the EFFECTIVE policy, 0x0002 only when the
+     * pruned traversal ran, which only the canonical image does (spec 8.2; brief 3.1). */
+    r->work_policy = problem->objective == CANON_OBJECTIVE_CANONICAL_IMAGE
+                         ? problem->capacity.work_policy
+                         : CANON_WORK_POLICY_REFERENCE;
     /* spec 17 verify_witness needs G, x and the target after the problem may be released:
      * the result retains them (owned references to immutable handles). */
     r->group = problem->group;
@@ -840,24 +872,33 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     return CANON_COMPLETE;
 }
 
-/* spec 7, 3: CANONICAL_IMAGE by the unpruned P1 tree; with the deterministic witness mode the
- * least element of A t (spec 3), A the complete stabiliser from the spec 8.2 consumer. */
+/* spec 7, 3: CANONICAL_IMAGE by the P1 tree under the problem's work policy (S7: 0x0001 the
+ * unpruned tree, 0x0002 the tree pruned by docs/pruning-rules.md, which reproduces its trace
+ * and bytes); with the deterministic witness mode the least element of A t (spec 3), A the
+ * complete stabiliser from the spec 8.2 consumer.  This is the only caller that passes a
+ * descriptor's policy to the P1 tree: the labeling and signed objectives stay unpruned (spec
+ * 8.2: image-only pruning never proves a full stabiliser). */
 static canon_status solve_canonical(canon_workspace *ws, const canon_problem *problem,
                                     canon_result **out)
 {
     canon_p1_search *s = &ws->search;
     const uint64_t quota = problem->capacity.max_search_nodes;
-    canon_status st = canon_p1_search_run(s, problem->group, &problem->object->root, quota);
+    canon_status st = canon_p1_search_run_policy(s, problem->group, &problem->object->root,
+                                                 quota, problem->capacity.work_policy);
     const uint32_t *witness = s->best_t;
     if (st == CANON_COMPLETE && problem->witness_mode == CANON_WITNESS_DETERMINISTIC) {
-        /* spec 11.1: one quota for the solve; the enumeration gets what P1 left */
+        /* spec 11.1: one quota for the solve; the enumeration gets what P1 left (s->nodes is
+         * the count of the traversal the policy fixes, <= quota).  S7 brief 3.1 Scope: the
+         * deterministic witness needs only SOME t with x^t = c (every attaining g lies in
+         * A t), so a pruned run's t serves and the witness is unchanged. */
         st = canon_obj_deterministic_witness(&ws->obj, problem->group, &problem->object->root,
                                              s->best_t, quota - s->nodes);
         witness = ws->obj.best;
     }
-    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the full unpruned traversal
-     * (TRUSTED_ENGINE evidence): the witness is an element of G sending x to the returned
-     * image, the image is the P1 canonical image, and the encoding is complete. */
+    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the traversal the work policy fixes
+     * (TRUSTED_ENGINE evidence; under 0x0002 the pruning lemma, docs/pruning-rules.md, covers
+     * every skipped child): the witness is an element of G sending x to the returned image,
+     * the image is the P1 canonical image, and the encoding is complete. */
     answer a;
     memset(&a, 0, sizeof a);
     a.flags.witness_valid = true;
@@ -1040,6 +1081,20 @@ canon_status canon_result_sign(const canon_result *result, int *sign_out)
         return CANON_INVALID_INPUT;
     }
     *sign_out = result->flags.zero_certified ? 0 : result->sign;
+    return CANON_COMPLETE;
+}
+
+/* spec 11.1 v2.1 (S7): the effective work policy recorded on a completed result. */
+canon_status canon_result_work_policy(const canon_result *result, canon_work_policy *policy_out)
+{
+    if (policy_out != NULL) {
+        *policy_out = 0;
+    }
+    if (result == NULL || policy_out == NULL || result->status != CANON_COMPLETE ||
+        result->work_policy == 0) {
+        return CANON_INVALID_INPUT;
+    }
+    *policy_out = result->work_policy;
     return CANON_COMPLETE;
 }
 

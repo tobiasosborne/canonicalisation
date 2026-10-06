@@ -48,7 +48,7 @@ static canon_result *solve(const canon_group *g, const canon_object *x, const ca
 {
     const canon_profile profile =
         objective == CANON_OBJECTIVE_CANONICAL_IMAGE ? CANON_PROFILE_P1 : CANON_PROFILE_NO_TREE;
-    canon_capacity cap = {0, 0, max_nodes, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, max_nodes, 0, 0, 0, 0, 0};
     canon_problem_options opts = {mode, NULL};
     canon_problem *p = NULL;
     canon_workspace *ws = NULL;
@@ -417,7 +417,7 @@ static void validation(void)
     CHECK(CREATE(g, graph, NULL, CANON_OBJECTIVE_LEX_MIN_IMAGE, NT, SU, &det) == CANON_COMPLETE);
     canon_problem_release(p);
     /* capacity: the Group(A) bound for |G| = 2, n = 2 is 5 + 1 * (4 + 16) = 25 bytes */
-    canon_capacity cap = {0, 0, 0, 24, 0, 0, 0};
+    canon_capacity cap = {0, 0, 0, 24, 0, 0, 0, 0};
     CHECK(canon_problem_create_with_options(ctx_chain, g, x, NULL, CANON_OBJECTIVE_STABILISER, NT,
                                             CANON_ENCODING_CDAG_2, CB, &cap, NULL,
                                             &p) == CANON_CAPACITY_LIMIT);
@@ -635,7 +635,7 @@ static void review_items(void)
                   {CANON_ORDER_CDAG_BYTE_1, 104, CANON_COMPLETE},
                   {CANON_ORDER_CDAG_BYTE_1, 103, CANON_CAPACITY_LIMIT}};
     for (int i = 0; i < 4; ++i) {
-        canon_capacity cap = {0, 0, 0, cases[i].limit, 0, 0, 0};
+        canon_capacity cap = {0, 0, 0, cases[i].limit, 0, 0, 0, 0};
         canon_problem *p = NULL;
         CHECK(canon_problem_create_with_options(
                   ctx_chain, s3, path, NULL, CANON_OBJECTIVE_LEX_MIN_IMAGE, CANON_PROFILE_NO_TREE,

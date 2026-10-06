@@ -54,7 +54,7 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
 {
     const canon_profile profile =
         objective == CANON_OBJECTIVE_STABILISER ? CANON_PROFILE_NO_TREE : CANON_PROFILE_P1;
-    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, 0};
     canon_problem_options opts = {CANON_WITNESS_ANY, rho};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
