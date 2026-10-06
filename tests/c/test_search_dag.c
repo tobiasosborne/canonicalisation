@@ -77,6 +77,16 @@ static canon_status p1(canon_workspace *ws, const canon_group *g, const canon_ob
     return solve(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, NULL, CANON_WITNESS_ANY, out);
 }
 
+/* As p1 under the unpruned reference work policy 0x0001 (S7), whose ANY witness is the least
+ * attaining leaf witness of the whole tree. */
+static canon_status p1_reference(canon_workspace *ws, const canon_group *g, const canon_object *x,
+                                 canon_result **out)
+{
+    static const canon_capacity reference = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
+    return solve(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, &reference, CANON_WITNESS_ANY,
+                 out);
+}
+
 static int same_result(const canon_result *a, const canon_result *b)
 {
     size_t la = 0, lb = 0, ba = 0, bb = 0;
@@ -421,7 +431,9 @@ static void test_dag_roots(canon_workspace *ws)
                 canon_object *xo = NULL;
                 CHECK(create(n, &s, &xo) == CANON_COMPLETE);
                 canon_result *r = NULL;
-                CHECK(p1(ws, g, xo, &r) == CANON_COMPLETE);
+                /* S7: the unpruned tree (compared with the deterministic witness below; the
+                 * equivariance loop compares it with pruned runs of x^h) */
+                CHECK(p1_reference(ws, g, xo, &r) == CANON_COMPLETE);
                 bool valid = false;
                 CHECK(canon_result_verify_witness(r, &valid) == CANON_COMPLETE && valid);
                 size_t bl = 0, tl = 0;

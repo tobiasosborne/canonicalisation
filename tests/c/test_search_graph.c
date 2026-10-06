@@ -76,13 +76,18 @@ static int same_result(const canon_result *a, const canon_result *b)
            da == db && (da == 0 || memcmp(wa, wb, da * sizeof *wa) == 0);
 }
 
+/* S7 (brief 6.2 D14 (c)): expected witnesses and node counts below are those of the UNPRUNED
+ * reference traversal, so those checks run under work policy 0x0001 explicitly
+ * (tests/c/test_prune.c compares the pruned policy with it). */
+static const canon_capacity REFERENCE = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
+
 static void test_golden(canon_context *ctx, canon_workspace *ws)
 {
     const uint32_t swap[2] = {1, 0};
     const canon_arc arc01[1] = {{0, 1, NULL, 0, 1}};
     graph_case c = {2, swap, 1, NULL, NULL, arc01, 1};
     canon_result *r = NULL;
-    CHECK(solve_graph(ctx, ws, &c, NULL, &r) == CANON_COMPLETE);
+    CHECK(solve_graph(ctx, ws, &c, &REFERENCE, &r) == CANON_COMPLETE);
     canon_result_flags f = canon_result_get_flags(r);
     CHECK(f.witness_valid && f.image_canonical && f.encoding_complete);
     CHECK(!f.minimum_proved && !f.subgroup_verified && !f.stabiliser_complete &&
@@ -106,7 +111,7 @@ static void test_capacity(canon_context *ctx, canon_workspace *ws)
     /* spec 11.1 logical work quota: the arc-free graph on 2 vertices under Sym(2) has three
      * NODE tokens (root plus two children), as for the empty subset. */
     graph_case c = {2, swap, 1, NULL, NULL, NULL, 0};
-    canon_capacity cap = {0, 0, 2, 0, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, 2, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
     canon_result *r = NULL;
     CHECK(solve_graph(ctx, ws, &c, &cap, &r) == CANON_CAPACITY_LIMIT);
     CHECK(r != NULL && canon_result_status(r) == CANON_CAPACITY_LIMIT);
@@ -171,7 +176,7 @@ static void test_fixed_and_equivariant(canon_context *ctx, canon_workspace *ws)
     const canon_arc cycle[3] = {{0, 1, NULL, 0, 1}, {1, 2, NULL, 0, 1}, {2, 0, NULL, 0, 1}};
     graph_case c = {3, c3, 1, NULL, NULL, cycle, 3};
     canon_result *r = NULL, *r_trivial = NULL;
-    CHECK(solve_graph(ctx, ws, &c, NULL, &r) == CANON_COMPLETE);
+    CHECK(solve_graph(ctx, ws, &c, &REFERENCE, &r) == CANON_COMPLETE);
     graph_case trivial = c;
     trivial.gens = NULL;
     trivial.gen_count = 0;
@@ -433,7 +438,7 @@ static void test_release_then_reuse(canon_context *ctx)
      * 3-cycle under Sym(3) does not split at the root, so it needs more than one node */
     const canon_arc cycle[3] = {{0, 1, lab, 3, 1}, {1, 2, lab, 3, 1}, {2, 0, lab, 3, 1}};
     graph_case third = {3, sym3, 2, NULL, NULL, cycle, 3};
-    canon_capacity cap = {0, 0, 1, 0, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, 1, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
     CHECK(solve_graph(ctx, ws, &third, &cap, &r) == CANON_CAPACITY_LIMIT);
     canon_result_release(r);
     CHECK(solve_graph(ctx, ws, &second, NULL, &r) == CANON_COMPLETE);

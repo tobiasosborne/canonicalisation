@@ -53,7 +53,13 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
 {
     const canon_profile profile =
         objective == CANON_OBJECTIVE_STABILISER ? CANON_PROFILE_NO_TREE : CANON_PROFILE_P1;
-    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0, 0};
+    /* S7: the canonical-image solves here are compared with the signed objective's P1 witness,
+     * found on the UNPRUNED tree (spec 8.2: the signed objective stays unpruned), so they run
+     * under the reference work policy 0x0001; the other objectives keep the context default */
+    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0,
+                          objective == CANON_OBJECTIVE_CANONICAL_IMAGE
+                              ? (canon_work_policy)CANON_WORK_POLICY_REFERENCE
+                              : (canon_work_policy)0};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
     canon_result *r = NULL;

@@ -1,4 +1,6 @@
-/* Unpruned P1 canonical-image search for a root object (spec sections 7.1-7.3, 11.1). */
+/* P1 canonical-image search for a root object (spec sections 7.1-7.3, 11.1): the unpruned
+ * reference traversal, and (slice S7 step 1, work policy 0x0002) the same traversal with
+ * orbit pruning by verified automorphisms fixing the node's prefix (docs/pruning-rules.md). */
 #include "search/p1_tree.h"
 
 #include <stdlib.h>
@@ -17,6 +19,7 @@ void canon_p1_search_init(canon_p1_search *s)
     canon_buf_init(&s->leaf_bytes);
     canon_buf_init(&s->best_trace);
     canon_buf_init(&s->best_bytes);
+    canon_symmetry_init(&s->known);
 }
 
 static void free_arrays(canon_p1_search *s)
@@ -42,6 +45,36 @@ void canon_p1_search_free(canon_p1_search *s)
     canon_buf_free(&s->leaf_bytes);
     canon_buf_free(&s->best_trace);
     canon_buf_free(&s->best_bytes);
+    canon_symmetry_free(&s->known);
+    free(s->reps);
+    s->reps = NULL;
+    s->reps_top = s->reps_cap = 0;
+}
+
+/* Room for `need` words in the explored-children stack (grow-only, geometric; the stack may
+ * move, so callers index it, never keep pointers across a call). */
+static canon_status reps_reserve(canon_p1_search *s, size_t need)
+{
+    if (need <= s->reps_cap) {
+        return CANON_COMPLETE;
+    }
+    size_t words = s->reps_cap < 64 ? 64 : s->reps_cap;
+    while (words < need) {
+        if (!canon_size_mul(words, 2u, &words)) {
+            return CANON_CAPACITY_LIMIT;
+        }
+    }
+    size_t bytes = 0;
+    if (!canon_size_mul(words, sizeof(uint32_t), &bytes)) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    uint32_t *grown = realloc(s->reps, bytes);
+    if (grown == NULL) {
+        return CANON_RESOURCE_LIMIT;
+    }
+    s->reps = grown;
+    s->reps_cap = words;
+    return CANON_COMPLETE;
 }
 
 /* Size the per-point arrays to a capacity that only grows: a solve of degree n <= cap reuses
@@ -183,13 +216,16 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
     return CANON_COMPLETE;
 }
 
-/* spec 7.1: one node of the unpruned tree; the partition on entry is the node's partition
- * before refinement.  Recursion depth is bounded by the number of individualisations, at most
- * n - 1 (spec 7.2 termination). */
+/* spec 7.1: one node of the tree; the partition on entry is the node's partition before
+ * refinement.  Recursion depth is bounded by the number of individualisations, at most n - 1
+ * (spec 7.2 termination).  `prune` (S7, policy 0x0002 only): H_depth, the pointwise stabiliser
+ * of this node's prefix in A_known, is nontrivial and valid in s->known; false reproduces the
+ * unpruned node exactly. */
 static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_root *x,
-                          uint32_t depth, uint64_t max_nodes)
+                          uint32_t depth, uint64_t max_nodes, bool prune)
 {
-    /* spec 11.1: the logical work quota counts NODE tokens of the fixed reference traversal;
+    /* spec 11.1: the logical work quota counts NODE tokens of the traversal fixed by the work
+     * policy (S7: the nodes explored; a pruned child is never entered, so never counted);
      * abandon when the count would exceed it. */
     if (s->nodes >= max_nodes) {
         return CANON_CAPACITY_LIMIT;
@@ -225,22 +261,58 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
     }
     canon_partition_save(&s->part, snap);
     const uint32_t lo = s->part.start[target], hi = s->part.start[target + 1];
+    uint32_t explore = hi - lo; /* children to enter */
+    const size_t mark_reps = s->reps_top;
+    s->children += (uint64_t)(hi - lo);
+    if (prune) {
+        /* docs/pruning-rules.md (S7 brief 3.1 lemma and rule; spec 7.3 "At each node intersect
+         * with the stabiliser of its constraints before sibling pruning"): for every a in
+         * H_depth and b in the target cell C, the subtrees at S.b and S.b^a carry the same leaf
+         * keys, so exploring one child per H_depth-orbit on C (the numerically least member)
+         * keeps the minimum key.  The explored list lives on a stack: the recursion below
+         * reuses the symmetry scratch. */
+        st = reps_reserve(s, mark_reps + (size_t)(hi - lo));
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+        snap = s->snaps + (size_t)depth * s->snap_words;
+        st = canon_symmetry_orbit_reps(&s->known, depth,
+                                       canon_partition_snapshot_lab(snap, s->n) + lo, hi - lo,
+                                       s->reps + mark_reps, &explore);
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+        s->pruned += (uint64_t)(hi - lo - explore);
+        s->reps_top = mark_reps + explore;
+    }
     /* spec 7.1: "for EACH a in that cell: replace cell C in place by [{a}, C minus {a}];
      * recurse at depth+1, with a fresh node refinement loop".  Members are taken in the cell's
-     * current (non-semantic) order from the snapshot. */
-    for (uint32_t j = lo; j < hi; ++j) {
+     * current (non-semantic) order from the snapshot; under pruning, the representatives in
+     * that same order. */
+    for (uint32_t j = 0; j < explore; ++j) {
         snap = s->snaps + (size_t)depth * s->snap_words; /* the stack may have moved */
-        uint32_t a = canon_partition_snapshot_lab(snap, s->n)[j];
+        const uint32_t a =
+            prune ? s->reps[mark_reps + j] : canon_partition_snapshot_lab(snap, s->n)[lo + j];
         canon_partition_restore(&s->part, snap); /* spec 11.2 rollback */
         canon_partition_individualise(&s->part, target, a);
         if (depth == UINT32_MAX) {
             return CANON_CAPACITY_LIMIT; /* U32(d) must fit; unreachable for n <= 2^32 - 1 */
         }
-        st = visit(s, g, x, depth + 1, max_nodes);
+        bool child_prune = false;
+        if (prune) {
+            /* H_{depth+1} = the stabiliser of a in H_depth (one rebase per explored child) */
+            st = canon_symmetry_descend(&s->known, depth, a);
+            if (st != CANON_COMPLETE) {
+                return st;
+            }
+            child_prune = !canon_symmetry_trivial_at(&s->known, depth + 1);
+        }
+        st = visit(s, g, x, depth + 1, max_nodes, child_prune);
         if (st != CANON_COMPLETE) {
             return st;
         }
     }
+    s->reps_top = mark_reps;
     canon_buf_truncate(&s->trace, mark);
     return CANON_COMPLETE;
 }
@@ -270,13 +342,33 @@ canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g
     s->nodes = 0;
     s->leaves = 0;
     s->images = 0;
+    s->pruned = 0;
+    s->children = 0;
+    s->reps_top = 0;
+    s->work_policy = work_policy;
+    memset(&s->known.stats, 0, sizeof s->known.stats);
     canon_buf_truncate(&s->trace, 0);
     canon_buf_truncate(&s->best_trace, 0);
     canon_buf_truncate(&s->best_bytes, 0);
+    bool prune = false;
+    if (work_policy == CANON_WORK_POLICY_ORBIT_PRUNE && x->n > 0) {
+        /* S7 brief 3.2: "At the root: insert into A_known the input generators that fix x
+         * (source i), each verified by action" (and by membership, spec 7.3) */
+        st = canon_symmetry_reset(&s->known, x->n);
+        if (st == CANON_COMPLETE) {
+            st = canon_symmetry_from_inputs(&s->known, g, x, &s->image);
+        }
+        if (st != CANON_COMPLETE) {
+            canon_root_image_clear(&s->image);
+            return st;
+        }
+        /* A_known = 1: the traversal below is exactly the unpruned one */
+        prune = !canon_symmetry_trivial_at(&s->known, 0);
+    }
     /* spec 7.1 root: initial key partition; spec 7.2: n = 0 gives an empty list and the root is
      * a leaf. */
     canon_p1_initial(&s->part, x, &s->scratch);
-    st = visit(s, g, x, 0, max_nodes);
+    st = visit(s, g, x, 0, max_nodes, prune);
     /* Invariant (p1_tree.h): between runs nothing in the workspace points into x; the graph
      * image borrowed x's tables, so drop them now, on every outcome. */
     canon_root_image_clear(&s->image);
@@ -285,7 +377,9 @@ canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g
         return st;
     }
     if (!s->have_best) {
-        return CANON_INTERNAL_ERROR; /* the unpruned tree always has a leaf (spec 7.2) */
+        /* the tree always has a leaf (spec 7.2), and pruning explores at least one child of
+         * every node (every orbit has a least member) */
+        return CANON_INTERNAL_ERROR;
     }
     return CANON_COMPLETE;
 }

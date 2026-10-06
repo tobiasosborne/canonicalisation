@@ -93,10 +93,15 @@ static canon_status solve_case(canon_context *ctx, canon_workspace *ws, const go
     return st;
 }
 
+/* S7 (brief 6.2 D14 (c)): the golden witnesses are the least attaining leaf witnesses of the
+ * UNPRUNED tree (spec 7.4 preamble), so the golden check runs under the reference work policy
+ * 0x0001; tests/c/test_prune.c compares the pruned policy with it. */
+static const canon_capacity REFERENCE = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
+
 static void check_golden(canon_context *ctx, canon_workspace *ws, const golden_case *c)
 {
     canon_result *r = NULL;
-    CHECK(solve_case(ctx, ws, c, NULL, &r) == CANON_COMPLETE);
+    CHECK(solve_case(ctx, ws, c, &REFERENCE, &r) == CANON_COMPLETE);
     CHECK(r != NULL);
     if (r == NULL) {
         return;
@@ -330,9 +335,11 @@ int main(void)
         canon_result_release(r2);
     }
 
-    /* spec 11.1: logical work quota.  The n=2 empty subset under Sym(2) has 3 NODE tokens. */
+    /* spec 11.1: logical work quota.  The n=2 empty subset under Sym(2) has 3 NODE tokens in
+     * the unpruned reference traversal (work policy 0x0001, S7; under 0x0002 the two children
+     * form one orbit and the count is 2, tests/c/test_prune.c). */
     {
-        canon_capacity cap = {0, 0, 2, 0, 0, 0, 0, 0};
+        canon_capacity cap = {0, 0, 2, 0, 0, 0, 0, CANON_WORK_POLICY_REFERENCE};
         canon_result *r = NULL;
         CHECK(solve_case(ctx, ws, &cases[3], &cap, &r) == CANON_CAPACITY_LIMIT);
         CHECK(r != NULL);

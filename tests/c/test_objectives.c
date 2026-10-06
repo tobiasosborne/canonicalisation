@@ -41,14 +41,16 @@ static canon_object *subset(uint32_t n, const uint32_t *atoms, size_t count)
     return x;
 }
 
-/* Create a problem and solve it; returns the result (caller releases), *st the solve status. */
-static canon_result *solve(const canon_group *g, const canon_object *x, const canon_object *y,
-                           canon_objective objective, canon_order order, canon_witness_mode mode,
-                           uint64_t max_nodes, canon_status *st)
+/* Create a problem under the work policy `policy` (0: the context default, S7) and solve it;
+ * returns the result (caller releases), *st the solve status. */
+static canon_result *solve_policy(const canon_group *g, const canon_object *x,
+                                  const canon_object *y, canon_objective objective,
+                                  canon_order order, canon_witness_mode mode, uint64_t max_nodes,
+                                  canon_work_policy policy, canon_status *st)
 {
     const canon_profile profile =
         objective == CANON_OBJECTIVE_CANONICAL_IMAGE ? CANON_PROFILE_P1 : CANON_PROFILE_NO_TREE;
-    canon_capacity cap = {0, 0, max_nodes, 0, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, max_nodes, 0, 0, 0, 0, policy};
     canon_problem_options opts = {mode, NULL};
     canon_problem *p = NULL;
     canon_workspace *ws = NULL;
@@ -62,6 +64,14 @@ static canon_result *solve(const canon_group *g, const canon_object *x, const ca
     canon_workspace_release(ws);
     canon_problem_release(p); /* the result retains what it needs */
     return r;
+}
+
+/* As solve_policy under the context default work policy. */
+static canon_result *solve(const canon_group *g, const canon_object *x, const canon_object *y,
+                           canon_objective objective, canon_order order, canon_witness_mode mode,
+                           uint64_t max_nodes, canon_status *st)
+{
+    return solve_policy(g, x, y, objective, order, mode, max_nodes, 0, st);
 }
 
 static int flags_are(canon_result_flags f, bool witness, bool canonical, bool minimum,
@@ -281,8 +291,11 @@ static void deterministic_t1(void)
                     }
                     canon_object *x = subset(n, atoms, k);
                     canon_status st1, st2;
-                    canon_result *any = solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
-                                              CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY, 0, &st1);
+                    /* S7: the ANY witness of the UNPRUNED tree (work policy 0x0001) is the
+                     * one S1 reading 1 identifies with the deterministic witness */
+                    canon_result *any = solve_policy(
+                        g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
+                        CANON_WITNESS_ANY, 0, CANON_WORK_POLICY_REFERENCE, &st1);
                     canon_result *det =
                         solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
                               CANON_WITNESS_DETERMINISTIC, 0, &st2);

@@ -1,11 +1,15 @@
 /*
- * Internal header: the unpruned P1 canonical-image search (spec sections 7.1, 7.2, 7.3, 11.1).
+ * Internal header: the P1 canonical-image search (spec sections 7.1, 7.2, 7.3, 11.1).
  * Implemented in slice S1 (docs/slices/S1.md 4.7) for a top-level subset and generalised in
  * slice S2 (docs/slices/S2.md 3.5) to any root object (src/object/object.h): the leaf acts on
  * the root and encodes the image by kind.
  *
- * No pruning: spec 7.3 "The unpruned evaluator above is normative".  Pruning with its coverage
- * lemmas arrives in slice S7.
+ * spec 7.3 "The unpruned evaluator above is normative": canon_p1_search_run is that evaluator.
+ * Slice S7 step 1 adds ONE optimisation with a coverage lemma, orbit pruning by verified
+ * automorphisms fixing the node's prefix (docs/pruning-rules.md; docs/slices/S7.md 3.1),
+ * selected by work policy 0x0002 through canon_p1_search_run_policy.  Only the canonical-image
+ * solve passes that policy (src/api/api.c); the labeling and signed objectives call
+ * canon_p1_search_run and stay unpruned (spec 8.2).
  */
 #ifndef CANON_SRC_SEARCH_P1_TREE_H
 #define CANON_SRC_SEARCH_P1_TREE_H
@@ -20,6 +24,7 @@
 #include "object/object.h"
 #include "partition/partition.h"
 #include "refine/p1.h"
+#include "symmetry/symmetry.h"
 
 /* Reusable mutable search state (one active owner, spec 17).  Buffers persist across solves and
  * grow on demand; nothing here is ever aliased by a result.  Invariant: when
@@ -43,9 +48,22 @@ typedef struct canon_p1_search {
     canon_buf best_bytes;  /* ... CDAG-2 bytes ... */
     uint32_t *best_t;      /* ... and the least witness attaining it */
     bool have_best;
-    uint64_t nodes;        /* NODE tokens of the reference traversal so far */
+    uint64_t nodes;        /* NODE tokens of the traversal the work policy fixes, so far: the
+                              nodes explored (spec 11.1; S7: no count of pruned subtrees) */
     uint64_t leaves;       /* leaves reached in the last run */
     uint64_t images;       /* leaves whose image and stream were materialised (trace <= best) */
+    /* S7 (docs/pruning-rules.md): the work policy of the last run (1 or 2), the children it
+     * skipped by orbit pruning, A_known with its prefix-stabiliser stack (its stats count the
+     * automorphisms inserted and the rebases; zero under policy 1), and a stack of the explored
+     * children of the nodes on the current path (grow-only). */
+    canon_work_policy work_policy;
+    uint64_t pruned;
+    uint64_t children; /* children of the explored internal nodes (explored or pruned): on a
+                          complete run nodes = 1 + children - pruned (every child is entered or
+                          skipped by the rule, none is lost) */
+    canon_symmetry known;
+    uint32_t *reps;
+    size_t reps_top, reps_cap;
 } canon_p1_search;
 
 /* Zero state, no allocation. */
@@ -62,13 +80,22 @@ void canon_p1_search_free(canon_p1_search *s);
  * spec 11.1 logical work quota: if the reference traversal has more than max_nodes NODE
  * tokens the search is abandoned with CANON_CAPACITY_LIMIT; the outcome depends only on the
  * input and max_nodes.  Allocation failure is CANON_RESOURCE_LIMIT.  A degree mismatch between
- * g and x is CANON_INVALID_INPUT (module contract; the API checks it at problem creation). */
+ * g and x is CANON_INVALID_INPUT (module contract; the API checks it at problem creation).
+ * This is the unpruned reference traversal (work policy 0x0001). */
 canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const canon_root *x,
                                  uint64_t max_nodes);
 
-/* spec 11.1 v2.1 (slice S7): as canon_p1_search_run under the work policy `work_policy`
- * (CANON_WORK_POLICY_REFERENCE: exactly canon_p1_search_run; CANON_WORK_POLICY_ORBIT_PRUNE:
- * see docs/pruning-rules.md).  Any other value is CANON_UNSUPPORTED_ACTION. */
+/* spec 11.1 v2.1 (slice S7): as canon_p1_search_run under the work policy `work_policy`.
+ * CANON_WORK_POLICY_REFERENCE: exactly canon_p1_search_run.  CANON_WORK_POLICY_ORBIT_PRUNE
+ * (docs/pruning-rules.md): A_known is built at the root from the input generators of g that
+ * fix x (canon_symmetry_from_inputs); at a node of depth d whose prefix stabiliser H_d in
+ * A_known is nontrivial, only the numerically least member of each H_d-orbit on the target
+ * cell is explored and the other children are skipped (s->pruned).  The answer (best_trace,
+ * best_bytes) is the same as under 0x0001; best_t is the least attaining witness among the
+ * EXPLORED leaves, a valid witness that may differ from the unpruned one.  max_nodes counts
+ * the NODE tokens of the explored nodes only.  With A_known trivial the traversal is exactly
+ * the unpruned one (no rebase, no orbit computation).  Any other policy value is
+ * CANON_UNSUPPORTED_ACTION. */
 canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g,
                                         const canon_root *x, uint64_t max_nodes,
                                         canon_work_policy work_policy);
