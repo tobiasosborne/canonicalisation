@@ -50,8 +50,8 @@ static canon_group *make_group(int backend, uint32_t n, const uint32_t *gens, ui
 
 /* CANONICAL_IMAGE of x under g with an explicit work policy (0 = context default). */
 static canon_result *solve(canon_context *ctx, canon_workspace *ws, const canon_group *g,
-                           const canon_object *x, canon_work_policy policy,
-                           canon_witness_mode mode, uint64_t quota, canon_status *st)
+                           const canon_object *x, canon_work_policy policy, canon_witness_mode mode,
+                           uint64_t quota, canon_status *st)
 {
     canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, policy};
     canon_problem_options opts = {mode, NULL};
@@ -86,12 +86,10 @@ static int same_flags(const canon_result *a, const canon_result *b)
 {
     canon_result_flags fa = canon_result_get_flags(a), fb = canon_result_get_flags(b);
     return fa.witness_valid == fb.witness_valid && fa.image_canonical == fb.image_canonical &&
-           fa.minimum_proved == fb.minimum_proved &&
-           fa.subgroup_verified == fb.subgroup_verified &&
+           fa.minimum_proved == fb.minimum_proved && fa.subgroup_verified == fb.subgroup_verified &&
            fa.stabiliser_complete == fb.stabiliser_complete &&
            fa.transport_exhausted == fb.transport_exhausted &&
-           fa.zero_certified == fb.zero_certified &&
-           fa.nonzero_certified == fb.nonzero_certified &&
+           fa.zero_certified == fb.zero_certified && fa.nonzero_certified == fb.nonzero_certified &&
            fa.encoding_complete == fb.encoding_complete;
 }
 
@@ -104,14 +102,12 @@ static canon_work_policy policy_of(const canon_result *r)
 
 /* Tier totals (no timings). */
 typedef struct totals {
-    uint64_t cases, nodes_ref, nodes_pruned, pruned, inserted, rebases, any_differs,
-        trivial_known;
+    uint64_t cases, nodes_ref, nodes_pruned, pruned, inserted, rebases, any_differs, trivial_known;
 } totals;
 
 /* The comparison of one input under both policies: public API (x as an object) and the
  * internal search (x as a root, for the counters). */
-static void compare(const canon_group *g, const canon_object *xo, const canon_root *x,
-                    totals *t)
+static void compare(const canon_group *g, const canon_object *xo, const canon_root *x, totals *t)
 {
     canon_status s1, s2, s3, s4;
     canon_result *r1 = solve(CTX[0], WS, g, xo, REF, CANON_WITNESS_ANY, 0, &s1);
@@ -270,9 +266,9 @@ static void test_t1_graphs(void)
                     const size_t count = (size_t)(check_rng() % 6);
                     for (size_t i = 0; i < count; ++i) {
                         const size_t l = (size_t)(check_rng() % 2);
-                        arcs[i] = (canon_arc){(uint32_t)(check_rng() % n),
-                                              (uint32_t)(check_rng() % n), labels[l], l,
-                                              1 + check_rng() % 2};
+                        arcs[i] =
+                            (canon_arc){(uint32_t)(check_rng() % n), (uint32_t)(check_rng() % n),
+                                        labels[l], l, 1 + check_rng() % 2};
                     }
                     const uint8_t *colours[3];
                     size_t lengths[3];
@@ -373,8 +369,7 @@ static void test_t1_dags(void)
                                           CANON_ACTION_ATOM_TRANSPORT_1, 4, s.b, s.len,
                                           &xo) == CANON_COMPLETE);
                 canon_root x;
-                CHECK(canon_root_import_stream(&x, 4, s.b, s.len, &lim, NULL) ==
-                      CANON_COMPLETE);
+                CHECK(canon_root_import_stream(&x, 4, s.b, s.len, &lim, NULL) == CANON_COMPLETE);
                 CHECK(x.kind == CANON_ROOT_DAG);
                 compare(g, xo, &x, &t);
                 canon_root_free(&x);
@@ -482,8 +477,7 @@ static void test_count_drop(void)
                 printf("empty subset under Sym(%u): %llu NODE tokens unpruned, %llu pruned "
                        "(%llu children pruned, %llu automorphisms inserted)\n",
                        (unsigned)m, (unsigned long long)a.nodes, (unsigned long long)b.nodes,
-                       (unsigned long long)b.pruned,
-                       (unsigned long long)b.known.stats.inserted);
+                       (unsigned long long)b.pruned, (unsigned long long)b.known.stats.inserted);
             }
             canon_p1_search_free(&a);
             canon_p1_search_free(&b);
@@ -846,11 +840,10 @@ static void test_reuse(void)
         canon_problem_options opts = {CANON_WITNESS_ANY, rho};
         canon_problem *p = NULL;
         canon_result *l = NULL;
-        CHECK(canon_problem_create_with_options(CTX[0], g, x, NULL,
-                                                CANON_OBJECTIVE_CANONICAL_LABELING_COSET,
-                                                CANON_PROFILE_P1, CANON_ENCODING_CDAG_2,
-                                                CANON_ORDER_CDAG_BYTE_1, &cap, &opts,
-                                                &p) == CANON_COMPLETE);
+        CHECK(canon_problem_create_with_options(
+                  CTX[0], g, x, NULL, CANON_OBJECTIVE_CANONICAL_LABELING_COSET, CANON_PROFILE_P1,
+                  CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, &cap, &opts,
+                  &p) == CANON_COMPLETE);
         CHECK(canon_solve(ws, p, &l) == CANON_COMPLETE);
         CHECK(same_bytes(canon_result_bytes, l, a) && same_bytes(canon_result_trace, l, a));
         canon_problem_release(p);

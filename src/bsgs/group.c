@@ -55,8 +55,7 @@ void canon_group_unshare(const canon_group *group)
 }
 
 /* Copy `count` flat generators of degree n into a new table (rows not read for n = 0). */
-static canon_status copy_rows(uint32_t n, const uint32_t *gens, size_t count,
-                              canon_perm_table *t)
+static canon_status copy_rows(uint32_t n, const uint32_t *gens, size_t count, canon_perm_table *t)
 {
     canon_perm_table_init(t, n);
     canon_status st = CANON_COMPLETE;

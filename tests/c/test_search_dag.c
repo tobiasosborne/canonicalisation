@@ -538,10 +538,14 @@ static void test_problem_capacity(canon_workspace *ws)
         canon_capacity cap;
         canon_status want;
     } cases[] = {
-        {{0, 0, 0, 0, 3, 0, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 4, 0, 0, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 2, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 3, 0, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 0, 1, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 0, 2, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 52, 0, 0, 0, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 53, 0, 0, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 3, 0, 0, 0}, CANON_CAPACITY_LIMIT},
+        {{0, 0, 0, 0, 4, 0, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 2, 0, 0}, CANON_CAPACITY_LIMIT},
+        {{0, 0, 0, 0, 0, 3, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 0, 1, 0}, CANON_CAPACITY_LIMIT},
+        {{0, 0, 0, 0, 0, 0, 2, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 52, 0, 0, 0, 0}, CANON_CAPACITY_LIMIT},
+        {{0, 0, 0, 53, 0, 0, 0, 0}, CANON_COMPLETE},
     };
     for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i) {
         CHECK(solve(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, &cases[i].cap,

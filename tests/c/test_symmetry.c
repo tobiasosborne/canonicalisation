@@ -280,9 +280,8 @@ static void test_tier(void)
     canon_root_image_free(&img);
     printf("T1 A_known: %llu cases (both generating sets and backends), %llu with A_known > 1, "
            "%llu insertions, %llu rebases, %llu prefix orbit checks\n",
-           (unsigned long long)cases, (unsigned long long)nontrivial,
-           (unsigned long long)inserted, (unsigned long long)descends,
-           (unsigned long long)orbit_checks);
+           (unsigned long long)cases, (unsigned long long)nontrivial, (unsigned long long)inserted,
+           (unsigned long long)descends, (unsigned long long)orbit_checks);
 }
 
 /* ---- 2: the insertion discipline ---- */
@@ -306,8 +305,7 @@ static void test_insertion(void)
         const uint32_t bad[4] = {0, 0, 2, 3};
         CHECK(canon_symmetry_insert(&a, g, &x, &img, bad, &ins) == CANON_INVALID_INPUT && !ins);
         /* in G but x^p != x: (0 1) sends {0} to {1} */
-        CHECK(canon_symmetry_insert(&a, g, &x, &img, sym4[0], &ins) == CANON_INVALID_INPUT &&
-              !ins);
+        CHECK(canon_symmetry_insert(&a, g, &x, &img, sym4[0], &ins) == CANON_INVALID_INPUT && !ins);
         CHECK(a.stats.rejected == 2 && a.chain.order == 1 && a.gens.count == 0);
         /* the identity fixes x and is in G, but is not inserted */
         const uint32_t id[4] = {0, 1, 2, 3};
@@ -335,8 +333,7 @@ static void test_insertion(void)
         CHECK(a.chain.order == 6 && a.gens.count == 2);
         /* the chain verifies against its generators (spec 9.1) */
         canon_bsgs_reason reason = CANON_BSGS_UNCHECKED;
-        CHECK(canon_bsgs_verify(&a.chain, a.gens.data, a.gens.count, &reason) ==
-                  CANON_COMPLETE &&
+        CHECK(canon_bsgs_verify(&a.chain, a.gens.data, a.gens.count, &reason) == CANON_COMPLETE &&
               reason == CANON_BSGS_VALID);
         CHECK(a.stats.considered == 7 && a.stats.rejected == 2);
         canon_group_release(g);
@@ -386,8 +383,7 @@ static void test_sym6(void)
                 }
             }
             CHECK(!canon_symmetry_trivial_at(&a, d));
-            CHECK(canon_symmetry_orbit_reps(&a, d, members, len, reps, &count) ==
-                  CANON_COMPLETE);
+            CHECK(canon_symmetry_orbit_reps(&a, d, members, len, reps, &count) == CANON_COMPLETE);
             CHECK(count == 1 && reps[0] == members[0]);
             CHECK(canon_symmetry_descend(&a, d, path[d]) == CANON_COMPLETE);
             used |= 1u << path[d];
@@ -455,18 +451,17 @@ static void test_graph_and_dag(void)
     /* A nested tuple (0, 1) on 4 points (spec 4.1 records A(0), A(1), T(0,1)) under
      * Sym(4) = <(0 1), (1 2), (2 3)>: only (2 3) fixes it, A_known = <(2 3)>. */
     const uint8_t stream[] = {0x43, 0x4e, 0x02, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 4, /* H(4) */
-                              0,    0,    0,    3,                                    /* q = 3 */
-                              0x01, 0,    0,    0,    0,                              /* A(0) */
-                              0x01, 0,    0,    0,    1,                              /* A(1) */
-                              0x03, 0,    0,    0,    2, 0, 0, 0, 0, 0, 0, 0, 1,      /* T */
-                              0,    0,    0,    2};                                   /* root */
+                              0,    0,    0,    3,                                  /* q = 3 */
+                              0x01, 0,    0,    0,    0,                            /* A(0) */
+                              0x01, 0,    0,    0,    1,                            /* A(1) */
+                              0x03, 0,    0,    0,    2,    0,    0,    0, 0, 0, 0, 0, 1, /* T */
+                              0,    0,    0,    2};                                       /* root */
     const canon_dag_limits lim = {4096, UINT64_MAX, UINT64_MAX, UINT64_MAX};
     const uint32_t adj[3][4] = {{1, 0, 2, 3}, {0, 2, 1, 3}, {0, 1, 3, 2}};
     for (int backend = 0; backend < 2; ++backend) {
         canon_group *g = make_group(backend, 4, &adj[0][0], 3);
         canon_root x;
-        CHECK(canon_root_import_stream(&x, 4, stream, sizeof stream, &lim, NULL) ==
-              CANON_COMPLETE);
+        CHECK(canon_root_import_stream(&x, 4, stream, sizeof stream, &lim, NULL) == CANON_COMPLETE);
         CHECK(x.kind == CANON_ROOT_DAG);
         CHECK(canon_symmetry_reset(&a, 4) == CANON_COMPLETE);
         CHECK(canon_symmetry_from_inputs(&a, g, &x, &img) == CANON_COMPLETE);
@@ -541,8 +536,7 @@ static void test_degenerate(void)
         subset_root(&e, 1, 1u);
         CHECK(canon_symmetry_reset(&a, 1) == CANON_COMPLETE);
         CHECK(canon_symmetry_from_inputs(&a, g, &e, &img) == CANON_COMPLETE);
-        CHECK(canon_symmetry_trivial_at(&a, 0) && a.stats.considered == 1 &&
-              a.stats.inserted == 0);
+        CHECK(canon_symmetry_trivial_at(&a, 0) && a.stats.considered == 1 && a.stats.inserted == 0);
         canon_root_free(&e);
         canon_group_release(g);
         /* degree mismatch is the caller's error */

@@ -883,8 +883,8 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
 {
     canon_p1_search *s = &ws->search;
     const uint64_t quota = problem->capacity.max_search_nodes;
-    canon_status st = canon_p1_search_run_policy(s, problem->group, &problem->object->root,
-                                                 quota, problem->capacity.work_policy);
+    canon_status st = canon_p1_search_run_policy(s, problem->group, &problem->object->root, quota,
+                                                 problem->capacity.work_policy);
     const uint32_t *witness = s->best_t;
     if (st == CANON_COMPLETE && problem->witness_mode == CANON_WITNESS_DETERMINISTIC) {
         /* spec 11.1: one quota for the solve; the enumeration gets what P1 left (s->nodes is

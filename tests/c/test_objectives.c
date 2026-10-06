@@ -293,9 +293,9 @@ static void deterministic_t1(void)
                     canon_status st1, st2;
                     /* S7: the ANY witness of the UNPRUNED tree (work policy 0x0001) is the
                      * one S1 reading 1 identifies with the deterministic witness */
-                    canon_result *any = solve_policy(
-                        g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
-                        CANON_WITNESS_ANY, 0, CANON_WORK_POLICY_REFERENCE, &st1);
+                    canon_result *any = solve_policy(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
+                                                     CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY, 0,
+                                                     CANON_WORK_POLICY_REFERENCE, &st1);
                     canon_result *det =
                         solve(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_ORDER_CDAG_BYTE_1,
                               CANON_WITNESS_DETERMINISTIC, 0, &st2);
