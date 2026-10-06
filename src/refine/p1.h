@@ -91,12 +91,47 @@ int canon_p1_sig_compare(const canon_p1_sig_entry *a, size_t a_len, const canon_
  * STAGE_O token. */
 canon_status canon_p1_stage_o(canon_partition *p, const canon_root *x, canon_p1_scratch *s);
 
+/* S7 step 2: observation hooks of the P1 run for the certificate writer
+ * (src/search/certificate.c; docs/certificate-format.md).  The refinement loop below calls
+ * stage_o and stage_g; the tree (src/search/p1_tree.c) calls the others.  Neither module
+ * writes wire data: the hooks receive read-only views valid for the duration of the call.  A
+ * hook's non-COMPLETE status aborts the run with that status.  A NULL recorder costs nothing.
+ *   stage_o   after the O stage of a sweep (spec 7.1 "append STAGE_O"), P after the split;
+ *   stage_g   after the G stage of the same sweep: P after the split, F (f singleton atoms in
+ *             partition order), u (n entries, F^u = M) and the orbit ids of G_M on target
+ *             labels (n entries), exactly as the group interface returned them;
+ *   node      a NODE token: depth and the individualised atom (UINT32_MAX at the root);
+ *   leaf      the node is discrete (after its refinement and leaf evaluation); t_L when the
+ *             evaluation computed it, else NULL (a leaf whose trace exceeds the best);
+ *   branch    the target cell (index in partition order, and size) of an internal node;
+ *   explored  child b of the current branch is entered next (its `node` follows);
+ *   pruned    child b of the node at `depth` is skipped: rep (an explored child of the same
+ *             node) and an element `aut` of H_depth with rep^aut = b (n entries). */
+typedef struct canon_p1_recorder {
+    void *ctx;
+    canon_status (*stage_o)(void *ctx, const canon_partition *p);
+    canon_status (*stage_g)(void *ctx, const canon_partition *p, const uint32_t *fixed,
+                            uint32_t f, const uint32_t *u, const uint32_t *orbit);
+    canon_status (*node)(void *ctx, uint32_t depth, uint32_t atom);
+    canon_status (*leaf)(void *ctx, const uint32_t *t);
+    canon_status (*branch)(void *ctx, uint32_t cell, uint32_t cell_size);
+    canon_status (*explored)(void *ctx, uint32_t b);
+    canon_status (*pruned)(void *ctx, uint32_t depth, uint32_t b, uint32_t rep,
+                           const uint32_t *aut);
+} canon_p1_recorder;
+
 /* spec 7.1: the node refinement loop, appending NODE(depth) and one STAGE_O and one STAGE_G
  * token per sweep to `trace` (spec 7.2), up to and including the first sweep that does not
  * increase the number of cells.  On failure the trace may hold a partial node; the caller
  * truncates it. */
 canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, const canon_root *x,
                                   uint32_t depth, canon_buf *trace, canon_p1_scratch *s);
+
+/* As canon_p1_refine_node, calling rec->stage_o and rec->stage_g once per sweep (rec may be
+ * NULL: then exactly canon_p1_refine_node). */
+canon_status canon_p1_refine_node_rec(canon_partition *p, const canon_group *g,
+                                      const canon_root *x, uint32_t depth, canon_buf *trace,
+                                      canon_p1_scratch *s, const canon_p1_recorder *rec);
 
 /* spec 7.2: append the LEAF token. */
 canon_status canon_p1_trace_leaf(canon_buf *trace);

@@ -122,6 +122,24 @@ canon_status canon_symmetry_descend(canon_symmetry *a, uint32_t depth, uint32_t 
 canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const uint32_t *members,
                                        uint32_t len, uint32_t *reps, uint32_t *count);
 
+/* S7 step 2 (certificate writer): as canon_symmetry_orbit_reps, but for every member:
+ * rep_of[i] = the numerically least member of the H_depth-orbit of members[i] (members[i]
+ * itself when H_depth = 1).  Same guard and errors; rep_of has len entries and may not alias
+ * members. */
+canon_status canon_symmetry_orbit_map(canon_symmetry *a, uint32_t depth, const uint32_t *members,
+                                      uint32_t len, uint32_t *rep_of);
+
+/* S7 step 2 (docs/certificate-format.md, automorphism rule): out = an element of H_depth with
+ * from^out = to, the product s_1 s_2 ... s_k (left to right, spec 3) of the generators of
+ * H_depth along a breadth-first path from `from` to `to`.  Each generator is a strong
+ * generator of A_known fixing the prefix pointwise, so out lies in A_known <= Aut_G(x) and
+ * fixes the prefix.  The identity when from == to.  CANON_INTERNAL_ERROR when `to` is not in
+ * the H_depth-orbit of `from`; CANON_INVALID_INPUT for a point >= n or an invalid slot;
+ * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT for the per-call scratch (4n words).  Valid for
+ * the current path only (see canon_symmetry_trivial_at).  out has n entries. */
+canon_status canon_symmetry_transporter(const canon_symmetry *a, uint32_t depth, uint32_t from,
+                                        uint32_t to, uint32_t *out);
+
 /* The chain and level whose generators generate H_depth (A_known's chain at level 0 for depth
  * 0, else slot depth's chain at level 1); for tests. */
 void canon_symmetry_view(const canon_symmetry *a, uint32_t depth, const canon_bsgs **chain,

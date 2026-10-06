@@ -256,10 +256,14 @@ canon_status canon_symmetry_descend(canon_symmetry *a, uint32_t depth, uint32_t 
     return CANON_COMPLETE;
 }
 
-canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const uint32_t *members,
-                                       uint32_t len, uint32_t *reps, uint32_t *count)
+/* Shared body of canon_symmetry_orbit_reps and canon_symmetry_orbit_map: validate the
+ * members, run the soundness guard and, for a nontrivial H_depth, leave in a->rep[id] the
+ * numerically least member of each H_depth-orbit id met (a->orbit_id holds the ids).
+ * *trivial = H_depth = 1 (nothing written). */
+static canon_status orbit_least(canon_symmetry *a, uint32_t depth, const uint32_t *members,
+                                uint32_t len, bool *trivial)
 {
-    *count = 0;
+    *trivial = true;
     if (depth >= a->slot_count) {
         return CANON_INVALID_INPUT;
     }
@@ -274,13 +278,9 @@ canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const 
     canon_symmetry_view(a, depth, &c, &level);
     const canon_bsgs_level *L = a->slots[depth].trivial ? NULL : &c->levels[level];
     if (L == NULL || L->gen_count == 0) {
-        /* H_depth = 1: every member is its own orbit */
-        if (len > 0) {
-            memcpy(reps, members, (size_t)len * sizeof *reps);
-        }
-        *count = len;
-        return CANON_COMPLETE;
+        return CANON_COMPLETE; /* H_depth = 1: every member is its own orbit */
     }
+    *trivial = false;
     /* Soundness guard (docs/pruning-rules.md, lemma: C_S^a = C_S for a fixing the prefix):
      * every generator of H_depth maps the target cell into itself. */
     for (uint32_t i = 0; i < len; ++i) {
@@ -312,6 +312,25 @@ canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const 
             *r = members[i];
         }
     }
+    return CANON_COMPLETE;
+}
+
+canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const uint32_t *members,
+                                       uint32_t len, uint32_t *reps, uint32_t *count)
+{
+    *count = 0;
+    bool trivial = true;
+    canon_status st = orbit_least(a, depth, members, len, &trivial);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    if (trivial) {
+        if (len > 0) {
+            memcpy(reps, members, (size_t)len * sizeof *reps);
+        }
+        *count = len;
+        return CANON_COMPLETE;
+    }
     uint32_t k = 0;
     for (uint32_t i = 0; i < len; ++i) {
         if (a->rep[a->orbit_id[members[i]]] == members[i]) {
@@ -319,5 +338,93 @@ canon_status canon_symmetry_orbit_reps(canon_symmetry *a, uint32_t depth, const 
         }
     }
     *count = k;
+    return CANON_COMPLETE;
+}
+
+canon_status canon_symmetry_orbit_map(canon_symmetry *a, uint32_t depth, const uint32_t *members,
+                                      uint32_t len, uint32_t *rep_of)
+{
+    bool trivial = true;
+    canon_status st = orbit_least(a, depth, members, len, &trivial);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    for (uint32_t i = 0; i < len; ++i) {
+        rep_of[i] = trivial ? members[i] : a->rep[a->orbit_id[members[i]]];
+    }
+    return CANON_COMPLETE;
+}
+
+/* S7 step 2 (docs/certificate-format.md, automorphism rule): breadth-first search from `from`
+ * over the generators of H_depth, then the product of the generators along the tree path. */
+canon_status canon_symmetry_transporter(const canon_symmetry *a, uint32_t depth, uint32_t from,
+                                        uint32_t to, uint32_t *out)
+{
+    const uint32_t n = a->n;
+    if (depth >= a->slot_count || from >= n || to >= n) {
+        return CANON_INVALID_INPUT;
+    }
+    for (uint32_t v = 0; v < n; ++v) {
+        out[v] = v; /* the identity: the empty word */
+    }
+    if (from == to) {
+        return CANON_COMPLETE;
+    }
+    const canon_bsgs *c = NULL;
+    uint32_t level = 0;
+    canon_symmetry_view(a, depth, &c, &level);
+    const canon_bsgs_level *L = a->slots[depth].trivial ? NULL : &c->levels[level];
+    if (L == NULL || L->gen_count == 0) {
+        return CANON_INTERNAL_ERROR; /* H_depth = 1 has singleton orbits */
+    }
+    canon_status st = CANON_COMPLETE;
+    /* per point: the point it was reached from, the generator index (into gen_ids) used, and
+     * the BFS queue; then the path's generator indices */
+    uint32_t *work = NULL;
+    size_t words = 0;
+    if (!canon_size_mul((size_t)n, 4u, &words)) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    work = canon_alloc_array(words, sizeof *work, &st);
+    if (work == NULL) {
+        return st;
+    }
+    uint32_t *parent = work, *via = work + n, *queue = work + 2u * (size_t)n,
+             *path = work + 3u * (size_t)n;
+    for (uint32_t v = 0; v < n; ++v) {
+        parent[v] = UINT32_MAX;
+    }
+    parent[from] = from;
+    uint32_t head = 0, tail = 0;
+    queue[tail++] = from;
+    while (head < tail && parent[to] == UINT32_MAX) {
+        const uint32_t v = queue[head++];
+        for (uint32_t k = 0; k < L->gen_count; ++k) {
+            const uint32_t w = canon_perm_table_row(&c->gens, L->gen_ids[k])[v]; /* v^s */
+            if (parent[w] == UINT32_MAX) {
+                parent[w] = v;
+                via[w] = k;
+                queue[tail++] = w;
+            }
+        }
+    }
+    if (parent[to] == UINT32_MAX) {
+        free(work);
+        return CANON_INTERNAL_ERROR; /* `to` is not in the H_depth-orbit of `from` */
+    }
+    /* the path from -> ... -> to with v_{j+1} = v_j^{s_j}, collected backwards */
+    uint32_t steps = 0;
+    for (uint32_t v = to; v != from; v = parent[v]) {
+        path[steps++] = via[v];
+    }
+    /* out = s_1 s_2 ... s_k, left to right (spec 3: (pq)[v] = q[p[v]]): applying s_j after
+     * the product so far is out[v] <- s_j[out[v]], so from^out = to */
+    while (steps > 0) {
+        const uint32_t *sj = canon_perm_table_row(&c->gens, L->gen_ids[path[--steps]]);
+        for (uint32_t v = 0; v < n; ++v) {
+            out[v] = sj[out[v]];
+        }
+    }
+    free(work);
     return CANON_COMPLETE;
 }

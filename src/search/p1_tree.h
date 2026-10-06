@@ -62,8 +62,16 @@ typedef struct canon_p1_search {
                           complete run nodes = 1 + children - pruned (every child is entered or
                           skipped by the rule, none is lost) */
     canon_symmetry known;
-    uint32_t *reps;
+    uint32_t *reps; /* per internal node on the path: the target cell's members in increasing
+                       atom id, then the orbit representative of each (2 * cell size words) */
     size_t reps_top, reps_cap;
+    /* S7 step 2 (certificate writer): the recorder of the current run (NULL outside
+     * canon_p1_search_run_recorded; cleared when the run returns, on every status), the
+     * automorphism handed to its `pruned` hook (cap words), and whether leaf_t holds the
+     * current leaf's t_L. */
+    const canon_p1_recorder *rec;
+    uint32_t *aut;
+    bool leaf_t_valid;
 } canon_p1_search;
 
 /* Zero state, no allocation. */
@@ -99,5 +107,16 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
 canon_status canon_p1_search_run_policy(canon_p1_search *s, const canon_group *g,
                                         const canon_root *x, uint64_t max_nodes,
                                         canon_work_policy work_policy);
+
+/* S7 step 2: as canon_p1_search_run_policy, reporting the run to `rec` (src/refine/p1.h;
+ * NULL: exactly canon_p1_search_run_policy).  The hooks see the nodes in DFS order and, at
+ * every internal node, the target cell's members in increasing atom id (the order in which
+ * the tree visits children with or without a recorder); a pruned child is reported with its
+ * representative and a transporter in H_depth (canon_symmetry_transporter).  The outputs and
+ * counters do not depend on whether a recorder is attached. */
+canon_status canon_p1_search_run_recorded(canon_p1_search *s, const canon_group *g,
+                                          const canon_root *x, uint64_t max_nodes,
+                                          canon_work_policy work_policy,
+                                          const canon_p1_recorder *rec);
 
 #endif /* CANON_SRC_SEARCH_P1_TREE_H */

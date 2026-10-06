@@ -300,6 +300,13 @@ canon_status canon_p1_stage_o(canon_partition *p, const canon_root *x, canon_p1_
 canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, const canon_root *x,
                                   uint32_t depth, canon_buf *trace, canon_p1_scratch *s)
 {
+    return canon_p1_refine_node_rec(p, g, x, depth, trace, s, NULL);
+}
+
+canon_status canon_p1_refine_node_rec(canon_partition *p, const canon_group *g,
+                                      const canon_root *x, uint32_t depth, canon_buf *trace,
+                                      canon_p1_scratch *s, const canon_p1_recorder *rec)
+{
     /* spec 7.1/7.2: append NODE(depth) = 10 || U32(d) */
     canon_status st = canon_buf_put_u8(trace, TOKEN_NODE);
     if (st == CANON_COMPLETE) {
@@ -319,6 +326,9 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
             return st;
         }
         st = append_stage(trace, TOKEN_STAGE_O, p);
+        if (st == CANON_COMPLETE && rec != NULL) {
+            st = rec->stage_o(rec->ctx, p); /* S7 step 2: certificate sweep record */
+        }
         if (st != CANON_COMPLETE) {
             return st;
         }
@@ -343,6 +353,9 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
         }
         (void)canon_partition_split(p, s->pt.sig);
         st = append_stage(trace, TOKEN_STAGE_G, p);
+        if (st == CANON_COMPLETE && rec != NULL) {
+            st = rec->stage_g(rec->ctx, p, s->pt.fixed, f, s->pt.u, s->pt.orbit);
+        }
         if (st != CANON_COMPLETE) {
             return st;
         }
