@@ -1,5 +1,5 @@
-/* canon-cli: command-line driver for the canon library (slices S1 to S6,
- * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6, S5.md 1, S6.md 3.4).
+/* canon-cli: command-line driver for the canon library (slices S1 to S6 and S7 step 1,
+ * docs/slices/S1.md 4.9, S2.md 3.6, S3.md 3, S4.md 3.6, S5.md 1, S6.md 3.4, S7.md 1, 6.2).
  *
  *   canon-cli p1-subset --n N --gens "a0,a1,...;b0,b1,..." --atoms "x,y,z"
  *   canon-cli p1-graph  --n N --gens "..." [--colours "hex;hex;..."] [--arcs "s,t,labelhex,m;..."]
@@ -27,8 +27,14 @@
  * kind defaults to stream when a stream option is given, else to graph when a graph option is
  * given, else subset.  Every subcommand
  * also accepts [--max-nodes K] [--id CASE] [--backend chain|explicit] (slice S3: the group
- * backend, default chain; the explicit backend is the test oracle) and
- * [--witness any|deterministic] (slice S4: the spec 3 deterministic witness).
+ * backend, default chain; the explicit backend is the test oracle),
+ * [--witness any|deterministic] (slice S4: the spec 3 deterministic witness) and
+ * [--work-policy ID] or [--prune on|off] (slice S7, brief 6.2 D14: the spec 11.1 v2.1
+ * work-policy ID of the capacity descriptor, an unsigned 16-bit decimal; 0x0001 = 1 is the
+ * unpruned reference traversal, 0x0002 = 2 the S7 orbit-prune policy (the canonical image
+ * only), 0 or absent the library default 2; another value reaches the library and is reported
+ * as UNSUPPORTED_ACTION.  `--prune on` means `--work-policy 2` and `--prune off` means
+ * `--work-policy 1`; giving both options is a usage error).
  *
  * Prints one refs/compare/FORMAT.md record of seven fields:
  *   CASE \t OBJECTIVE \t STATUS \t trace_hex \t bytes_hex \t witness \t group_hex
@@ -83,7 +89,7 @@ static int usage(const char *msg)
             "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
             "               [--target-stream HEX]\n"
             "       all: [--max-nodes K] [--id CASE] [--backend chain|explicit]\n"
-            "            [--witness any|deterministic]\n",
+            "            [--witness any|deterministic] [--work-policy ID | --prune on|off]\n",
             msg);
     return 2;
 }
@@ -352,6 +358,8 @@ typedef struct options {
     int kind;                                                /* 0 subset, 1 graph, 2 stream */
     bool stream_given, target_stream_given;                  /* S5 review item 1 */
     uint64_t max_nodes;
+    canon_work_policy work_policy; /* S7: 0 = the library default */
+    bool policy_given;             /* S7: --work-policy or --prune was given */
     canon_backend backend;
     canon_order order;
     canon_witness_mode witness;
@@ -453,6 +461,25 @@ static int parse_options(int argc, char **argv, options *o)
             } else {
                 return usage("--witness expects any or deterministic");
             }
+        } else if (strcmp(opt, "--work-policy") == 0 || strcmp(opt, "--prune") == 0) {
+            /* S7 brief 6.2 D14: the work policy replaces the prune flag; --prune is sugar */
+            if (o->policy_given) {
+                return usage("--work-policy and --prune are given at most once, not both");
+            }
+            o->policy_given = true;
+            uint64_t v = 0;
+            if (strcmp(opt, "--prune") == 0) {
+                if (strcmp(val, "on") == 0) {
+                    v = CANON_WORK_POLICY_ORBIT_PRUNE;
+                } else if (strcmp(val, "off") == 0) {
+                    v = CANON_WORK_POLICY_REFERENCE;
+                } else {
+                    return usage("--prune expects on or off");
+                }
+            } else if (!parse_u64(val, strlen(val), UINT16_MAX, &v)) {
+                return usage("--work-policy expects an unsigned 16-bit decimal");
+            }
+            o->work_policy = (canon_work_policy)v;
         } else if (strcmp(opt, "--max-nodes") == 0) {
             if (!parse_u64(val, strlen(val), UINT64_MAX, &o->max_nodes)) {
                 return usage("--max-nodes expects an unsigned decimal");
@@ -750,7 +777,7 @@ int main(int argc, char **argv)
     canon_problem *problem = NULL;
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
-    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, o.work_policy};
     const canon_context_options copts = {o.backend};
     const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL};
     canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);

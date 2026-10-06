@@ -1,5 +1,5 @@
-"""End-to-end test of the slice S1 to S6 C paths (docs/slices/S1.md section 5, S2.md section 4,
-S4.md section 4, S5.md section 4, S6.md section 4).
+"""End-to-end test of the slice S1 to S6 C paths and of S7 step 1 (docs/slices/S1.md section 5,
+S2.md section 4, S4.md section 4, S5.md section 4, S6.md section 4, S7.md sections 4 and 6.2).
 
 Drives tools/canon-cli (located through the CANON_CLI environment variable, else
 build/make/canon-cli) and compares its refs/compare/FORMAT.md records with the finite Python
@@ -71,10 +71,22 @@ Slice S6 (class LabelingAndSigned), on the T1 subsets and the G1 digraphs under 
      unchanged (every h, three seeded h for n = 4); the cross-feed s(C(x)) = +1 (spec 20).
 Every canonical output of both tiers passes `canon-cli validate` and tools/hexdump_stream.py.
 
+Slice S7 step 1 (brief 6.2 D14 (c)): the library's default work policy is 0x0002 (orbit
+pruning of the canonical image), so `cli()` passes `--work-policy 1` (the unpruned reference
+traversal) to every call unless the caller chooses a policy: every model tier above compares
+under the reference policy, whose ANY witness and node counts the model predicts.  Tier P1-prune
+(class PrunedTier) runs the canonical image under `--work-policy 2`: on the T1 subsets, the
+G1 digraphs, a G2 sample and a D1 sample, trace and bytes equal the model's; the ANY witness
+is checked for validity only (it lies in G and sends x to the model's image; brief 3.1 Scope)
+and the deterministic witness equals the model's witness; `--prune on|off` are the same
+records as `--work-policy 2|1`; the quota boundary on the empty subset under Sym(5) uses the
+counts derived from the falling-factorial rule; and the usage errors of the new options.
+
 Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
 makes them fail.
 """
 import json
+import math
 import os
 import pathlib
 import random
@@ -106,10 +118,19 @@ if BACKEND not in ("", "chain", "explicit"):
     raise SystemExit(f"CANON_BACKEND must be chain or explicit, not {BACKEND!r}")
 
 
-def cli(args):
-    """Run canon-cli with the selected backend appended (options may come in any order)."""
+def cli(args, policy=1):
+    """Run canon-cli with the selected backend appended (options may come in any order).
+
+    Slice S7 (brief 6.2 D14 (c)): `--work-policy POLICY` is appended too (default 1, the
+    unpruned reference traversal the model tiers predict), except for `validate` (which takes
+    neither option), when policy is None, or when the caller already passes `--work-policy` or
+    `--prune`."""
+    args = list(args)
     extra = ["--backend", BACKEND] if BACKEND else []
-    return subprocess.run([str(CLI)] + list(args) + extra, capture_output=True, text=True,
+    if (policy is not None and args and args[0] != "validate" and "--work-policy" not in args
+            and "--prune" not in args):
+        extra += ["--work-policy", str(policy)]
+    return subprocess.run([str(CLI)] + args + extra, capture_output=True, text=True,
                           check=False)
 
 
@@ -120,18 +141,18 @@ def gens_arg(n, gens):
     return ";".join(",".join(str(v) for v in g) for g in gens)
 
 
-def run_cli(n, gens, atoms, case_id="e2e", max_nodes=None):
+def run_cli(n, gens, atoms, case_id="e2e", max_nodes=None, policy=1, extra=()):
     args = ["p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
             "--atoms", ",".join(str(a) for a in sorted(atoms)), "--id", case_id]
     if max_nodes is not None:
         args += ["--max-nodes", str(max_nodes)]
-    proc = cli(args)
+    proc = cli(args + list(extra), policy)
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
 
 
-def run_graph_cli(n, gens, colours, arcs, case_id="e2e", max_nodes=None):
+def run_graph_cli(n, gens, colours, arcs, case_id="e2e", max_nodes=None, policy=1, extra=()):
     """canon-cli p1-graph; colours is a tuple of n byte strings, arcs (s, t, label, m)."""
     colour_arg = "" if all(c == b"" for c in colours) else ";".join(c.hex() for c in colours)
     arc_arg = ";".join(f"{a},{b},{label.hex()},{m}" for a, b, label, m in arcs)
@@ -139,7 +160,7 @@ def run_graph_cli(n, gens, colours, arcs, case_id="e2e", max_nodes=None):
             "--colours", colour_arg, "--arcs", arc_arg, "--id", case_id]
     if max_nodes is not None:
         args += ["--max-nodes", str(max_nodes)]
-    proc = cli(args)
+    proc = cli(args + list(extra), policy)
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
@@ -1140,13 +1161,13 @@ def random_dag(n, rng):
     return records, root
 
 
-def run_stream(cmd, n, gens, stream, extra=(), case_id="d", target=None):
+def run_stream(cmd, n, gens, stream, extra=(), case_id="d", target=None, policy=1):
     args = [cmd, "--n", str(n), "--gens", gens_arg(n, gens), "--id", case_id]
     args += ["--stream", stream.hex()] if cmd == "p1-stream" else [
         "--kind", "stream", "--stream", stream.hex()]
     if target is not None:
         args += ["--target-stream", target.hex()]
-    proc = cli(args + list(extra))
+    proc = cli(args + list(extra), policy)
     lines = proc.stdout.splitlines()
     fields = lines[0].split("\t") if len(lines) == 1 else None
     return proc.returncode, fields, proc
@@ -1700,6 +1721,206 @@ class LabelingAndSigned(CliTestCase):
         code, f, _ = run_objective("signed", 2, [(1, 0)], "subset", frozenset({0}), None,
                                    ("--signs", "-", "--max-nodes", "4"), "zq")
         self.assertEqual(f[2], "COMPLETE")
+
+
+# ---- Slice S7 step 1: tier P1-prune (docs/slices/S7.md sections 4 and 6.2) ----
+
+
+class PrunedTier(CliTestCase):
+    """Tier P1-prune: the canonical image under work policy 0x0002 (orbit pruning by the input
+    generators that fix x, docs/pruning-rules.md) against the unpruned model.  Trace and bytes
+    must be the model's (PROFILE-EQUIV); the ANY witness may be another valid one (brief 3.1
+    Scope), so it is checked by membership and action; the deterministic witness must be the
+    model's (it is computed from the complete stabiliser, unchanged by pruning)."""
+
+    def check_record(self, fields, cid, n, group, expected, image_of, deterministic):
+        """expected = (trace, data, witness) of the model; image_of(w) = bytes of x^w.
+        Returns 1 when the ANY witness differs from the model's least witness."""
+        trace, data, witness = expected
+        self.assertIsNotNone(fields)
+        self.assertEqual(fields[:5], [cid, "0001", "COMPLETE", trace.hex(), data.hex()])
+        self.assertEqual(fields[6], "-")
+        if deterministic:
+            self.assertEqual(fields[5], witness_field(n, witness))
+            return 0
+        w = parse_witness(n, fields[5])
+        self.assertIn(w, group)
+        self.assertEqual(image_of(w), data)
+        return int(fields[5] != witness_field(n, witness))
+
+    def test_t1_subsets(self):
+        cases = differ = aliases = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                generating_sets = {"full": sorted(group), "greedy": greedy_generators(group, n)}
+                for mask in range(1 << n):
+                    atoms = frozenset(a for a in range(n) if mask >> a & 1)
+                    expected = rc.p1(n, group, "subset", atoms)
+
+                    def image_of(w, atoms=atoms, n=n):
+                        return rc.subset_bytes(n, rc.act_object("subset", atoms, w))
+
+                    for label, gens in generating_sets.items():
+                        cid = f"prune-t1-n{n}-g{gi}-m{mask}-{label}"
+                        i = cases
+                        cases += 1
+                        with self.subTest(cid):
+                            code, fields, proc = run_cli(n, gens, atoms, cid, policy=2)
+                            self.assertEqual(code, 0, proc.stderr)
+                            differ += self.check_record(fields, cid, n, group, expected,
+                                                        image_of, False)
+                            if sampled(i, 4):
+                                code, det, proc = run_cli(n, gens, atoms, cid, policy=2,
+                                                          extra=("--witness", "deterministic"))
+                                self.assertEqual(code, 0, proc.stderr)
+                                self.check_record(det, cid, n, group, expected, image_of, True)
+                            if i % 7 == 0:
+                                # --prune on|off are --work-policy 2|1 (brief 6.2 D14)
+                                _, on, _ = run_cli(n, gens, atoms, cid, policy=None,
+                                                   extra=("--prune", "on"))
+                                self.assertEqual(on, fields)
+                                _, off, _ = run_cli(n, gens, atoms, cid, policy=None,
+                                                    extra=("--prune", "off"))
+                                self.assertEqual(off, [cid, "0001", "COMPLETE",
+                                                       expected[0].hex(), expected[1].hex(),
+                                                       witness_field(n, expected[2]), "-"])
+                                aliases += 1
+        self.assertEqual(cases, 2 * (1 * 1 + 1 * 2 + 2 * 4 + 6 * 8 + 30 * 16))
+        # pruning really ran: some ANY witnesses are other valid witnesses
+        self.assertGreater(differ, 0)
+        self.assertGreater(aliases, 0)
+
+    def check_graph(self, n, group, gens, colours, arcs, cid, deterministic):
+        expected = rc.p1(n, group, "graph", (colours, arcs))
+
+        def image_of(w):
+            return rc.graph_bytes(n, rc.act_object("graph", (colours, arcs), w))
+
+        extra = ("--witness", "deterministic") if deterministic else ()
+        code, fields, proc = run_graph_cli(n, gens, colours, arcs, cid, policy=2, extra=extra)
+        self.assertEqual(code, 0, proc.stderr)
+        return self.check_record(fields, cid, n, group, expected, image_of, deterministic)
+
+    def test_g1_and_g2_graphs(self):
+        cases = 0
+        for n in range(3):  # G1: exhaustive, both generating sets
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                generating_sets = {"full": sorted(group), "greedy": greedy_generators(group, n)}
+                for multiplicities, distinct in product(product(range(3), repeat=n * n),
+                                                        (False, True)):
+                    colours = tuple(bytes([a % 2]) if distinct else b"" for a in range(n))
+                    arcs = tuple((a, b, b"", multiplicities[a * n + b])
+                                 for a in range(n) for b in range(n)
+                                 if multiplicities[a * n + b])
+                    for label, gens in generating_sets.items():
+                        cid = "prune-g1-n%d-g%d-m%s-c%d-%s" % (
+                            n, gi, "".join(map(str, multiplicities)), distinct, label)
+                        with self.subTest(cid):
+                            self.check_graph(n, group, gens, colours, arcs, cid, False)
+                            if sampled(cases, 4):
+                                self.check_graph(n, group, gens, colours, arcs, cid, True)
+                        cases += 1
+        self.assertEqual(cases, 2 * 2 * (1 + 3 + 2 * 81))
+        sample = 0
+        for n in (3, 4):  # G2: a seeded sample, greedy generators
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for k in range(2 if FAST else 4):
+                    rng = random.Random(7000003 * n + 1013 * gi + k)
+                    density = rng.choice((0.25, 0.5, 1.0))
+                    arcs = tuple((a, b, label, rng.choice((1, 2)))
+                                 for a in range(n) for b in range(n) for label in (b"", b"a")
+                                 if rng.random() < density * 2 / 3)
+                    colours = tuple(rng.choice((b"", b"c")) for _ in range(n))
+                    cid = f"prune-g2-n{n}-g{gi}-r{k}"
+                    with self.subTest(cid):
+                        self.check_graph(n, group, gens, colours, arcs, cid, False)
+                        self.check_graph(n, group, gens, colours, arcs, cid, True)
+                    sample += 1
+        self.assertEqual(sample, (2 if FAST else 4) * (6 + 30))
+
+    def test_d1_sample(self):
+        cases = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                leaves = p1_leaves(n, group)
+                for k in range(1 if FAST else 2):
+                    rng = random.Random(9009 + 1000 * n + 37 * gi + k)
+                    records, root = random_dag(n, rng)
+                    stream = raw_stream(n, records, root)
+                    expected = p1_dag(n, group, records, root, leaves)
+
+                    def image_of(w, records=records, root=root, n=n):
+                        return dag_bytes(n, records, root, w)
+
+                    cid = f"prune-d1-n{n}-g{gi}-r{k}"
+                    with self.subTest(cid):
+                        for deterministic in (False, True):
+                            extra = ("--witness", "deterministic") if deterministic else ()
+                            code, fields, proc = run_stream("p1-stream", n, gens, stream, extra,
+                                                            cid, policy=2)
+                            self.assertEqual(code, 0, proc.stderr)
+                            self.check_record(fields, cid, n, group, expected, image_of,
+                                              deterministic)
+                    cases += 1
+        self.assertEqual(cases, (1 if FAST else 2) * (1 + 1 + 2 + 6 + 30))
+
+    def test_quota_boundary(self):
+        # spec 11.1 v2.1: the quota counts the nodes of the traversal the work policy fixes.
+        # The empty subset under Sym(5): every node's partition is the individualised prefix
+        # and one cell of the free atoms, which the G stage never splits, so the unpruned tree
+        # has one node per injective prefix of length k = 0..4 (the falling factorials
+        # 5!/(5-k)!); under pruning H_k = Sym(free atoms) has one orbit on the target cell,
+        # so one child is explored at each of the depths 0..3: 1 + 4 nodes.
+        n = 5
+        unpruned = sum(math.perm(n, k) for k in range(n))
+        pruned = 1 + sum(1 for _ in range(n - 1))
+        self.assertEqual((unpruned, pruned), (1 + 5 + 20 + 60 + 120, 5))
+        gens = [(1, 0, 2, 3, 4), (1, 2, 3, 4, 0)]
+        runs = (
+            (2, (), pruned, "COMPLETE"), (2, (), pruned - 1, "CAPACITY_LIMIT"),
+            (None, ("--prune", "on"), pruned, "COMPLETE"),
+            (None, ("--work-policy", "0"), pruned, "COMPLETE"),  # 0: the default, 0x0002
+            (None, (), pruned, "COMPLETE"),                       # no option: the default
+            (1, (), pruned, "CAPACITY_LIMIT"), (1, (), unpruned - 1, "CAPACITY_LIMIT"),
+            (1, (), unpruned, "COMPLETE"), (None, ("--prune", "off"), unpruned, "COMPLETE"),
+            (None, ("--prune", "off"), unpruned - 1, "CAPACITY_LIMIT"))
+        for policy, extra, quota, want in runs:
+            with self.subTest((policy, extra, quota)):
+                code, fields, proc = run_cli(n, gens, [], "pq", max_nodes=quota, policy=policy,
+                                             extra=extra)
+                self.assertEqual((code, fields[2]), (0 if want == "COMPLETE" else 3, want),
+                                 proc.stderr)
+
+    def test_other_objectives_and_usage(self):
+        # every objective accepts both IDs; only the canonical image prunes
+        base = ["stabiliser", "--n", "3", "--gens", "1,0,2;1,2,0", "--atoms", "0", "--id", "st"]
+        one, two = cli(base, 1), cli(base, 2)
+        self.assertEqual((one.returncode, one.stdout), (two.returncode, two.stdout))
+        # an unknown ID reaches the library: UNSUPPORTED_ACTION (spec 3.2, 4.1), exit 3
+        code, fields, _ = run_cli(2, [(1, 0)], [], "pw3", policy=3)
+        self.assertEqual((code, fields), (3, ["pw3", "0001", "UNSUPPORTED_ACTION", "", "", "-",
+                                              "-"]))
+        for args in (["p1-subset", "--n", "2", "--prune", "maybe"],
+                     ["p1-subset", "--n", "2", "--prune", ""],
+                     ["p1-subset", "--n", "2", "--work-policy", "x"],
+                     ["p1-subset", "--n", "2", "--work-policy", "-1"],
+                     ["p1-subset", "--n", "2", "--work-policy", "65536"],
+                     ["p1-subset", "--n", "2", "--work-policy", "1", "--prune", "on"],
+                     ["p1-subset", "--n", "2", "--prune", "on", "--work-policy", "2"],
+                     ["p1-subset", "--n", "2", "--prune", "on", "--prune", "on"],
+                     ["validate", "--stream", "00", "--prune", "on"],
+                     ["validate", "--stream", "00", "--work-policy", "1"]):
+            with self.subTest(args):
+                proc = subprocess.run([str(CLI)] + args, capture_output=True, text=True,
+                                      check=False)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+
 
 if __name__ == "__main__":
     unittest.main()
