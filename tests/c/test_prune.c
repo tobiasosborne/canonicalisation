@@ -59,7 +59,7 @@ static canon_result *solve(canon_context *ctx, canon_workspace *ws, const canon_
                            uint64_t quota, canon_status *st)
 {
     canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, policy};
-    canon_problem_options opts = {mode, NULL};
+    canon_problem_options opts = {mode, NULL, false};
     canon_problem *p = NULL;
     canon_result *r = NULL;
     *st = canon_problem_create_with_options(ctx, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
@@ -657,7 +657,7 @@ static uint64_t least_quota_objective(const canon_group *g, const canon_object *
 {
     for (uint64_t q = 1; q < 4096; ++q) {
         canon_capacity cap = {0, 0, q, 0, 0, 0, 0, policy};
-        canon_problem_options opts = {CANON_WITNESS_ANY, rho};
+        canon_problem_options opts = {CANON_WITNESS_ANY, rho, false};
         canon_problem *p = NULL;
         canon_result *r = NULL;
         CHECK(canon_problem_create_with_options(CTX[0], g, x, NULL, objective, CANON_PROFILE_P1,
@@ -936,7 +936,7 @@ static void test_reuse(void)
         CHECK(same_bytes(canon_result_bytes, b, fresh_ref) && same_witness(b, fresh_ref));
         /* a labeling in between (unpruned P1 in the same workspace) */
         canon_capacity cap = {0, 0, 0, 0, 0, 0, 0, 0};
-        canon_problem_options opts = {CANON_WITNESS_ANY, rho};
+        canon_problem_options opts = {CANON_WITNESS_ANY, rho, false};
         canon_problem *p = NULL;
         canon_result *l = NULL;
         CHECK(canon_problem_create_with_options(

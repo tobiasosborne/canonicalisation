@@ -61,7 +61,7 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
                                          ? (canon_work_policy)CANON_WORK_POLICY_REFERENCE
                                          : (canon_work_policy)0;
     canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, policy};
-    canon_problem_options opts = {CANON_WITNESS_ANY, rho};
+    canon_problem_options opts = {CANON_WITNESS_ANY, rho, false};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
     canon_result *r = NULL;
@@ -508,9 +508,9 @@ static void checks_and_errors(void)
     /* validation (canon.h order): missing rho, rho for another objective, non-bijective rho,
      * profile NO_TREE, a deterministic witness */
     canon_problem *p = NULL;
-    canon_problem_options none = {CANON_WITNESS_ANY, NULL}, with = {CANON_WITNESS_ANY, rho};
-    canon_problem_options badrho = {CANON_WITNESS_ANY, bad},
-                          det = {CANON_WITNESS_DETERMINISTIC, rho};
+    canon_problem_options none = {CANON_WITNESS_ANY, NULL, false}, with = {CANON_WITNESS_ANY, rho, false};
+    canon_problem_options badrho = {CANON_WITNESS_ANY, bad, false},
+                          det = {CANON_WITNESS_DETERMINISTIC, rho, false};
     const canon_objective L = CANON_OBJECTIVE_CANONICAL_LABELING_COSET;
 #define CREATE(obj, prof, opt)                                                                     \
     canon_problem_create_with_options(ctx_of[0], g, x, NULL, obj, prof, CANON_ENCODING_CDAG_2,     \
@@ -527,7 +527,7 @@ static void checks_and_errors(void)
                                             &with, &p) == CANON_UNSUPPORTED_ACTION);
     /* the problem copies rho */
     uint32_t mutable_rho[3] = {1, 2, 0};
-    canon_problem_options copy = {CANON_WITNESS_ANY, mutable_rho};
+    canon_problem_options copy = {CANON_WITNESS_ANY, mutable_rho, false};
     CHECK(CREATE(L, CANON_PROFILE_P1, &copy) == CANON_COMPLETE);
     mutable_rho[0] = 0;
     mutable_rho[1] = 0;

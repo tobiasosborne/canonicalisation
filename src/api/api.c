@@ -71,6 +71,7 @@ struct canon_problem {
     canon_encoding encoding;
     canon_order order;
     canon_capacity capacity; /* resolved: every field nonzero */
+    bool certificate;        /* S7 step 2: emit CERT-0 (CANONICAL_IMAGE, ANY, non-nested) */
 };
 
 struct canon_workspace {
@@ -98,6 +99,8 @@ struct canon_result {
     int sign;           /* S6: +1/-1 nonzero, 0 certified zero (SIGNED_CANONICAL_IMAGE) */
     canon_objective objective;
     canon_work_policy work_policy; /* S7, spec 11.1: the effective policy; 0 if not complete */
+    uint8_t *certificate; /* S7 step 2: owned CERT-0 bytes; NULL if not requested/complete */
+    size_t certificate_len;
     /* S4, for canon_result_verify_witness: the problem's immutable inputs, retained (owned
      * references, not borrowed pointers); NULL in a status-only result. */
     const canon_group *group;
@@ -276,6 +279,7 @@ void canon_result_release(canon_result *result)
         free(result->key);
         free(result->labeling);
         free(result->rho);
+        free(result->certificate);
         canon_group_unshare(result->group);
         object_unshare(result->object);
         object_unshare(result->target);
@@ -606,6 +610,15 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
         !work_policy_known(capacity->work_policy)) {
         return CANON_UNSUPPORTED_ACTION;
     }
+    /* S7 step 2 (docs/slices/S7.md 3.3, 3.4): certificate v0 covers the P1 canonical image
+     * with an explored-leaf witness (brief 3.4 rule 7 "any-witness mode") of a subset or graph
+     * root ("Nested roots are rejected as unsupported in v0"). */
+    const bool certificate = options != NULL && options->certificate;
+    if (certificate &&
+        (objective != CANON_OBJECTIVE_CANONICAL_IMAGE || mode != CANON_WITNESS_ANY ||
+         object->root.kind == CANON_ROOT_DAG)) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
     if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
     }
@@ -740,6 +753,7 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     pr->encoding = encoding;
     pr->order = order;
     pr->capacity = cap;
+    pr->certificate = certificate;
     *out = pr;
     return CANON_COMPLETE;
 }
@@ -1096,6 +1110,25 @@ canon_status canon_result_work_policy(const canon_result *result, canon_work_pol
         return CANON_INVALID_INPUT;
     }
     *policy_out = result->work_policy;
+    return CANON_COMPLETE;
+}
+
+/* S7 step 2: the owned CERT-0 bytes of a complete result whose problem requested them. */
+canon_status canon_result_certificate(const canon_result *result, const uint8_t **bytes,
+                                      size_t *length)
+{
+    if (bytes != NULL) {
+        *bytes = NULL;
+    }
+    if (length != NULL) {
+        *length = 0;
+    }
+    if (result == NULL || bytes == NULL || length == NULL || result->status != CANON_COMPLETE ||
+        result->certificate == NULL) {
+        return CANON_INVALID_INPUT;
+    }
+    *bytes = result->certificate;
+    *length = result->certificate_len;
     return CANON_COMPLETE;
 }
 

@@ -779,7 +779,7 @@ int main(int argc, char **argv)
     canon_result *result = NULL;
     canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, o.work_policy};
     const canon_context_options copts = {o.backend};
-    const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL};
+    const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL, false};
     canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);
     if (st == CANON_COMPLETE) {
         st = o.signs != NULL ? canon_group_create_signed(ctx, n, gen, gen_count, signs, &group)

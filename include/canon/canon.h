@@ -392,6 +392,13 @@ typedef struct canon_problem_options {
      * (rho[v] = v^rho, a bijection; copied by the problem).  Required for
      * CANONICAL_LABELING_COSET, must be NULL otherwise. */
     const uint32_t *rho;
+    /* S7 step 2 (docs/slices/S7.md 3.3; docs/certificate-format.md): request a certificate
+     * CERT-0 of the run, read back by canon_result_certificate.  Supported only for
+     * CANONICAL_IMAGE with CANON_WITNESS_ANY and a subset or graph root (a nested root is
+     * unsupported in v0, brief 3.4); otherwise canon_problem_create_with_options returns
+     * CANON_UNSUPPORTED_ACTION.  PROVISIONAL: the format is not frozen until the independent
+     * checker (S7 step 3) accepts it. */
+    bool certificate;
 } canon_problem_options;
 
 /* spec 17, 3, 8 (slice S4): as canon_problem_create, plus an optional second object `target`
@@ -418,7 +425,9 @@ typedef struct canon_problem_options {
  * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
  * SIGNED_CANONICAL_IMAGE), SIGNED_CANONICAL_IMAGE on an unsigned group or (S7) a capacity
  * work_policy other than 0, 0x0001 and 0x0002 (0 resolves to the context's; every objective
- * accepts both IDs, and only CANONICAL_IMAGE prunes under 0x0002); CANON_INVALID_INPUT
+ * accepts both IDs, and only CANONICAL_IMAGE prunes under 0x0002), or (S7 step 2)
+ * options->certificate with an objective other than CANONICAL_IMAGE, with
+ * CANON_WITNESS_DETERMINISTIC or with a nested (DAG) root; CANON_INVALID_INPUT
  * for a degree mismatch, a missing, superfluous or mismatched target, or a missing, superfluous
  * or non-bijective rho; CANON_UNSUPPORTED_ACTION for SIMPLE-UPPER-1 on an object outside the
  * spec 4.4 class; CANON_CAPACITY_LIMIT as for canon_problem_create, where the output size is
@@ -539,6 +548,18 @@ const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degr
  * (docs/slices/S7-notes.md).  CANON_INVALID_INPUT (*policy_out = 0 when given) for NULL
  * arguments or a result of a solve that did not complete. */
 canon_status canon_result_work_policy(const canon_result *result, canon_work_policy *policy_out);
+
+/* S7 step 2 (docs/slices/S7.md 3.3; format in docs/certificate-format.md): the certificate
+ * CERT-0 of a completed CANONICAL_IMAGE solve whose problem set options->certificate.  On
+ * CANON_COMPLETE *bytes points to *length bytes owned by the result (valid until it is
+ * released; never workspace memory).  CANON_INVALID_INPUT (*bytes = NULL, *length = 0 when
+ * given) for NULL arguments, a result of a solve that did not complete (a certificate
+ * interrupted by the quota, an allocation failure or an internal error is discarded), or a
+ * result whose problem did not request a certificate.  The certificate is the engine's claim
+ * for the independent checker (S7 step 3); producing it does not change the result's evidence
+ * mode, which stays the engine's own (spec 14.3). */
+canon_status canon_result_certificate(const canon_result *result, const uint8_t **bytes,
+                                      size_t *length);
 
 /* spec section 17: per-input statuses, input order preserved regardless of scheduling.
  * STUB until slice S8: returns CANON_UNSUPPORTED_ACTION. */

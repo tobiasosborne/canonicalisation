@@ -624,8 +624,8 @@ static void graphs_and_errors(void)
                                CANON_ORDER_CDAG_BYTE_1, NULL, &p) == CANON_UNSUPPORTED_ACTION);
     CHECK(canon_problem_create(ctx_of[0], g, x, S, CANON_PROFILE_NO_TREE, CANON_ENCODING_CDAG_2,
                                CANON_ORDER_CDAG_BYTE_1, NULL, &p) == CANON_UNSUPPORTED_ACTION);
-    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL},
-                                with_rho = {CANON_WITNESS_ANY, swap};
+    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false},
+                                with_rho = {CANON_WITNESS_ANY, swap, false};
     CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL, S, CANON_PROFILE_P1,
                                             CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
                                             &det, &p) == CANON_UNSUPPORTED_ACTION);

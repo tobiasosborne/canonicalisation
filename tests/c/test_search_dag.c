@@ -58,7 +58,7 @@ static canon_status solve(canon_workspace *ws, const canon_group *g, const canon
                           const canon_capacity *cap, canon_witness_mode mode, canon_result **out)
 {
     canon_problem *p = NULL;
-    const canon_problem_options opts = {mode, NULL};
+    const canon_problem_options opts = {mode, NULL, false};
     *out = NULL;
     canon_status st = canon_problem_create_with_options(
         CTX, g, x, y, objective,
