@@ -39,6 +39,11 @@
 #define BIG ((uint64_t)1 << 40)
 
 static canon_context *CTX[2]; /* chain, explicit; default work policy (0x0002) */
+
+/* Storage whose address stands in for a handle that a failing constructor must overwrite with
+ * NULL; it is never used as a handle. */
+static int not_a_handle;
+#define NOT_A_HANDLE ((void *)&not_a_handle)
 static canon_workspace *WS;
 
 static canon_group *make_group(int backend, uint32_t n, const uint32_t *gens, uint32_t count)
@@ -587,7 +592,7 @@ static void test_quota(void)
 
 static void test_descriptor(void)
 {
-    canon_context *ctx = (canon_context *)&WS; /* overwritten with NULL on failure */
+    canon_context *ctx = NOT_A_HANDLE; /* overwritten with NULL on failure */
     const canon_capacity bad = {0, 0, 0, 0, 0, 0, 0, 3};
     CHECK(canon_context_create(&bad, &ctx) == CANON_UNSUPPORTED_ACTION && ctx == NULL);
     const canon_capacity huge = {0, 0, 0, 0, 0, 0, 0, 0xffff};
@@ -616,7 +621,7 @@ static void test_descriptor(void)
     CHECK(st == CANON_COMPLETE && policy_of(r) == REF);
     canon_result_release(r);
     /* problem creation refuses unknown IDs for every objective */
-    canon_problem *p = (canon_problem *)&WS;
+    canon_problem *p = NOT_A_HANDLE;
     CHECK(canon_problem_create(ctx, g, x, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1,
                                CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, &bad,
                                &p) == CANON_UNSUPPORTED_ACTION &&
@@ -819,6 +824,100 @@ static void test_count_invariance(void)
 
 /* ---- 8: workspace reuse across policies and objectives ---- */
 
+/* The solve of x (atoms) under <gens> on n points in workspace ws under `policy`, compared
+ * with a fresh workspace under the reference policy: trace and bytes equal; the witness
+ * equal under the reference policy, valid under the pruned one. */
+static void check_against_reference(canon_workspace *ws, uint32_t n, const uint32_t *gens,
+                                    uint32_t count, const uint32_t *atoms, uint32_t k,
+                                    canon_work_policy policy)
+{
+    canon_group *g = make_group(0, n, gens, count);
+    canon_object *x = NULL;
+    CHECK(canon_object_create_subset(CTX[0], n, atoms, k, &x) == CANON_COMPLETE);
+    canon_workspace *fresh = NULL;
+    CHECK(canon_workspace_create(CTX[0], &fresh) == CANON_COMPLETE);
+    canon_status s1, s2;
+    canon_result *ref = solve(CTX[0], fresh, g, x, REF, CANON_WITNESS_ANY, 0, &s1);
+    canon_result *got = solve(CTX[0], ws, g, x, policy, CANON_WITNESS_ANY, 0, &s2);
+    CHECK(s1 == CANON_COMPLETE && s2 == CANON_COMPLETE && policy_of(got) == policy);
+    CHECK(same_bytes(canon_result_trace, ref, got) && same_bytes(canon_result_bytes, ref, got));
+    bool valid = false;
+    CHECK(canon_result_verify_witness(got, &valid) == CANON_COMPLETE && valid);
+    if (policy == REF) {
+        CHECK(same_witness(ref, got));
+    }
+    canon_result_release(ref);
+    canon_result_release(got);
+    canon_workspace_release(fresh);
+    canon_object_release(x);
+    canon_group_release(g);
+}
+
+/* A pruned solve abandoned mid-tree by the quota, with A_known nontrivial (the explored-children
+ * stack and the prefix-stabiliser slots are in use when it stops), then the same workspace
+ * for a solve at another degree under another group, then for an unpruned solve. */
+static void test_abort_and_reuse(void)
+{
+    const uint32_t sym5[10] = {1, 0, 2, 3, 4, 1, 2, 3, 4, 0};
+    canon_group *g5 = make_group(0, 5, sym5, 2);
+    canon_object *e5 = NULL;
+    CHECK(canon_object_create_subset(CTX[0], 5, NULL, 0, &e5) == CANON_COMPLETE);
+    canon_workspace *ws = NULL;
+    CHECK(canon_workspace_create(CTX[0], &ws) == CANON_COMPLETE);
+    /* the pruned traversal has 5 nodes (test_count_drop); 3 stops it at depth 3 */
+    canon_status st;
+    canon_result *r = solve(CTX[0], ws, g5, e5, PRUNE, CANON_WITNESS_ANY, 3, &st);
+    CHECK(st == CANON_CAPACITY_LIMIT && canon_result_status(r) == CANON_CAPACITY_LIMIT);
+    canon_result_release(r);
+    /* degree 3, C_3 = <(0 1 2)> on {0, 1}: A_known = 1 */
+    const uint32_t c3[3] = {1, 2, 0}, two[2] = {0, 1};
+    check_against_reference(ws, 3, c3, 1, two, 2, PRUNE);
+    /* degree 4, <(0 1), (2 3)> on {0, 1}: A_known nontrivial again, pruned */
+    const uint32_t blocks[8] = {1, 0, 2, 3, 0, 1, 3, 2};
+    check_against_reference(ws, 4, blocks, 2, two, 2, PRUNE);
+    /* abandon again, then an unpruned solve at degree 6 (larger than before) */
+    r = solve(CTX[0], ws, g5, e5, PRUNE, CANON_WITNESS_ANY, 4, &st);
+    CHECK(st == CANON_CAPACITY_LIMIT);
+    canon_result_release(r);
+    const uint32_t sym6[12] = {1, 0, 2, 3, 4, 5, 1, 2, 3, 4, 5, 0}, one = 1;
+    check_against_reference(ws, 6, sym6, 2, &one, 1, REF);
+    check_against_reference(ws, 6, sym6, 2, &one, 1, PRUNE);
+    /* the internal search object: the abandoned run leaves its stacks in use, the next run at
+     * another degree resets them and answers as a fresh search */
+    canon_root x5, x3;
+    subset_root(&x5, 5, NULL, 0);
+    subset_root(&x3, 3, two, 2);
+    canon_group *g3 = make_group(0, 3, NULL, 0); /* the trivial group on 3 points */
+    canon_p1_search s, f;
+    canon_p1_search_init(&s);
+    canon_p1_search_init(&f);
+    CHECK(canon_p1_search_run_policy(&s, g5, &x5, 3, PRUNE) == CANON_CAPACITY_LIMIT);
+    CHECK(s.reps_top > 0 && s.known.stats.rebases > 0 && s.pruned > 0);
+    CHECK(canon_p1_search_run_policy(&s, g3, &x3, BIG, PRUNE) == CANON_COMPLETE);
+    CHECK(canon_p1_search_run_policy(&f, g3, &x3, BIG, REF) == CANON_COMPLETE);
+    CHECK(s.nodes == f.nodes && s.pruned == 0 && s.known.stats.rebases == 0);
+    CHECK(s.best_bytes.len == f.best_bytes.len &&
+          memcmp(s.best_bytes.data, f.best_bytes.data, f.best_bytes.len) == 0 &&
+          s.best_trace.len == f.best_trace.len &&
+          memcmp(s.best_trace.data, f.best_trace.data, f.best_trace.len) == 0 &&
+          memcmp(s.best_t, f.best_t, 3 * sizeof *s.best_t) == 0);
+    CHECK(canon_p1_search_run_policy(&s, g5, &x5, BIG, REF) == CANON_COMPLETE);
+    uint64_t unpruned = 0, falling = 1; /* sum_k 5!/(5-k)!, as in test_count_drop */
+    for (uint32_t k = 0; k < 5; ++k) {
+        unpruned += falling;
+        falling *= 5 - k;
+    }
+    CHECK(s.pruned == 0 && s.work_policy == REF && s.nodes == unpruned);
+    canon_p1_search_free(&s);
+    canon_p1_search_free(&f);
+    canon_root_free(&x5);
+    canon_root_free(&x3);
+    canon_group_release(g3);
+    canon_workspace_release(ws);
+    canon_object_release(e5);
+    canon_group_release(g5);
+}
+
 static void test_reuse(void)
 {
     const uint32_t gens[8] = {1, 0, 2, 3, 1, 2, 3, 0}, rho[4] = {0, 1, 2, 3}, one = 1;
@@ -871,6 +970,7 @@ int main(void)
     test_objectives_unpruned();
     test_count_invariance();
     test_reuse();
+    test_abort_and_reuse();
     test_t1_subsets();
     test_t1_graphs();
     test_t1_dags();

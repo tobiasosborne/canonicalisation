@@ -531,10 +531,10 @@ canon_status canon_result_sign(const canon_result *result, int *sign_out);
 const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degree);
 
 /* spec 11.1 v2.1 (slice S7): the work policy "recorded in results ... beside the profile".
- * *policy_out = the EFFECTIVE policy of a completed solve: CANON_WORK_POLICY_ORBIT_PRUNE only
- * when the pruned traversal actually ran (CANONICAL_IMAGE solved under 0x0002), else
- * CANON_WORK_POLICY_REFERENCE (every other objective runs the reference traversal whatever the
- * descriptor says).  PROVISIONAL reading of "recorded in results": the spec names no accessor,
+ * *policy_out = the EFFECTIVE policy of a completed solve: CANON_WORK_POLICY_ORBIT_PRUNE for a
+ * CANONICAL_IMAGE solved under 0x0002 (also when nothing was pruned, e.g. n = 0 or no input
+ * generator fixes x: the count is still that policy's), else CANON_WORK_POLICY_REFERENCE (every
+ * other objective runs the reference traversal whatever the descriptor says).  PROVISIONAL reading of "recorded in results": the spec names no accessor,
  * and the descriptor's value (rather than the effective one) would be the other reading
  * (docs/slices/S7-notes.md).  CANON_INVALID_INPUT (*policy_out = 0 when given) for NULL
  * arguments or a result of a solve that did not complete. */

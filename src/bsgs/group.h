@@ -104,7 +104,8 @@ struct canon_group {
     canon_group_signs *signs;     /* S6: NULL for an unsigned group; owned, freed with the
                                      handle (canon_group_set_signs) */
     canon_perm_table *inputs;     /* S7: the generators as given to an unsigned constructor
-                                     (canon_group_set_inputs), identities and repeats kept;
+                                     (canon_group_set_inputs), identities and repeats kept
+                                     (none recorded at degree 0);
                                      NULL for a signed group (its signs->gens are the same
                                      list) and for a group made by `conjugate`; owned */
     canon_refcount *refs;         /* = &refs_storage */

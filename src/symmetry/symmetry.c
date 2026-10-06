@@ -5,8 +5,9 @@
  * canon_symmetry_insert's three checks (bijection, membership in G, x^p = x), so A_known <=
  * Aut_G(x) = A.  Every strong generator of a chain built from a list of generators is a word in
  * that list (chain.c provenance), so every generator of a rebased prefix-stabiliser chain lies
- * in A_known, and one stored at level 1 of a chain with base prefix (a) fixes a (spec 9.2 base
- * prefix rule: a strong generator inserted at level j fixes b_0..b_{j-1}).  By induction the
+ * in A_known, and one stored at level 1 of a chain with base prefix (a) fixes a (the S3 chain
+ * invariant of src/bsgs/chain.h: a strong generator inserted at level j appears in S_0..S_j and
+ * fixes b_0..b_{j-1}).  By induction the
  * generators of H_d fix a_1..a_d pointwise.  The rebases are not verified (S3: transient
  * chains of a descent); an incomplete rebased chain could only make the orbit partition finer,
  * which loses pruning and never soundness. */

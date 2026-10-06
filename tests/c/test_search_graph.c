@@ -103,6 +103,20 @@ static void test_golden(canon_context *ctx, canon_workspace *ws)
     const uint32_t *w = canon_result_witness(r, &deg);
     CHECK(w != NULL && deg == 2 && w[0] == 1 && w[1] == 0);
     canon_result_release(r);
+    /* S7: the same golden trace and bytes under the default work policy 0x0002 (pruned; spec
+     * 11.1 v2.1, PROFILE-EQUIV), whose ANY witness need only be valid (brief 3.1 Scope) */
+    r = NULL;
+    CHECK(solve_graph(ctx, ws, &c, NULL, &r) == CANON_COMPLETE);
+    canon_work_policy policy = 0;
+    CHECK(canon_result_work_policy(r, &policy) == CANON_COMPLETE &&
+          policy == CANON_WORK_POLICY_ORBIT_PRUNE);
+    t = canon_result_trace(r, &tl);
+    b = canon_result_bytes(r, &bl);
+    CHECK(t != NULL && check_hex_is(t, tl, TRACE_74));
+    CHECK(b != NULL && check_hex_is(b, bl, BYTES_74));
+    bool valid = false;
+    CHECK(canon_result_verify_witness(r, &valid) == CANON_COMPLETE && valid);
+    canon_result_release(r);
 }
 
 static void test_capacity(canon_context *ctx, canon_workspace *ws)

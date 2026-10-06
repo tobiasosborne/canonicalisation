@@ -134,6 +134,20 @@ static void check_golden(canon_context *ctx, canon_workspace *ws, const golden_c
     CHECK(canon_result_encode(r, collect, &s) == CANON_COMPLETE);
     CHECK(s.len == bl && memcmp(s.data, b, bl) == 0 && s.calls == (int)bl);
     canon_result_release(r);
+    /* S7: the same golden trace and bytes under the default work policy 0x0002 (pruned; spec
+     * 11.1 v2.1, PROFILE-EQUIV), whose ANY witness need only be valid (brief 3.1 Scope) */
+    r = NULL;
+    CHECK(solve_case(ctx, ws, c, NULL, &r) == CANON_COMPLETE);
+    canon_work_policy policy = 0;
+    CHECK(canon_result_work_policy(r, &policy) == CANON_COMPLETE &&
+          policy == CANON_WORK_POLICY_ORBIT_PRUNE);
+    t = canon_result_trace(r, &tl);
+    b = canon_result_bytes(r, &bl);
+    CHECK(t != NULL && hex_is(t, tl, c->trace));
+    CHECK(b != NULL && hex_is(b, bl, c->bytes));
+    bool valid = false;
+    CHECK(canon_result_verify_witness(r, &valid) == CANON_COMPLETE && valid);
+    canon_result_release(r);
 }
 
 /* ---- handle lifetime: release in every order ---- */

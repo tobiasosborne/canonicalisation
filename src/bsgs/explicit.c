@@ -580,8 +580,10 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
         if (st != CANON_COMPLETE) {
             explicit_destroy(e); /* frees table too */
         } else {
-            /* S7 (brief 3.1 source i): the generators as given, for A_known */
-            st = canon_group_set_inputs(*out, generators, generator_count);
+            /* S7 (brief 3.1 source i): the generators as given, for A_known; at degree 0
+             * every generator is the empty permutation and none is recorded (as the chain
+             * backend's build, which reads none) */
+            st = canon_group_set_inputs(*out, generators, degree > 0 ? generator_count : 0);
             if (st != CANON_COMPLETE) {
                 canon_group_unshare(*out); /* frees e with the handle */
                 *out = NULL;

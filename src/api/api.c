@@ -855,8 +855,9 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     r->sign = a->sign;
     r->objective = problem->objective;
     /* spec 11.1 v2.1: the work policy is "recorded in results ... beside the profile".  S7
-     * reading (canon.h canon_result_work_policy): the EFFECTIVE policy, 0x0002 only when the
-     * pruned traversal ran, which only the canonical image does (spec 8.2; brief 3.1). */
+     * reading (canon.h canon_result_work_policy): the EFFECTIVE policy, 0x0002 for a canonical
+     * image solved under 0x0002 (whether or not anything was pruned), 0x0001 for every other
+     * objective, which runs the reference traversal (spec 8.2; brief 3.1). */
     r->work_policy = problem->objective == CANON_OBJECTIVE_CANONICAL_IMAGE
                          ? problem->capacity.work_policy
                          : CANON_WORK_POLICY_REFERENCE;

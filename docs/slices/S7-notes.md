@@ -88,3 +88,12 @@ The e2e tier prints no counters (the CLI record carries none).
 
 - Certificates and the checker (step 2); source (ii) (S7b); the §7.3 root shortcut; trace-prefix domination and bound pruning; parallel modes; public counters.
 - CMake was not configured or built in this step (the gates run are the `make` ones of `CLAUDE.md`); `CMakeLists.txt` was updated in parallel with the `Makefile`.
+
+### Review fixes (step 1)
+
+- `canon_result_work_policy` wording (canon.h, api.c, `docs/pruning-rules.md` §6): `0x0002` is reported for every canonical image solved under `0x0002`, also when nothing was pruned (`n = 0`, `A_known = 1`); the code was already so.
+- The base-prefix invariant (a strong generator inserted at level `j` fixes `b_0 … b_{j−1}`) is cited as the S3 chain invariant of `src/bsgs/chain.h`, not as a §9.2 rule (`symmetry.c`, `docs/pruning-rules.md` §4).
+- The golden subset and graph cases of `test_search_subset.c` and `test_search_graph.c` are also checked under the default policy `0x0002` (trace and bytes from the same golden strings, the witness verified, the recorded policy).
+- `test_prune.c` `test_abort_and_reuse`: a pruned solve stopped by the quota mid-tree with `A_known` nontrivial (stack and slots in use), then the same workspace (and the same internal search object) at another degree and group, pruned and unpruned, against fresh reference solves; run under the sanitizer build too. The `(canon_context *)&WS` sentinels are replaced by a named dummy.
+- The unsigned constructors record no input generators at degree 0 (both backends clamp the count as the chain build does), so a degree-0 group with a huge count copies nothing. Signed groups keep all their signs at degree 0, as in S6 (they matter to the lift).
+- `docs/pruning-rules.md` §6: the quota counts `NODE` tokens only, so the root's verified rebuilds and the per-child rebases under `0x0002` are work it does not bound.
