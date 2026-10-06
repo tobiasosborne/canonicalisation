@@ -22,6 +22,7 @@
 #include "encoding/simple_upper.h"
 #include "object/subset.h"
 #include "perm/perm.h"
+#include "search/certificate.h"
 #include "search/objectives.h"
 #include "search/p1_tree.h"
 
@@ -78,6 +79,7 @@ struct canon_workspace {
     canon_refcount refs;
     canon_p1_search search; /* spec 17: one active owner; storage reused across solves */
     canon_obj_search obj;   /* S4: enumeration objectives and the deterministic witness */
+    canon_cert cert;        /* S7 step 2: certificate writer (grow-only buffers) */
 };
 
 struct canon_result {
@@ -258,6 +260,7 @@ void canon_workspace_release(canon_workspace *workspace)
     if (workspace != NULL && canon_ref_release(&workspace->refs)) {
         canon_p1_search_free(&workspace->search);
         canon_obj_search_free(&workspace->obj);
+        canon_cert_free(&workspace->cert);
         free(workspace);
     }
 }
@@ -774,6 +777,7 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out)
     canon_ref_init(&ws->refs);
     canon_p1_search_init(&ws->search); /* lazy: arrays are sized on the first solve */
     canon_obj_search_init(&ws->obj);
+    canon_cert_init(&ws->cert);
     *out = ws;
     return CANON_COMPLETE;
 }
@@ -806,6 +810,7 @@ typedef struct answer {
     const canon_buf *trace, *bytes, *group, *key; /* NULL: not produced */
     const uint32_t *witness;                      /* NULL: not produced */
     const uint32_t *labeling;                     /* S6: lambda; NULL: not produced */
+    const canon_buf *certificate;                 /* S7 step 2: CERT-0; NULL: not produced */
     int sign;                                     /* S6: signed objective only */
 } answer;
 
@@ -859,6 +864,11 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
             memcpy(r->rho, problem->rho, (size_t)n * sizeof *r->rho);
         }
     }
+    if (ok && a->certificate != NULL) {
+        /* S7 step 2: an owned copy, never the workspace's buffer (spec 17) */
+        ok = (r->certificate = copy_bytes(a->certificate->data, a->certificate->len)) != NULL;
+        r->certificate_len = a->certificate->len;
+    }
     if (!ok) {
         canon_result_release(r);
         *out = new_result(CANON_RESOURCE_LIMIT);
@@ -898,8 +908,27 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
 {
     canon_p1_search *s = &ws->search;
     const uint64_t quota = problem->capacity.max_search_nodes;
-    canon_status st = canon_p1_search_run_policy(s, problem->group, &problem->object->root, quota,
-                                                 problem->capacity.work_policy);
+    const canon_root *x = &problem->object->root;
+    canon_status st = CANON_COMPLETE;
+    if (problem->certificate) {
+        /* S7 step 2 (brief 3.3): the same run, observed by the certificate writer; a
+         * certificate is kept only when the solve completes (a quota stop, an allocation
+         * failure or an internal error discards the partial one: finish_result below then
+         * builds a status-only result) */
+        st = canon_cert_begin(&ws->cert, problem->group, x, problem->capacity.work_policy);
+        if (st == CANON_COMPLETE) {
+            st = canon_p1_search_run_recorded(s, problem->group, x, quota,
+                                              problem->capacity.work_policy,
+                                              canon_cert_hooks(&ws->cert));
+        }
+        if (st == CANON_COMPLETE) {
+            st = canon_cert_finish(&ws->cert, s);
+        }
+        canon_cert_end(&ws->cert); /* borrows nothing from the problem after this */
+    } else {
+        st = canon_p1_search_run_policy(s, problem->group, x, quota,
+                                        problem->capacity.work_policy);
+    }
     const uint32_t *witness = s->best_t;
     if (st == CANON_COMPLETE && problem->witness_mode == CANON_WITNESS_DETERMINISTIC) {
         /* spec 11.1: one quota for the solve; the enumeration gets what P1 left (s->nodes is
@@ -922,6 +951,7 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
     a.trace = &s->best_trace;
     a.bytes = &s->best_bytes;
     a.witness = witness;
+    a.certificate = problem->certificate ? &ws->cert.out : NULL;
     return finish_result(problem, st, &a, out);
 }
 
