@@ -6,3 +6,4 @@ Each completed reference implementation records the commit hash that contains it
 
 | Implementation | Language | Toolchain | Author | Blind w.r.t. | Sealed commit | Date |
 |---|---|---|---|---|---|---|
+| ref-a: the production C path (`libcanon` + `tools/canon-cli`, work policy 0x0001, deterministic witness) through `refs/ref-a/run_cases.py` | C17 (adapter: Python 3 standard library) | gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1), also clang 18.1.3; Python 3.13.16; Linux x86-64 | The implementation sessions S1–S8 and M0a (maintainer Tobias J. Osborne with Claude agents), see `git log` | Not blind w.r.t. `checks/`, `tools/`, `tests/` (its own test harness); shares no code with `refs/ref-b/` and read nothing of it | `9b1a665` (M0a landing commit; the WP0.7 switches were removed before it) | 2026-10-13 |
