@@ -82,6 +82,23 @@ static canon_result *solve_signed(canon_workspace *ws, const canon_group *g, con
     return r;
 }
 
+/* M0a: the signed image with the spec 3 deterministic witness (unpruned policy as solve()). */
+static canon_result *solve_signed_det(canon_workspace *ws, const canon_group *g,
+                                      const canon_object *x)
+{
+    canon_capacity cap = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
+    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false};
+    canon_problem *p = NULL;
+    canon_result *r = NULL;
+    CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL,
+                                            CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1,
+                                            CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, &cap,
+                                            &det, &p) == CANON_COMPLETE);
+    CHECK(canon_solve(ws, p, &r) == CANON_COMPLETE);
+    canon_problem_release(p);
+    return r;
+}
+
 static int sign_of(const canon_result *r)
 {
     int s = 9;
@@ -206,7 +223,7 @@ static void run_internal(const canon_group *g, const canon_root *x, canon_obj_ou
     canon_p1_search p1;
     canon_obj_search_init(&s);
     canon_p1_search_init(&p1);
-    CHECK(canon_obj_signed(&s, &p1, g, x, 1u << 20, o) == CANON_COMPLETE);
+    CHECK(canon_obj_signed(&s, &p1, g, x, false, 1u << 20, o) == CANON_COMPLETE);
     *stats = s.stats;
     if (x->n > 0) {
         memcpy(w, s.best, x->n * sizeof *w);
@@ -441,6 +458,44 @@ static void t1_tier(void)
                         uint32_t deg = 0;
                         const uint32_t *w = canon_result_witness(r, &deg);
                         canon_status st;
+                        /* M0a (docs/slices/M0a.md 2.4): deterministic mode: same sign, bytes
+                         * and group; a nonzero witness is the least a t over A (brute force),
+                         * a zero certificate is the same odd automorphism */
+                        {
+                            canon_result *rd = solve_signed_det(ws, g, x);
+                            uint32_t dd = 0;
+                            const uint32_t *wd = canon_result_witness(rd, &dd);
+                            CHECK(sign_of(rd) == sx && wd != NULL && dd == n);
+                            CHECK(same(canon_result_bytes, rd, r) ||
+                                  (sx == 0 && canon_result_bytes(rd, &(size_t){0}) == NULL));
+                            CHECK(same(canon_result_group_bytes, rd, r) || sx == 0);
+                            if (sx == 0) {
+                                CHECK(n == 0 || memcmp(wd, w, n * 4u) == 0);
+                            } else {
+                                uint32_t least[4] = {0, 0, 0, 0};
+                                int have = 0;
+                                for (uint32_t e = 0; e < s.count; ++e) {
+                                    uint32_t m = 0;
+                                    if (!(grp->mask >> e & 1u)) {
+                                        continue;
+                                    }
+                                    canon_object *y = image_of(&s, mask, e, &m);
+                                    canon_object_release(y);
+                                    if (m != mask) {
+                                        continue;
+                                    }
+                                    uint32_t at[4];
+                                    canon_perm_compose(s.elem[e], w, at, n); /* a t */
+                                    if (!have || canon_perm_lex_compare(at, least, n) < 0) {
+                                        memcpy(least, at, sizeof least);
+                                        have = 1;
+                                    }
+                                }
+                                CHECK(have && (n == 0 || memcmp(wd, least, n * 4u) == 0));
+                            }
+                            verify(rd, true);
+                            canon_result_release(rd);
+                        }
                         if (sx == 0) {
                             zeros += 1;
                             /* the certificate is an odd automorphism of x */
@@ -625,7 +680,9 @@ static void graphs_and_errors(void)
                                 with_rho = {CANON_WITNESS_ANY, swap, false};
     CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL, S, CANON_PROFILE_P1,
                                             CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
-                                            &det, &p) == CANON_UNSUPPORTED_ACTION);
+                                            &det, &p) == CANON_COMPLETE); /* M0a: accepted */
+    canon_problem_release(p);
+    p = NULL;
     CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL, S, CANON_PROFILE_P1,
                                             CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
                                             &with_rho, &p) == CANON_INVALID_INPUT);

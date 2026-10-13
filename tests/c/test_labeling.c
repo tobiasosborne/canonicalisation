@@ -31,6 +31,7 @@
 #include "t1_groups.h"
 
 static canon_context *ctx_of[2]; /* chain, explicit */
+static canon_witness_mode witness_mode = CANON_WITNESS_ANY; /* M0a: the mode solve() requests */
 
 static canon_group *group_of(int b, uint32_t n, const uint32_t *gens, uint32_t count)
 {
@@ -59,7 +60,7 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
      * too (policy 0x0001; under the default prune the "any" witness may differ,
      * docs/pruning-rules.md). */
     canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
-    canon_problem_options opts = {CANON_WITNESS_ANY, rho, false};
+    canon_problem_options opts = {witness_mode, rho, false};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
     canon_result *r = NULL;
@@ -358,6 +359,25 @@ static void t1_tier(void)
                             }
                         }
                         verify_ok(r);
+                        /* M0a (docs/slices/M0a.md 2.3): the deterministic labeling is lambda0,
+                         * the least of A lambda, with t0 = rho^-1 lambda0; c, trace and payload
+                         * unchanged */
+                        witness_mode = CANON_WITNESS_DETERMINISTIC;
+                        canon_result *rd =
+                            solve(ws, g, x, CANON_OBJECTIVE_CANONICAL_LABELING_COSET, rho, 0, &st);
+                        witness_mode = CANON_WITNESS_ANY;
+                        CHECK(st == CANON_COMPLETE);
+                        const uint32_t *ld = canon_result_labeling(rd, &deg);
+                        const uint32_t *td2 = canon_result_witness(rd, &deg);
+                        CHECK(ld != NULL && td2 != NULL && deg == n);
+                        CHECK(n == 0 || memcmp(ld, least, n * sizeof *ld) == 0);
+                        uint32_t rtd[4];
+                        canon_perm_compose(rho, td2, rtd, n);
+                        CHECK(n == 0 || memcmp(rtd, ld, n * sizeof *rtd) == 0);
+                        CHECK(same(canon_result_bytes, rd, r) && same(canon_result_trace, rd, r) &&
+                              same(canon_result_group_bytes, rd, r));
+                        verify_ok(rd);
+                        canon_result_release(rd);
                         /* representative change rho' = k rho, k in G (spec 3.1: "G' is
                          * unchanged and x^rho_new is in the same G' orbit, hence the canonical
                          * target bytes are unchanged"); A lambda is the same set */
@@ -520,7 +540,9 @@ static void checks_and_errors(void)
     CHECK(CREATE(CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &with) == CANON_INVALID_INPUT);
     CHECK(CREATE(CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, &with) == CANON_INVALID_INPUT);
     CHECK(CREATE(L, CANON_PROFILE_NO_TREE, &with) == CANON_UNSUPPORTED_ACTION);
-    CHECK(CREATE(L, CANON_PROFILE_P1, &det) == CANON_UNSUPPORTED_ACTION);
+    CHECK(CREATE(L, CANON_PROFILE_P1, &det) == CANON_COMPLETE); /* M0a: accepted */
+    canon_problem_release(p);
+    p = NULL;
     CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL, L, CANON_PROFILE_P1,
                                             CANON_ENCODING_CDAG_2, CANON_ORDER_SIMPLE_UPPER_1, NULL,
                                             &with, &p) == CANON_UNSUPPORTED_ACTION);
@@ -591,7 +613,7 @@ static void counters(void)
                 CHECK(canon_subset_init(&x.u.subset, n, atoms, k) == CANON_COMPLETE);
                 for (uint32_t ri = 0; ri < sym.count; ++ri) {
                     canon_obj_outcome o;
-                    CHECK(canon_obj_labeling(&s, &p1s, g, &x, sym.elem[ri], 1u << 20, &o) ==
+                    CHECK(canon_obj_labeling(&s, &p1s, g, &x, sym.elem[ri], false, 1u << 20, &o) ==
                           CANON_COMPLETE);
                     CHECK(o.labeling && o.group && o.p1 && o.sign == 0);
                     runs += 1;
@@ -615,10 +637,10 @@ static void counters(void)
     x.n = 2;
     CHECK(canon_subset_init(&x.u.subset, 2, NULL, 0) == CANON_COMPLETE);
     const uint32_t bad[2] = {1, 1};
-    CHECK(canon_obj_labeling(&s, &p1s, g, &x, bad, 10, &o) == CANON_INVALID_INPUT);
-    CHECK(canon_obj_labeling(&s, &p1s, g, &x, NULL, 10, &o) == CANON_INVALID_INPUT);
+    CHECK(canon_obj_labeling(&s, &p1s, g, &x, bad, false, 10, &o) == CANON_INVALID_INPUT);
+    CHECK(canon_obj_labeling(&s, &p1s, g, &x, NULL, false, 10, &o) == CANON_INVALID_INPUT);
     CHECK(!o.flags.witness_valid && !o.labeling);
-    CHECK(canon_obj_signed(&s, &p1s, g, &x, 10, &o) == CANON_UNSUPPORTED_ACTION); /* unsigned */
+    CHECK(canon_obj_signed(&s, &p1s, g, &x, false, 10, &o) == CANON_UNSUPPORTED_ACTION); /* unsigned */
     canon_subset_free(&x.u.subset);
     canon_group_release(g);
     canon_obj_search_free(&s);

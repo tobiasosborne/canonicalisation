@@ -57,7 +57,7 @@ FORMAT_FILES = $(shell find include src checker tests/c tools -name '*.c' -o -na
 FUZZ     = $(BUILD)/fuzz_cdag_decode $(BUILD)/fuzz_checker
 FUZZ_ITER ?= 2000
 
-.PHONY: all test check format clean fuzz
+.PHONY: all test check format clean corpus fuzz
 all: $(LIB) $(CHECKER) $(CLI) $(TESTS) $(FUZZ)
 
 $(BUILD)/%.o: %.c
@@ -111,6 +111,14 @@ check: $(CLI) $(CHECKER)
 	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 nice -n 19 python3 -m unittest discover -s tests/python -q
 	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 CANON_BACKEND=explicit nice -n 19 python3 tests/python/test_e2e.py
 	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 nice -n 19 python3 checker/tests/test_checker.py
+
+# M0 generated corpus (detailed plan WP0.6; refs/vectors/generated/README.md): regenerate the
+# three default case files from their seeds and check them against MANIFEST.json.
+corpus:
+	nice -n 19 python3 tools/gen_cases.py --tier T1 --seed 20261013 --out refs/vectors/generated/T1-seed20261013.json
+	nice -n 19 python3 tools/gen_cases.py --tier T2 --seed 20261013 --count 200 --out refs/vectors/generated/T2-seed20261013-count200.json
+	nice -n 19 python3 tools/gen_cases.py --tier T3 --seed 20261013 --count 50 --out refs/vectors/generated/T3-seed20261013-count50.json
+	nice -n 19 python3 tools/gen_cases.py --check-manifest refs/vectors/generated/MANIFEST.json
 
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \

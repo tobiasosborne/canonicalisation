@@ -27,3 +27,8 @@ build/
 *.o
 *.a
 lean/.lake/
+
+# M0 generated corpus: regenerated from the seeds in refs/vectors/generated/MANIFEST.json
+# (`make corpus`); the files are not committed (12 MB for T1).
+refs/vectors/generated/*.json
+!refs/vectors/generated/MANIFEST.json

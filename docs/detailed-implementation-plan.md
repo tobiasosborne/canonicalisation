@@ -67,6 +67,12 @@ After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruptio
 - Metrics of an incomplete result report the work done before the status.
 - Fuzz targets carry the libFuzzer entry point and are replayed deterministically here (no runtime available, no download).
 
+### Readings fixed by M0a (M0 preparation; `docs/slices/M0a.md`, `M0a-notes.md`)
+
+- The deterministic witness of spec §3 is defined for every objective: `TRANSPORTER_ONE` reports `r₀` (the least of `A g`), `STABILISER` accepts the mode with no witness, the labeling reports `λ₀ = min Aλ` with `t = ρ⁻¹λ₀`, a nonzero signed image the least of `A t`; S4's and S6's refusals are withdrawn (the M0 schema requests the mode on every case).
+- WP0.3 is `refs/oracle/oracle.py`; WP0.6 is `tools/gen_cases.py` with the corpus retained as seeds and hashes (`refs/vectors/generated/MANIFEST.json`, `make corpus`), the WP0.6 counts being `--count` arguments (defaults 200 and 50 groups; targets 2 000 and 500 cases per objective); WP0.7's three switches were run on a T1 sample (`sign`, `action`) and a T2 sample (`encoding`: T1 has no nested object, so the height-ordering switch cannot show there), logged under `refs/compare/runs/`, and removed before ref-a's seal; WP0.4 ref-a is `refs/ref-a/run_cases.py` over `canon-cli`, sealed in `refs/SEALS.md`. WP0.5 (ref-b), WP0.7's comparison against ref-b and WP0.8 wait on a blind author.
+- T3 under the unpruned enumeration objectives and a 10⁶ quota takes minutes per case for `n ≤ 48`; the full T3 run is scheduled with the ref-a/ref-b comparison.
+
 ### External oracle tier (WP0.9, decided 1 October 2026; scheduled after S6)
 
 External tools can check orbit-level facts, never P1 traces or CDAG-2 bytes. A `refs/oracles/` tier runs them as external processes on the JSON case files, writing seven-field FORMAT records restricted to the fields they can produce, and is skipped when the tool is absent. Each tool is pinned by version and hash in `review_sources/SOURCES.json` under the evidence policy; acquisition needs the maintainer's go-ahead; nothing is linked into the library.
@@ -203,7 +209,7 @@ Every disagreement is logged as an issue with the case, both outputs, and a clas
 - [ ] All §7.4 cases reproduced by ref-a, ref-b and (where applicable) the oracle.
 - [ ] T1 and T2: zero disagreements; T3: zero disagreements on traces, bytes, signs, statuses, group bytes.
 - [ ] Deterministic witnesses agree where requested.
-- [ ] Three planted corruptions detected; logs retained.
+- [x] Three planted corruptions detected against the clean ref-a (`sign`, `action` on T1; `encoding` on T2); logs retained under `refs/compare/runs/` (M0a, 13 October 2026). The same runs against ref-b follow its seal.
 - [ ] `refs/SEALS.md` records both seals; divergence log closed.
 - [ ] Spec v2.x tagged as **semantics frozen**.
 
