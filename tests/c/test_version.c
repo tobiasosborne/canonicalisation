@@ -2,7 +2,7 @@
  * UNSUPPORTED_ACTION; the slice S1 entry points validate NULL arguments.
  *
  * Documented stub behaviour (src/api/stubs.c): the section 17 entry points not implemented yet
- * (canon_solve_batch, canon_checkpoint_write/read) return CANON_UNSUPPORTED_ACTION
+ * (canon_checkpoint_write/read) return CANON_UNSUPPORTED_ACTION
  * unconditionally, even for NULL arguments, and store NULL through out-pointers.  The
  * implemented entry points (src/api/api.c), including canon_result_verify_witness since slice
  * S4 and canon_object_create and canon_stream_validate since slice S5, return
@@ -69,8 +69,10 @@ int main(void)
 
     canon_status st[2] = {CANON_COMPLETE, CANON_COMPLETE};
     canon_result *rs[2] = {NULL, NULL};
-    CHECK(canon_solve_batch(NULL, NULL, 2, rs, st) == CANON_UNSUPPORTED_ACTION);
-    CHECK(st[0] == CANON_UNSUPPORTED_ACTION && st[1] == CANON_UNSUPPORTED_ACTION);
+    /* S8: canon_solve_batch is implemented; a NULL workspace is a call-level INVALID_INPUT
+     * that writes nothing (spec 17 v2.1) */
+    CHECK(canon_solve_batch(NULL, NULL, 2, rs, st) == CANON_INVALID_INPUT);
+    CHECK(st[0] == CANON_COMPLETE && st[1] == CANON_COMPLETE);
 
     bool valid = true;
     CHECK(canon_result_verify_witness(NULL, &valid) == CANON_INVALID_INPUT); /* S4 */

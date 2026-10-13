@@ -218,8 +218,8 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
     if (sn != n) {
         return CC_DEGREE_MISMATCH;
     }
-    if (q < 1) {
-        return CC_OBJECT_MALFORMED;
+    if (q < 1 || q > r.len - r.at) {
+        return CC_OBJECT_MALFORMED; /* every record is at least its tag byte (spec 4.1) */
     }
     cc_reason why = CC_ACCEPT;
     record *recs = cc_alloc(q, sizeof *recs, &why);
@@ -354,6 +354,10 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
         }
         uint32_t e = 0;
         (void)cc_get_u32(&rr, &e);
+        if (e > (rr.len - rr.at) / 16u) {
+            why = CC_OBJECT_MALFORMED; /* an arc is two U32, a B() and a natural: >= 16 bytes */
+            goto done;
+        }
         x->arcs = cc_alloc(e, sizeof *x->arcs, &why);
         cc_bytes *labels = cc_alloc(e, sizeof *labels, &why);
         uint32_t *label_rank = cc_alloc(e, sizeof *label_rank, &why);

@@ -56,7 +56,7 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
     /* S7: the signed objective's P1 run is unpruned under every policy; the unsigned
      * CANONICAL_IMAGE solves this file compares it with use policy 0x0001 for the same reason
      * as test_labeling.c */
-    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
+    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
     canon_result *r = NULL;

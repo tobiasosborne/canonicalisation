@@ -1,5 +1,6 @@
 /* The coloured directed multigraph object (spec sections 2.1, 4.1, 7.1, 10, 11.1). */
 #include "object/graph.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -16,8 +17,8 @@ void canon_graph_init_empty(canon_graph *g)
 
 static void table_free(canon_byte_table *t)
 {
-    free(t->offset);
-    free(t->pool);
+    canon_mem_free(t->offset);
+    canon_mem_free(t->pool);
     memset(t, 0, sizeof *t);
 }
 
@@ -27,12 +28,12 @@ void canon_graph_free(canon_graph *g)
         table_free(&g->colours); /* image storage only borrows its tables */
         table_free(&g->labels);
     }
-    free(g->colour_id);
-    free(g->arcs);
-    free(g->out_start);
-    free(g->in_start);
-    free(g->in_arc);
-    free(g->arcs_tmp);
+    canon_mem_free(g->colour_id);
+    canon_mem_free(g->arcs);
+    canon_mem_free(g->out_start);
+    canon_mem_free(g->in_start);
+    canon_mem_free(g->in_arc);
+    canon_mem_free(g->arcs_tmp);
     canon_graph_init_empty(g);
 }
 
@@ -80,7 +81,7 @@ static canon_status intern(str_ref *refs, size_t count, canon_byte_table *table,
         return st;
     }
     canon_stable_sort(refs, count, sizeof *refs, tmp, str_ref_cmp, NULL);
-    free(tmp);
+    canon_mem_free(tmp);
     /* Count distinct strings and their total length (spec 11.1: checked). */
     size_t distinct = 0, pool_bytes = 0;
     for (size_t i = 0; i < count; ++i) {
@@ -175,14 +176,14 @@ canon_status canon_graph_build_index(canon_graph *g)
     uint32_t *in_start = canon_alloc_array((size_t)g->n + 1u, sizeof *in_start, &st);
     uint32_t *in_arc = canon_alloc_array(g->e, sizeof *in_arc, &st);
     if (out_start == NULL || in_start == NULL || in_arc == NULL) {
-        free(out_start);
-        free(in_start);
-        free(in_arc);
+        canon_mem_free(out_start);
+        canon_mem_free(in_start);
+        canon_mem_free(in_arc);
         return st; /* spec 17: the old index is kept */
     }
-    free(g->out_start);
-    free(g->in_start);
-    free(g->in_arc);
+    canon_mem_free(g->out_start);
+    canon_mem_free(g->in_start);
+    canon_mem_free(g->in_arc);
     g->out_start = out_start;
     g->in_start = in_start;
     g->in_arc = in_arc;
@@ -289,7 +290,7 @@ canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *
     g->arcs = work;
     work = NULL;
     if (e > 0 && e < arc_count) {
-        canon_graph_arc *shrunk = realloc(g->arcs, e * sizeof *g->arcs);
+        canon_graph_arc *shrunk = canon_mem_realloc(g->arcs, e * sizeof *g->arcs);
         if (shrunk != NULL) {
             g->arcs = shrunk; /* a failed shrink keeps the larger block */
         }
@@ -302,16 +303,16 @@ canon_status canon_graph_init(canon_graph *g, uint32_t n, const uint8_t *const *
     if (st != CANON_COMPLETE) {
         goto fail;
     }
-    free(refs);
-    free(label_ids);
-    free(tmp);
+    canon_mem_free(refs);
+    canon_mem_free(label_ids);
+    canon_mem_free(tmp);
     return CANON_COMPLETE;
 
 fail:
-    free(refs);
-    free(label_ids);
-    free(work);
-    free(tmp);
+    canon_mem_free(refs);
+    canon_mem_free(label_ids);
+    canon_mem_free(work);
+    canon_mem_free(tmp);
     canon_graph_free(g);
     return st;
 }
@@ -354,8 +355,8 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
     edge_pair *pairs = canon_alloc_array(edge_count, sizeof *pairs, &st);
     edge_pair *tmp = canon_alloc_array(edge_count, sizeof *tmp, &st);
     if (pairs == NULL || tmp == NULL) {
-        free(pairs);
-        free(tmp);
+        canon_mem_free(pairs);
+        canon_mem_free(tmp);
         return st;
     }
     /* An undirected edge is the unordered pair {a, b}: normalise to a < b. */
@@ -365,7 +366,7 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
         pairs[i].b = a < b ? b : a;
     }
     canon_stable_sort(pairs, edge_count, sizeof *pairs, tmp, edge_cmp, NULL);
-    free(tmp);
+    canon_mem_free(tmp);
     /* spec 4.1: "coalesce duplicate undirected edges" */
     size_t m = 0;
     for (size_t i = 0; i < edge_count; ++i) {
@@ -375,12 +376,12 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
     }
     size_t arc_count = 0;
     if (!canon_size_mul(m, 2u, &arc_count)) {
-        free(pairs);
+        canon_mem_free(pairs);
         return CANON_CAPACITY_LIMIT;
     }
     canon_arc *arcs = canon_alloc_array(arc_count, sizeof *arcs, &st);
     if (arcs == NULL) {
-        free(pairs);
+        canon_mem_free(pairs);
         return st;
     }
     /* spec 4.1: "translating to two opposite unit arcs"; empty labels, empty colours. */
@@ -388,9 +389,9 @@ canon_status canon_graph_init_simple(canon_graph *g, uint32_t n, const uint32_t 
         arcs[2 * i] = (canon_arc){pairs[i].a, pairs[i].b, NULL, 0, 1};
         arcs[2 * i + 1] = (canon_arc){pairs[i].b, pairs[i].a, NULL, 0, 1};
     }
-    free(pairs);
+    canon_mem_free(pairs);
     st = canon_graph_init(g, n, NULL, NULL, arcs, arc_count);
-    free(arcs);
+    canon_mem_free(arcs);
     return st;
 }
 
@@ -405,7 +406,7 @@ static canon_status reserve_image(canon_graph *d, uint32_t n, uint32_t e)
         if (cid == NULL) {
             return st;
         }
-        free(d->colour_id);
+        canon_mem_free(d->colour_id);
         d->colour_id = cid;
         d->cap_n = n;
     }
@@ -413,12 +414,12 @@ static canon_status reserve_image(canon_graph *d, uint32_t n, uint32_t e)
         canon_graph_arc *arcs = canon_alloc_array(e, sizeof *arcs, &st);
         canon_graph_arc *tmp = canon_alloc_array(e, sizeof *tmp, &st);
         if (arcs == NULL || tmp == NULL) {
-            free(arcs);
-            free(tmp);
+            canon_mem_free(arcs);
+            canon_mem_free(tmp);
             return st;
         }
-        free(d->arcs);
-        free(d->arcs_tmp);
+        canon_mem_free(d->arcs);
+        canon_mem_free(d->arcs_tmp);
         d->arcs = arcs;
         d->arcs_tmp = tmp;
         d->cap_e = e;

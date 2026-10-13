@@ -20,7 +20,7 @@ static canon_result *solve(canon_context *ctx, canon_workspace *ws, const canon_
                            const canon_object *x, uint16_t policy, canon_witness_mode mode,
                            uint64_t quota, canon_status *st)
 {
-    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, policy};
+    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, policy, 0};
     canon_problem_options opts = {mode, NULL, false};
     canon_problem *p = NULL;
     canon_result *r = NULL;
@@ -263,7 +263,7 @@ static void statuses(void)
     CHECK(st == CANON_CAPACITY_LIMIT);
     canon_result_release(r);
     /* a context default for the policy is honoured */
-    canon_capacity defaults = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
+    canon_capacity defaults = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
     canon_context *uctx = NULL;
     CHECK(canon_context_create(&defaults, &uctx) == CANON_COMPLETE);
     canon_group *ug = NULL;

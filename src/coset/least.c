@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "arena/alloc.h"
+#include "arena/mem.h"
 #include "coset/coset.h"
 #include "perm/perm.h"
 #include "util/sort.h"
@@ -49,11 +50,11 @@ void canon_coset_scratch_init(canon_coset_scratch *s)
 
 void canon_coset_scratch_free(canon_coset_scratch *s)
 {
-    free(s->block);
+    canon_mem_free(s->block);
     for (uint32_t d = 0; d < s->node_count; ++d) {
-        free(s->nodes[d]);
+        canon_mem_free(s->nodes[d]);
     }
-    free(s->nodes);
+    canon_mem_free(s->nodes);
     canon_coset_scratch_init(s);
 }
 
@@ -71,7 +72,7 @@ static canon_status bind(least_scratch *x, canon_coset_scratch *s, uint32_t n)
         if (block == NULL) {
             return st; /* the old block is kept (spec 17) */
         }
-        free(s->block);
+        canon_mem_free(s->block);
         s->block = block;
         s->cap = n;
     }

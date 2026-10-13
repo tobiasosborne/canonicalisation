@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/mem.h" /* S8: library-owned storage built by hand */
 #include "bsgs/chain.h"
 #include "bsgs/verify.h"
 #include "check.h"
@@ -290,8 +291,8 @@ static void nesting_counterexample(void)
     canon_bsgs c;
     canon_bsgs_init(&c, 3);
     uint32_t id = 0, node = 0, inv[3];
-    c.gen_node = malloc(2 * sizeof *c.gen_node);
-    c.inv_node = malloc(2 * sizeof *c.inv_node);
+    c.gen_node = canon_mem_malloc(2 * sizeof *c.gen_node);
+    c.inv_node = canon_mem_malloc(2 * sizeof *c.inv_node);
     c.node_cap = 2;
     for (uint32_t k = 0; k < 2; ++k) {
         CHECK(canon_perm_table_push(&c.inputs, in + 3 * k, &id) == CANON_COMPLETE);
@@ -303,12 +304,12 @@ static void nesting_counterexample(void)
         CHECK(canon_prov_inverse(&c.prov, node, &node) == CANON_COMPLETE);
         c.inv_node[k] = node;
     }
-    c.levels = calloc(3, sizeof *c.levels);
+    c.levels = canon_mem_calloc(3, sizeof *c.levels);
     c.level_cap = 3;
     c.depth = 2;
     for (uint32_t i = 0; i < 2; ++i) {
         canon_bsgs_level *L = &c.levels[i];
-        uint32_t *block = malloc(4 * 3 * sizeof *block);
+        uint32_t *block = canon_mem_malloc(4 * 3 * sizeof *block);
         L->orbit = block;
         L->orbit_pos = block + 3;
         L->parent_point = block + 6;
@@ -317,7 +318,7 @@ static void nesting_counterexample(void)
             L->orbit_pos[v] = CANON_BSGS_NONE;
         }
         L->base_point = i;
-        L->gen_ids = malloc(sizeof *L->gen_ids);
+        L->gen_ids = canon_mem_malloc(sizeof *L->gen_ids);
         L->gen_ids[0] = i; /* S_0 = {(0 1)}, S_1 = {(1 2)}: not nested */
         L->gen_count = L->gen_cap = 1;
         canon_bsgs_level_recompute(&c, i);

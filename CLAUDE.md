@@ -2,7 +2,7 @@
 
 ## Project summary
 - An exact, dependency-free C17 library (`canon`) for canonical forms of objects under finite permutation groups, with a frozen wire format (`CDAG-2`) and an independent certificate checker.
-- Design-stage: `docs/specification.md` (v2.1, 2 October 2026) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage), S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) S4 (coset enumeration objectives, canonical Group bytes), S5 (nested objects, CDAG-2 decoder and validator), S6 (labeling cosets, signed images) S7 (orbit pruning under a work-policy ID, certificate v0, the independent checker `canon-check`; rules in `docs/pruning-rules.md`) and S7b (implicit automorphisms, work policy `0x0003`) have landed; the constraint objectives, solve_batch and checkpoints are stubs returning UNSUPPORTED_ACTION; certificates cover the canonical image of subsets and graphs only.
+- Design-stage: `docs/specification.md` (v2.1, 2 October 2026) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage), S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) S4 (coset enumeration objectives, canonical Group bytes), S5 (nested objects, CDAG-2 decoder and validator), S6 (labeling cosets, signed images) S7 (orbit pruning under a work-policy ID, certificate v0, the independent checker `canon-check`; rules in `docs/pruning-rules.md`), S7b (implicit automorphisms, work policy `0x0003`) and S8 (live-memory ledger and the one allocator `src/arena/mem.h`, admission plan, metrics, `solve_batch`, sink pause/resume, fault injection, fuzz targets under `fuzz/`) have landed; the constraint objectives and checkpoints are stubs returning UNSUPPORTED_ACTION; certificates cover the canonical image of subsets and graphs only.
 - Read `README.md` and `HANDOFF.md` first. Do not start a new research cycle without the user's direction.
 
 ## Standing constraints (from HANDOFF.md)
@@ -16,7 +16,8 @@
 ## Build and test
 ```sh
 make                       # gcc, strict flags, library + checker + tests (no cmake needed)
-make test                  # run the C tests
+make test                  # run the C tests and the fuzz replay (FUZZ_ITER mutations per seed)
+make fuzz                  # the fuzz replay alone (fuzz/README.md)
 make check                 # nice -n 19 review_checks.py + python unit tests
 make format                # clang-format if available
 make SANITIZE=1 BUILD=build/san test        # address,undefined
@@ -35,6 +36,6 @@ python3 review_sources/fetch_sources.py                                 # offlin
 - **Never copy golden constants into implementations: derive them from the rules (spec §20).** Golden vectors (`refs/vectors/golden.json`) are test expectations only. The blind references must not see each other or the expected answers (`refs/README.md`).
 - Permutation convention: `p[v] = v^p`, `(pq)[v] = q[p[v]]`. Test array direction, product order and inverses explicitly.
 - Do not modify `docs/specification.md`, `docs/implementation-plan.md`, `docs/performance-lower-bounds.md`, `reviews/*`, `review_sources/*`, `LICENSE` or `checks/review_checks.py` unless the user asks.
-- C17 only; no external dependencies; check sizes, overflow, aliasing and ownership; wire streams never dump structs.
+- C17 only; no external dependencies; check sizes, overflow, aliasing and ownership; wire streams never dump structs. Every allocation in `src/` goes through `src/arena/mem.h` (`canon_mem_*`), never raw `malloc`/`free`, so the §11.2 ledger stays exact and fault injection reaches it; storage a test hands to a library struct must come from the same allocator.
 - Every faster path must reproduce P1 exactly or carry a new profile ID (PROFILE-EQUIV); never claim stronger completeness than the evidence supports. A prune needs its coverage lemma in `docs/pruning-rules.md` and a checker rule before it is enabled; a prune that changes the node count needs its own work-policy ID (spec §11.1).
 - The checker is written from the specification only: never copy producer code into `checker/`, and keep `checker/` free of includes from `src/` and `include/`.

@@ -27,6 +27,7 @@
  * K_0 <= <inputs> = G; every input sifts to the identity, so G <= K_0.  Hence K_0 = G and
  * |G| is the product of the orbit lengths. */
 #include "bsgs/verify.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -51,15 +52,15 @@ typedef struct vscratch {
 
 static void scratch_free(vscratch *s)
 {
-    free(s->mark);
-    free(s->t);
-    free(s->tmp);
-    free(s->g);
-    free(s->path);
-    free(s->gmark);
-    free(s->bitmap);
-    free(s->targets);
-    free(s->expected);
+    canon_mem_free(s->mark);
+    canon_mem_free(s->t);
+    canon_mem_free(s->tmp);
+    canon_mem_free(s->g);
+    canon_mem_free(s->path);
+    canon_mem_free(s->gmark);
+    canon_mem_free(s->bitmap);
+    canon_mem_free(s->targets);
+    canon_mem_free(s->expected);
 }
 
 /* A fresh stamp: everything marked before is now unmarked. */

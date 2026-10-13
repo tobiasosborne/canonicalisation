@@ -8,6 +8,7 @@
  * Every query below is O(|G| * n) per call.  This backend is replaced in slice S3 by a verified
  * stabiliser chain (spec 9.1) behind the same canon_group_ops. */
 #include "bsgs/explicit.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -74,7 +75,7 @@ static canon_status set_grow(row_set *s, const uint32_t *table, uint32_t degree)
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
     size_t new_cap = cap * 2;
-    size_t *slots = calloc(new_cap, sizeof *slots);
+    size_t *slots = canon_mem_calloc(new_cap, sizeof *slots);
     if (slots == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
@@ -87,7 +88,7 @@ static canon_status set_grow(row_set *s, const uint32_t *table, uint32_t degree)
             grown.slots[j] = idx;
         }
     }
-    free(s->slots);
+    canon_mem_free(s->slots);
     *s = grown;
     return CANON_COMPLETE;
 }
@@ -115,8 +116,8 @@ static void explicit_destroy(void *impl)
     explicit_group *e = impl;
     if (e != NULL) {
         explicit_destroy(e->lift);
-        free(e->table);
-        free(e);
+        canon_mem_free(e->table);
+        canon_mem_free(e);
     }
 }
 
@@ -318,9 +319,9 @@ static canon_status ex_visit(const ex_enum *x, const size_t *rows, size_t count,
             st = ex_visit(x, child, child_count, child_r); /* visit(H_a, t_b r) */
         }
     }
-    free(child);
-    free(child_r);
-    free(in_orbit);
+    canon_mem_free(child);
+    canon_mem_free(child_r);
+    canon_mem_free(in_orbit);
     return st;
 }
 
@@ -342,8 +343,8 @@ static canon_status explicit_enumerate(const canon_group *group, canon_coset_vis
         visitor->stopped = false;
         st = ex_visit(&x, rows, (size_t)e->order, id); /* spec 8.1: start visit(G, id) */
     }
-    free(rows);
-    free(id);
+    canon_mem_free(rows);
+    canon_mem_free(id);
     return st;
 }
 
@@ -370,11 +371,11 @@ static canon_status sort_rows(uint32_t **table, size_t count, uint32_t degree, s
         for (size_t i = 0; i < count && degree > 0; ++i) {
             memcpy(sorted + i * row_words, *table + idx[i] * row_words, row_words * sizeof *sorted);
         }
-        free(*table);
+        canon_mem_free(*table);
         *table = sorted;
     }
-    free(idx);
-    free(scratch);
+    canon_mem_free(idx);
+    canon_mem_free(scratch);
     return st;
 }
 
@@ -421,8 +422,8 @@ static canon_status explicit_conjugate(const canon_group *group, const uint32_t 
     explicit_group *c = canon_alloc_array(1, sizeof *c, &st);
     uint32_t *table = canon_alloc_array(words, sizeof *table, &st);
     if (c == NULL || table == NULL) {
-        free(c);
-        free(table);
+        canon_mem_free(c);
+        canon_mem_free(table);
         return st;
     }
     for (size_t i = 0; i < (size_t)e->order; ++i) {
@@ -434,8 +435,8 @@ static canon_status explicit_conjugate(const canon_group *group, const uint32_t 
     }
     st = sort_rows(&table, (size_t)e->order, n, row_words);
     if (st != CANON_COMPLETE) {
-        free(c);
-        free(table);
+        canon_mem_free(c);
+        canon_mem_free(table);
         return st;
     }
     c->order = e->order;
@@ -479,9 +480,9 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
         return CANON_CAPACITY_LIMIT;
     }
     size_t rows_cap = 16;
-    uint32_t *table = malloc(rows_cap * row_words * sizeof *table);
-    uint32_t *tmp = malloc(row_words * sizeof *tmp);
-    row_set set = {calloc(64, sizeof(size_t)), 63, 0};
+    uint32_t *table = canon_mem_malloc(rows_cap * row_words * sizeof *table);
+    uint32_t *tmp = canon_mem_malloc(row_words * sizeof *tmp);
+    row_set set = {canon_mem_calloc(64, sizeof(size_t)), 63, 0};
     canon_status st = CANON_COMPLETE;
     size_t count = 0;
     if (table == NULL || tmp == NULL || set.slots == NULL) {
@@ -516,7 +517,7 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
                     st = CANON_CAPACITY_LIMIT;
                     goto fail;
                 }
-                uint32_t *grown = realloc(table, rows_cap * 2 * row_words * sizeof *table);
+                uint32_t *grown = canon_mem_realloc(table, rows_cap * 2 * row_words * sizeof *table);
                 if (grown == NULL) {
                     st = CANON_RESOURCE_LIMIT;
                     goto fail;
@@ -536,9 +537,9 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
             }
         }
     }
-    free(set.slots);
+    canon_mem_free(set.slots);
     set.slots = NULL;
-    free(tmp);
+    canon_mem_free(tmp);
     tmp = NULL;
 
     /* Sort the rows lexicographically (S1 brief 4.2), so table order is image-array order. */
@@ -547,7 +548,7 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
         goto fail;
     }
 
-    explicit_group *e = malloc(sizeof *e);
+    explicit_group *e = canon_mem_malloc(sizeof *e);
     if (e == NULL) {
         st = CANON_RESOURCE_LIMIT;
         goto fail;
@@ -560,9 +561,9 @@ static canon_status build_table(uint32_t degree, const uint32_t *generators, siz
     return CANON_COMPLETE;
 
 fail:
-    free(set.slots);
-    free(tmp);
-    free(table);
+    canon_mem_free(set.slots);
+    canon_mem_free(tmp);
+    canon_mem_free(table);
     return st;
 }
 
@@ -625,7 +626,7 @@ canon_status canon_group_explicit_create_signed(uint32_t degree, const uint32_t 
         } else if (st == CANON_COMPLETE && e->lift->order != e->order) {
             st = CANON_INTERNAL_ERROR; /* |lift| >= |G| and the closure stopped at |G| */
         }
-        free(lifted);
+        canon_mem_free(lifted);
     }
     if (st == CANON_COMPLETE) {
         st = canon_group_alloc(&explicit_ops, degree, e, out);

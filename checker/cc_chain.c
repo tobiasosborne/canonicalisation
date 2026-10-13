@@ -86,12 +86,17 @@ cc_reason cc_chain_read(cc_reader *r, uint32_t n, cc_chain *c)
     if (!cc_get_u32(r, &c->g)) {
         return CC_TRUNCATED;
     }
+    if ((size_t)c->g > SIZE_MAX / 4u / (n > 0 ? n : 1u)) {
+        return CC_CAPACITY;
+    }
+    /* each stored generator is a U32 node id and n dense words: a count the stream cannot back
+     * is a truncated chain, and is rejected before any array is sized from it */
+    if ((r->len - r->at) / (4u + 4u * (size_t)n) < c->g) {
+        return CC_TRUNCATED;
+    }
     c->gen_node = cc_alloc(c->g, sizeof *c->gen_node, &why);
     if (c->gen_node == NULL) {
         return why;
-    }
-    if ((size_t)c->g > SIZE_MAX / 4u / (n > 0 ? n : 1u)) {
-        return CC_CAPACITY;
     }
     c->gens = cc_alloc((size_t)c->g * n, sizeof *c->gens, &why);
     c->invs = c->gens != NULL ? cc_alloc((size_t)c->g * n, sizeof *c->invs, &why) : NULL;
@@ -125,12 +130,12 @@ cc_reason cc_chain_read(cc_reader *r, uint32_t n, cc_chain *c)
     if ((size_t)c->i > SIZE_MAX / 4u / (n > 0 ? n : 1u)) {
         return CC_CAPACITY;
     }
+    if (r->len - r->at < 4u * (size_t)n * c->i) {
+        return CC_TRUNCATED; /* i dense inputs follow: check before sizing the array */
+    }
     c->inputs = cc_alloc((size_t)c->i * n, sizeof *c->inputs, &why);
     if (c->inputs == NULL) {
         return why;
-    }
-    if (r->len - r->at < 4u * (size_t)n * c->i) {
-        return CC_TRUNCATED;
     }
     for (size_t j = 0; j < (size_t)c->i * n; ++j) {
         (void)cc_get_u32(r, &c->inputs[j]);

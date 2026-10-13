@@ -1,6 +1,7 @@
 /* Perm, Group(H) and labeling-coset payloads (spec 4.1, 9.4; slice S4, docs/slices/S4.md 3.4,
  * 3.5). */
 #include "encoding/group_stream.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -115,7 +116,7 @@ static canon_status rule1(canon_buf *out, const canon_bsgs *h, bool *applies, ui
             }
         }
     }
-    free(block);
+    canon_mem_free(block);
     return st;
 }
 
@@ -166,8 +167,8 @@ static canon_status rule2(canon_buf *out, const canon_bsgs *h, canon_group_bytes
         }
     }
     canon_perm_table_free(&gens);
-    free(g);
-    free(sift);
+    canon_mem_free(g);
+    canon_mem_free(sift);
     return st;
 }
 

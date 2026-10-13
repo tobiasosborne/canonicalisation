@@ -39,7 +39,7 @@ The milestones above are gates. Delivery is organised as **vertical slices**: ea
 | **S5** | Nested objects: tuples, sets, multisets, literals, permutation/subgroup/coset leaves; extensional normalisation; CDAG-2 decoder and validator; `canon_object_create` from a stream; sharing tests to depth 60 | object (dag), encoding (decoder, validator) | none | 3.2, 3.3, 3.6 |
 | **S6** | Labeling cosets and signed images: typed λ = ρt, complete `Aλ`, χ validation by the lifted group, zero certificate, nonzero via complete stabiliser, sign covariance tests, cross-feed `s_A(C_B(x))·s_A(x)=s_B(x)` | search (objectives 0x0005, 0x0007), api | none | 4.4 (rest) |
 | **S7** (landed 12 October 2026), **S7b** (13 October) | Certificate v0 and the independent checker; first prune (node-stabilising automorphism) with its checker rule; mutation rejection; S7b: implicit automorphisms under work policy `0x0003` | symmetry, search, checker | checker uses its own slow refinement | 4.5, 4.7 |
-| **S8** | Capacity admission, live-memory ledger, metrics, fault injection, fuzz targets; `solve_batch`; output sink pause/fail | arena, metrics, api | none | 4.8, 5.1, 5.2 |
+| **S8** (landed 13 October 2026) | Capacity admission, live-memory ledger, metrics, fault injection, fuzz targets; `solve_batch`; output sink pause/fail | arena, metrics, api | admission by a plan calibrated on the tiers (the chain term is an estimate); pool execution, worker-local arenas and the strict fallback stay M5/M6 | 4.8, 5.1, 5.2 |
 
 After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruption) and M1 follow; M5 benchmarks and M6 concurrency are scheduled only after M0 closes.
 
@@ -58,6 +58,14 @@ After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruptio
 - Certificate v0's node records carry a sweep count and explicit child points, its final claim the explored-node count; its automorphism table holds one explicit transporter per pruned child. The checker verifies group equality of a rebased chain by mutual membership of the generating sets, `M`'s minimality by the least point of each level of the chain rebased to `M`, and the leaf's `t` as the last G stage's `u`.
 - Brief corrections: the unpruned node count of the empty subset under `Sym(6)` is 1237 (the brief's example gave no number; the first draft of the test assumed 1957); the drafted node record lacked a sweep count and child points; the certificate's witness is the least explored-leaf witness irrespective of the result's witness mode.
 - WP4.5 and WP4.7 are delivered by S7 and S7b (source (ii), work policy `0x0003`, `docs/slices/S7b.md`) except for certificate v1.
+
+### Readings fixed by S8 (ledger, admission, batch, sink; `docs/slices/S8-notes.md`)
+
+- A paused sink is `CANON_CANCELLED` with the offset retained (`canon_result_encode_resume`); §3.2's statuses are frozen.
+- Admission is by a plan computed from the input at problem creation (`max_live_bytes`); the ledger measures and `test_metrics` checks peak ≤ plan; the measured peak never changes a status. The plan's chain term is a calibrated estimate, recorded as such.
+- `solve_batch` follows §17 v2.1 literally; a batch of 0 is `COMPLETE` with nothing written; cancellation across a batch is not offered.
+- Metrics of an incomplete result report the work done before the status.
+- Fuzz targets carry the libFuzzer entry point and are replayed deterministically here (no runtime available, no download).
 
 ### External oracle tier (WP0.9, decided 1 October 2026; scheduled after S6)
 

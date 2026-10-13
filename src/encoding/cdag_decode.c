@@ -1,6 +1,7 @@
 /* The strict CDAG-2 decoder, import and the canonical-form validator (spec 4.1, 4.2, 11.1;
  * slice S5, docs/slices/S5.md 3.5). */
 #include "encoding/cdag_decode.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -383,9 +384,9 @@ canon_status canon_cdag_read_graph(canon_cdag_reader *r, uint32_t n, canon_graph
         }
         st = canon_graph_init(g, n, n > 0 ? colours : NULL, n > 0 ? lengths : NULL, arcs, e);
     }
-    free(colours);
-    free(lengths);
-    free(arcs);
+    canon_mem_free(colours);
+    canon_mem_free(lengths);
+    canon_mem_free(arcs);
     return st;
 }
 
@@ -522,8 +523,8 @@ static canon_status decode_records(canon_cdag_reader *r, uint32_t n, uint32_t q,
             st = canon_dag_append(out, tag, r->data + start, r->pos - start, NULL, NULL, 0, NULL);
         }
     }
-    free(kd.child);
-    free(kd.mult);
+    canon_mem_free(kd.child);
+    canon_mem_free(kd.mult);
     return st;
 }
 
@@ -586,7 +587,7 @@ canon_status canon_cdag_decode(const uint8_t *stream, size_t length, const uint3
     }
     memset(bits, 0, (words > 0 ? words : 1u) * sizeof *bits); /* bits contract: zero on entry */
     st = decode_records(&r, n, q, bits, out, reason);
-    free(bits);
+    canon_mem_free(bits);
     if (st != CANON_COMPLETE) {
         canon_dag_reset(out, n);
         return st;

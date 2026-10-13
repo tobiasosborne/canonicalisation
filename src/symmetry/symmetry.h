@@ -36,6 +36,7 @@
 /* Counters of one run (docs/slices/S7-notes.md; no timings). */
 typedef struct canon_symmetry_stats {
     uint64_t candidates; /* automorphism candidates offered to canon_symmetry_insert */
+    uint64_t fixing;     /* candidates that fix x (members or not) */
     uint64_t inserted;   /* candidates that enlarged A_known (verified rebuilds) */
     uint64_t rebases;    /* transient rebases of A_known to a node prefix */
     uint64_t orbits;     /* orbits of A_S computed on target cells */

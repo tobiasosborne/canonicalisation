@@ -498,6 +498,12 @@ static cc_reason run(checker *c)
     if (!cc_get_u32(r, &c->n)) {
         return CC_TRUNCATED;
     }
+    /* every certificate ends with the FINAL witness t, n dense U32 words (format, FINAL), so a
+     * stream with fewer than 4n bytes left ends inside a field whatever else it holds: reject it
+     * now rather than size the n-point arrays below from an unbacked n */
+    if ((size_t)c->n > (r->len - r->at) / 4u) {
+        return CC_TRUNCATED;
+    }
     const uint32_t n = c->n;
     const uint8_t *stream = NULL;
     uint32_t stream_len = 0;
@@ -533,6 +539,9 @@ static cc_reason run(checker *c)
     if ((size_t)c->k > SIZE_MAX / 4u / (n > 0 ? n : 1u)) {
         return CC_CAPACITY;
     }
+    if (r->len - r->at < 4u * (size_t)n * c->k) {
+        return CC_TRUNCATED; /* k dense generators follow: size the array only when backed */
+    }
     c->gens = cc_alloc((size_t)c->k * n, sizeof *c->gens, &why);
     if (c->gens == NULL) {
         return why;
@@ -566,6 +575,9 @@ static cc_reason run(checker *c)
     }
     if ((size_t)c->m > SIZE_MAX / 4u / (n > 0 ? n : 1u)) {
         return CC_CAPACITY;
+    }
+    if (r->len - r->at < 4u * (size_t)n * c->m) {
+        return CC_TRUNCATED; /* m dense automorphisms follow */
     }
     c->auts = cc_alloc((size_t)c->m * n, sizeof *c->auts, &why);
     if (c->auts == NULL) {

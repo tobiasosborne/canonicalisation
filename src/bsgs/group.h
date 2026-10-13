@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "arena/refcount.h"
+#include "arena/mem.h"
 #include "canon/canon.h"
 #include "coset/coset.h"
 #include "perm/perm.h"
@@ -139,7 +140,7 @@ void canon_group_lift_element(const uint32_t *g, uint32_t n, int sign, uint32_t 
 
 /* spec 8.4, 11.1 (slice S6): the lifted generators of a signed group as one flat array of
  * count * (n + 2) images (canon_group_lift_element of generator i with sign signs[i]; for
- * n = 0 the generators are not read).  Returns the array (free with free()), or NULL with
+ * n = 0 the generators are not read).  Returns the array (free with canon_mem_free()), or NULL with
  * *status set: CANON_CAPACITY_LIMIT when n + 2 does not fit uint32 ("the initial
  * lifted-character validator additionally requires n+2 <= 2^32-1, checked before constructing
  * its two sign points") or a size does not fit, CANON_RESOURCE_LIMIT on allocation failure. */

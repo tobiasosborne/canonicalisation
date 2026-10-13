@@ -34,6 +34,7 @@
  * as that product overflows uint64, which happens iff |G| > 2^64 - 1 (S3 brief 2.5); this also
  * bounds the work for huge groups. */
 #include "bsgs/chain.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -59,15 +60,15 @@ void canon_bsgs_init(canon_bsgs *c, uint32_t n)
 void canon_bsgs_free(canon_bsgs *c)
 {
     for (uint32_t i = 0; i < c->level_cap; ++i) {
-        free(c->levels[i].orbit); /* the block holding orbit, orbit_pos and the vector */
-        free(c->levels[i].gen_ids);
+        canon_mem_free(c->levels[i].orbit); /* the block holding orbit, orbit_pos and the vector */
+        canon_mem_free(c->levels[i].gen_ids);
     }
-    free(c->levels);
+    canon_mem_free(c->levels);
     canon_perm_table_free(&c->gens);
     canon_perm_table_free(&c->invs);
     canon_perm_table_free(&c->inputs);
-    free(c->gen_node);
-    free(c->inv_node);
+    canon_mem_free(c->gen_node);
+    canon_mem_free(c->inv_node);
     canon_prov_free(&c->prov);
     canon_bsgs_init(c, c->n);
 }
@@ -255,7 +256,7 @@ canon_status canon_bsgs_transporter(const canon_bsgs *c, uint32_t level, uint32_
         return st;
     }
     (void)transporter_into(c, &c->levels[level], c->levels[level].orbit_pos[b], out, tmp);
-    free(tmp);
+    canon_mem_free(tmp);
     return CANON_COMPLETE;
 }
 
@@ -351,7 +352,7 @@ canon_status canon_bsgs_contains(const canon_bsgs *c, const uint32_t *p, bool *o
         return st;
     }
     *out = canon_bsgs_contains_scratch(c, p, g);
-    free(g);
+    canon_mem_free(g);
     return CANON_COMPLETE;
 }
 
@@ -552,8 +553,8 @@ static canon_status kept_inputs(const uint32_t *gens, uint32_t count, uint32_t n
     size_t *idx = canon_alloc_array(count, sizeof *idx, &st);
     size_t *tmp = canon_alloc_array(count, sizeof *tmp, &st);
     if (idx == NULL || tmp == NULL) {
-        free(idx);
-        free(tmp);
+        canon_mem_free(idx);
+        canon_mem_free(tmp);
         return st;
     }
     for (uint32_t i = 0; i < count; ++i) {
@@ -566,8 +567,8 @@ static canon_status kept_inputs(const uint32_t *gens, uint32_t count, uint32_t n
         keep[idx[k]] = !canon_perm_is_identity(row, n) &&
                        (k == 0 || row_index_cmp(&idx[k - 1], &idx[k], &r) != 0);
     }
-    free(idx);
-    free(tmp);
+    canon_mem_free(idx);
+    canon_mem_free(tmp);
     return CANON_COMPLETE;
 }
 
@@ -640,7 +641,7 @@ static canon_status build_run(canon_bsgs *c, const uint32_t *gens, uint32_t coun
             st = closure(c, x, at);
         }
     }
-    free(keep);
+    canon_mem_free(keep);
     return st; /* c->order was refreshed at every insertion */
 }
 
@@ -663,11 +664,11 @@ canon_status canon_bsgs_build(canon_bsgs *out, uint32_t n, const uint32_t *gens,
         x.rec_pos != NULL) {
         st = build_run(out, gens, (uint32_t)count, prefix, prefix_len, &x);
     }
-    free(x.g);
-    free(x.t);
-    free(x.tmp);
-    free(x.rec_level);
-    free(x.rec_pos);
+    canon_mem_free(x.g);
+    canon_mem_free(x.t);
+    canon_mem_free(x.tmp);
+    canon_mem_free(x.rec_level);
+    canon_mem_free(x.rec_pos);
     if (st != CANON_COMPLETE) {
         canon_bsgs_free(out);
     }
@@ -710,7 +711,7 @@ canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint3
             canon_bsgs_free(out);
         }
     }
-    free(flat);
+    canon_mem_free(flat);
     return st;
 }
 
@@ -796,7 +797,7 @@ canon_status canon_bsgs_conjugate(const canon_bsgs *src, const uint32_t *g, cano
     if (st == CANON_COMPLETE) {
         st = conjugate_rows(&src->inputs, g, tmp, &out->inputs);
     }
-    free(tmp);
+    canon_mem_free(tmp);
     /* provenance and generator nodes: structural, unchanged ((pq)^g = p^g q^g) */
     void *nodes = out->prov.nodes, *gn = out->gen_node, *in = out->inv_node;
     if (st == CANON_COMPLETE) {
@@ -1056,10 +1057,25 @@ canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32
         }
     }
     canon_bsgs_free(&own);
-    free(x.t);
-    free(x.u);
-    free(x.tmp);
-    free(x.queue);
-    free(x.mark);
+    canon_mem_free(x.t);
+    canon_mem_free(x.u);
+    canon_mem_free(x.tmp);
+    canon_mem_free(x.queue);
+    canon_mem_free(x.mark);
     return st;
+}
+
+uint64_t canon_bsgs_bytes(const canon_bsgs *c)
+{
+    /* spec 11.2: every array the chain owns, by its capacity (what is allocated, not used) */
+    const uint64_t n = c->n;
+    uint64_t total = (uint64_t)c->level_cap * sizeof(canon_bsgs_level);
+    for (uint32_t i = 0; i < c->depth && c->levels != NULL; ++i) {
+        const canon_bsgs_level *L = &c->levels[i];
+        total += 5u * n * sizeof(uint32_t) + (uint64_t)L->gen_cap * sizeof(uint32_t);
+    }
+    total += ((uint64_t)c->gens.cap + c->invs.cap + c->inputs.cap) * n * sizeof(uint32_t);
+    total += 2u * (uint64_t)c->node_cap * sizeof(uint32_t);
+    total += (uint64_t)c->prov.cap * sizeof(canon_prov_node);
+    return total;
 }

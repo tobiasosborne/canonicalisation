@@ -3,6 +3,7 @@
  * Every function states the side it acts on.  Arrays store p[v] = v^p (source to target);
  * (pq)[v] = q[p[v]] (spec section 3). */
 #include "perm/perm.h"
+#include "arena/mem.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -83,12 +84,12 @@ int canon_perm_validate(const uint32_t *p, uint32_t n)
         return 1;
     }
     size_t words = ((size_t)n + 63u) / 64u;
-    uint64_t *bitmap = malloc(words * sizeof *bitmap); /* words <= 2^26: no overflow */
+    uint64_t *bitmap = canon_mem_malloc(words * sizeof *bitmap); /* words <= 2^26: no overflow */
     if (bitmap == NULL) {
         return -1;
     }
     int ok = canon_perm_validate_scratch(p, n, bitmap) ? 1 : 0;
-    free(bitmap);
+    canon_mem_free(bitmap);
     return ok;
 }
 
@@ -111,7 +112,7 @@ void canon_perm_table_init(canon_perm_table *t, uint32_t n)
 
 void canon_perm_table_free(canon_perm_table *t)
 {
-    free(t->data);
+    canon_mem_free(t->data);
     t->data = NULL;
     t->count = 0;
     t->cap = 0;

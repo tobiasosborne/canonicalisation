@@ -2,6 +2,7 @@
  * handles; immutable groups can be shared).  Backends construct handles only through
  * canon_group_alloc, so the reference-count invariant lives here, not in each backend. */
 #include "bsgs/group.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,7 @@ canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void
                                canon_group **out)
 {
     *out = NULL;
-    canon_group *g = malloc(sizeof *g);
+    canon_group *g = canon_mem_malloc(sizeof *g);
     if (g == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
@@ -43,11 +44,11 @@ void canon_group_unshare(const canon_group *group)
         owned->ops->destroy(owned->impl);
         if (owned->signs != NULL) {
             canon_perm_table_free(&owned->signs->gens);
-            free(owned->signs->signs);
-            free(owned->signs);
+            canon_mem_free(owned->signs->signs);
+            canon_mem_free(owned->signs);
         }
         canon_perm_table_free(&owned->gens);
-        free(owned);
+        canon_mem_free(owned);
     }
 }
 
@@ -85,8 +86,8 @@ canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, siz
     canon_group_signs *s = canon_alloc_array(1, sizeof *s, &st);
     int8_t *copy = canon_alloc_array(count, sizeof *copy, &st);
     if (s == NULL || copy == NULL) {
-        free(s);
-        free(copy);
+        canon_mem_free(s);
+        canon_mem_free(copy);
         return st;
     }
     canon_perm_table_init(&s->gens, group->degree);
@@ -98,8 +99,8 @@ canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, siz
     }
     if (st != CANON_COMPLETE) {
         canon_perm_table_free(&s->gens);
-        free(s);
-        free(copy);
+        canon_mem_free(s);
+        canon_mem_free(copy);
         return st; /* spec 17: the handle is unchanged */
     }
     if (count > 0) {
@@ -163,7 +164,7 @@ canon_status canon_group_validate_generators(uint32_t degree, const uint32_t *ge
     for (size_t i = 0; i < count && valid; ++i) {
         valid = canon_perm_validate_scratch(gens + i * (size_t)degree, degree, bitmap);
     }
-    free(bitmap);
+    canon_mem_free(bitmap);
     return valid ? CANON_COMPLETE : CANON_INVALID_INPUT;
 }
 
@@ -202,7 +203,7 @@ canon_status canon_group_character_by(const canon_group *group, const void *lift
             break;
         }
     }
-    free(own);
+    canon_mem_free(own);
     return st;
 }
 

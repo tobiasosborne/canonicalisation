@@ -2,6 +2,7 @@
  * is stated in certificate.h; every field is written through the wire primitives of
  * src/encoding/wire.h (spec 17: "wire streams never dump structs"). */
 #include "search/certificate.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +25,7 @@ void canon_cert_init(canon_cert *c)
 
 void canon_cert_free(canon_cert *c)
 {
-    free(c->m);
+    canon_mem_free(c->m);
     canon_buf_free(&c->head);
     canon_buf_free(&c->auts);
     canon_buf_free(&c->nodes);
@@ -145,7 +146,7 @@ canon_status canon_cert_begin(canon_cert *c, const canon_group *g, const canon_r
         if (m == NULL) {
             return as;
         }
-        free(c->m);
+        canon_mem_free(c->m);
         c->m = m;
         c->m_cap = n;
     }

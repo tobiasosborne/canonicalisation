@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/mem.h" /* S8: library-owned storage built by hand */
 #include "bsgs/chain.h"
 #include "bsgs/chain_backend.h"
 #include "bsgs/explicit.h"
@@ -89,11 +90,11 @@ static void conventions(void)
     CHECK(canon_perm_table_push(&ch.gens, cyc, &id) == CANON_COMPLETE && id == 1);
     canon_perm_inverse(cyc, inv, 3);
     CHECK(canon_perm_table_push(&ch.invs, inv, &id) == CANON_COMPLETE);
-    ch.levels = calloc(2, sizeof *ch.levels);
+    ch.levels = canon_mem_calloc(2, sizeof *ch.levels);
     ch.level_cap = 2;
     ch.depth = 1;
     canon_bsgs_level *L = &ch.levels[0];
-    uint32_t *block = malloc(4 * 3 * sizeof *block); /* the chain.c layout: one block */
+    uint32_t *block = canon_mem_malloc(4 * 3 * sizeof *block); /* the chain.c layout: one block */
     L->orbit = block;
     L->orbit_pos = block + 3;
     L->parent_point = block + 6;
@@ -103,7 +104,7 @@ static void conventions(void)
     }
     L->base_point = 1;
     L->orbit_len = 0;
-    L->gen_ids = malloc(2 * sizeof *L->gen_ids);
+    L->gen_ids = canon_mem_malloc(2 * sizeof *L->gen_ids);
     L->gen_ids[0] = 0;
     L->gen_ids[1] = 1;
     L->gen_count = L->gen_cap = 2;
@@ -192,7 +193,7 @@ static void compare(uint32_t n, const uint32_t *gens, uint32_t count, int lists_
     CHECK(canon_group_chain_of(ex) == NULL);
     /* S3 review item 8: the chain admits every descriptor; the explicit table only up to its
      * order */
-    canon_capacity tight = {0, 1, 0, 0, 0, 0, 0, 0};
+    canon_capacity tight = {0, 1, 0, 0, 0, 0, 0, 0, 0};
     CHECK(ch->ops->admits(ch, &tight) == CANON_COMPLETE);
     CHECK(ex->ops->admits(ex, &tight) ==
           (ex->ops->order(ex) <= 1 ? CANON_COMPLETE : CANON_CAPACITY_LIMIT));

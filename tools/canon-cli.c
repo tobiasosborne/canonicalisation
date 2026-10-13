@@ -799,7 +799,7 @@ int main(int argc, char **argv)
     canon_problem *problem = NULL;
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
-    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, o.work_policy};
+    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, o.work_policy, 0};
     const canon_context_options copts = {o.backend};
     const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL,
                                          o.certificate != NULL};

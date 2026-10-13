@@ -40,7 +40,7 @@ add_library(canon STATIC
   src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c
   src/coset/least.c src/coset/enumerate.c src/partition/partition.c
   src/util/sort.c src/refine/p1.c src/search/p1_tree.c src/search/objectives.c
-  src/search/certificate.c src/symmetry/symmetry.c)
+  src/search/certificate.c src/symmetry/symmetry.c src/arena/mem.c)
 target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
 
@@ -70,7 +70,8 @@ foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_
           test_coset_least test_enumerate test_group_stream test_objectives
           test_dag test_cdag_decode test_dag_action test_search_dag
           test_signed_group test_labeling test_signed
-          test_symmetry test_prune test_certificate)
+          test_symmetry test_prune test_certificate
+          test_sink test_batch test_metrics test_faults)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)
@@ -98,6 +99,16 @@ if(Python3_Interpreter_FOUND)
 else()
   message(WARNING "python3 not found: test_e2e is not registered")
 endif()
+
+# Slice S8: fuzz targets (libFuzzer entry points, replayed deterministically by fuzz/run.sh).
+add_executable(fuzz_cdag_decode fuzz/fuzz_cdag_decode.c)
+target_compile_definitions(fuzz_cdag_decode PRIVATE CANON_FUZZ_MAIN)
+target_link_libraries(fuzz_cdag_decode PRIVATE canon canon_options)
+add_executable(fuzz_checker fuzz/fuzz_checker.c checker/cc_check.c checker/cc_chain.c
+  checker/cc_object.c checker/cc_reader.c checker/cc_refine.c)
+target_compile_definitions(fuzz_checker PRIVATE CANON_FUZZ_MAIN)
+target_link_libraries(fuzz_checker PRIVATE canon_options)
+add_test(NAME fuzz_replay COMMAND sh ${CMAKE_SOURCE_DIR}/fuzz/run.sh ${CMAKE_BINARY_DIR} 500)
 
 # Slice S7: the checker harness (acceptance tiers and mutation rejection) and the usage exit.
 if(Python3_Interpreter_FOUND)

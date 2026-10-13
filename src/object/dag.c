@@ -2,6 +2,7 @@
  * the ATOM-TRANSPORT-1 action (spec 2.1, 4.1, 4.2, 9.4, 11.1; slice S5, docs/slices/S5.md
  * 3.1-3.3, 3.6). */
 #include "object/dag.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,13 +34,13 @@ static void drop_objects(canon_dag *d)
     for (uint32_t i = 0; i < d->chains_cap; ++i) {
         if (d->chains[i] != NULL) {
             canon_bsgs_free(d->chains[i]);
-            free(d->chains[i]);
+            canon_mem_free(d->chains[i]);
             d->chains[i] = NULL;
         }
     }
     if (d->graph != NULL) {
         canon_graph_free(d->graph);
-        free(d->graph);
+        canon_mem_free(d->graph);
         d->graph = NULL;
     }
 }
@@ -47,10 +48,10 @@ static void drop_objects(canon_dag *d)
 void canon_dag_free(canon_dag *d)
 {
     drop_objects(d);
-    free(d->chains);
-    free(d->recs);
-    free(d->child);
-    free(d->mult);
+    canon_mem_free(d->chains);
+    canon_mem_free(d->recs);
+    canon_mem_free(d->child);
+    canon_mem_free(d->mult);
     canon_buf_free(&d->pool);
     canon_dag_init(d, 0);
 }
@@ -88,7 +89,7 @@ static canon_status attach_chain(canon_dag *d, uint32_t i, canon_bsgs *c)
         d->chains = p;
         if (st != CANON_COMPLETE) {
             canon_bsgs_free(c);
-            free(c);
+            canon_mem_free(c);
             return st;
         }
         for (uint32_t j = old; j < d->chains_cap; ++j) {
@@ -194,18 +195,18 @@ void canon_dag_scratch_init(canon_dag_scratch *s)
 
 void canon_dag_scratch_free(canon_dag_scratch *s)
 {
-    free(s->map);
-    free(s->reach);
-    free(s->final);
-    free(s->order);
-    free(s->order_tmp);
-    free(s->table);
-    free(s->pairs);
-    free(s->pairs_tmp);
-    free(s->fchild);
-    free(s->fmult);
-    free(s->perm);
-    free(s->bits);
+    canon_mem_free(s->map);
+    canon_mem_free(s->reach);
+    canon_mem_free(s->final);
+    canon_mem_free(s->order);
+    canon_mem_free(s->order_tmp);
+    canon_mem_free(s->table);
+    canon_mem_free(s->pairs);
+    canon_mem_free(s->pairs_tmp);
+    canon_mem_free(s->fchild);
+    canon_mem_free(s->fmult);
+    canon_mem_free(s->perm);
+    canon_mem_free(s->bits);
     canon_dag_free(&s->nodes);
     canon_dag_free(&s->raw);
     canon_buf_free(&s->leaf);
@@ -239,14 +240,14 @@ static canon_status reserve_points(canon_dag_scratch *s, uint32_t n)
     uint32_t *block = canon_alloc_array(words, sizeof *block, &st);
     uint64_t *bits = canon_alloc_array(canon_cdag_bits_words(n), sizeof *bits, &st);
     if (block == NULL || bits == NULL) {
-        free(block);
-        free(bits);
+        canon_mem_free(block);
+        canon_mem_free(bits);
         return st;
     }
     /* the payload readers' bits contract (cdag_decode.h): zero once, kept zero by them */
     memset(bits, 0, (canon_cdag_bits_words(n) > 0 ? canon_cdag_bits_words(n) : 1u) * sizeof *bits);
-    free(s->perm);
-    free(s->bits);
+    canon_mem_free(s->perm);
+    canon_mem_free(s->bits);
     s->perm = block;
     s->perm2 = block + (size_t)n;
     s->inv = block + 2u * (size_t)n;
@@ -344,7 +345,7 @@ static canon_status canonical_leaf(uint32_t n, uint8_t tag, const uint8_t *paylo
         }
         canon_graph_free(gr);
         if (gr != &local) {
-            free(gr);
+            canon_mem_free(gr);
         }
         return st;
     }
@@ -557,11 +558,11 @@ static canon_status intern_one(const canon_dag *in, uint32_t i, canon_dag_scratc
     }
     if (chain != NULL) {
         canon_bsgs_free(chain);
-        free(chain);
+        canon_mem_free(chain);
     }
     if (graph != NULL) {
         canon_graph_free(graph);
-        free(graph);
+        canon_mem_free(graph);
     }
     return st;
 }

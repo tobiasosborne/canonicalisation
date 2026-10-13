@@ -1,5 +1,6 @@
 /* Straight-line provenance records (spec 9.1, 9.2); see provenance.h. */
 #include "bsgs/provenance.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,7 @@ void canon_prov_init(canon_provenance *p)
 
 void canon_prov_free(canon_provenance *p)
 {
-    free(p->nodes);
+    canon_mem_free(p->nodes);
     canon_prov_init(p);
 }
 
@@ -256,12 +257,12 @@ canon_status canon_prov_check(const canon_provenance *p, const canon_perm_table 
     *match = all;
     *peak_rows = pool.rows;
 done:
-    free(last);
-    free(slot);
-    free(first);
-    free(next);
-    free(need);
-    free(pool.data);
-    free(pool.free_list);
+    canon_mem_free(last);
+    canon_mem_free(slot);
+    canon_mem_free(first);
+    canon_mem_free(next);
+    canon_mem_free(need);
+    canon_mem_free(pool.data);
+    canon_mem_free(pool.free_list);
     return st;
 }
