@@ -166,7 +166,7 @@ static void check_certificate(const built *b, uint16_t policy, uint32_t n,
     rr.at = 4;
     CHECK(get16(&rr) == CANON_OBJECTIVE_CANONICAL_IMAGE);
     CHECK(get16(&rr) == CANON_PROFILE_P1);
-    CHECK(get16(&rr) == (policy == 0 ? CANON_WORK_POLICY_PRUNE_1 : policy));
+    CHECK(get16(&rr) == (policy == 0 ? CANON_WORK_POLICY_PRUNE_2 : policy)); /* S7b default */
     CHECK(get16(&rr) == CANON_ENCODING_CDAG_2);
     CHECK(get16(&rr) == CANON_ORDER_CDAG_BYTE_1);
     CHECK(get32(&rr) == n);
@@ -231,6 +231,8 @@ static void golden_certificates(void)
         check_certificate(&b, CANON_WORK_POLICY_UNPRUNED, subsets[i].n, subsets[i].gens,
                           subsets[i].gen_count);
         check_certificate(&b, CANON_WORK_POLICY_PRUNE_1, subsets[i].n, subsets[i].gens,
+                          subsets[i].gen_count);
+        check_certificate(&b, CANON_WORK_POLICY_PRUNE_2, subsets[i].n, subsets[i].gens,
                           subsets[i].gen_count);
         check_certificate(&b, 0, subsets[i].n, subsets[i].gens, subsets[i].gen_count);
         canon_group_release(b.g);

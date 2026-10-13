@@ -35,8 +35,8 @@
 #define DEFAULT_MAX_NODES ((uint64_t)1 << 20)
 #define DEFAULT_MAX_REFS ((uint64_t)1 << 22)
 #define DEFAULT_MAX_LITERAL_BYTES ((uint64_t)1 << 26)
-/* docs/slices/S7.md 6.2 (D14): the default work policy is the S7 prune */
-#define DEFAULT_WORK_POLICY CANON_WORK_POLICY_PRUNE_1
+/* docs/slices/S7.md 6.2 (D14), S7b: the default work policy is the strongest sound prune */
+#define DEFAULT_WORK_POLICY CANON_WORK_POLICY_PRUNE_2
 
 /* Largest chunk handed to a sink in one call (spec 17: ordered borrowed chunks). */
 #define SINK_CHUNK ((size_t)1 << 16)
@@ -596,7 +596,8 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     canon_capacity cap = resolve_capacity(capacity, &ctx->defaults);
     /* S7, spec 11.1: the work policy names a traversal; an unknown ID is "unsupported, never
      * reinterpreted" (spec 4.1) */
-    if (cap.work_policy != CANON_WORK_POLICY_UNPRUNED && cap.work_policy != CANON_WORK_POLICY_PRUNE_1) {
+    if (cap.work_policy != CANON_WORK_POLICY_UNPRUNED &&
+        cap.work_policy != CANON_WORK_POLICY_PRUNE_1 && cap.work_policy != CANON_WORK_POLICY_PRUNE_2) {
         return CANON_UNSUPPORTED_ACTION;
     }
     /* S7: certificate v0 covers the canonical image of a subset or graph root (S7 brief 1) */
@@ -874,9 +875,10 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     return CANON_COMPLETE;
 }
 
-/* spec 7, 3: CANONICAL_IMAGE by the P1 tree under the descriptor's work policy (S7, spec
+/* spec 7, 3: CANONICAL_IMAGE by the P1 tree under the descriptor's work policy (S7, S7b, spec
  * 11.1: 0x0001 the unpruned reference traversal, 0x0002 the orbit prune of
- * docs/pruning-rules.md), with a certificate when requested; with the deterministic witness
+ * docs/pruning-rules.md by explicit automorphisms, 0x0003 with implicit ones too), with a
+ * certificate when requested; with the deterministic witness
  * mode the least element of A t (spec 3), A the complete stabiliser from the spec 8.2
  * consumer. */
 static canon_status solve_canonical(canon_workspace *ws, const canon_problem *problem,
@@ -884,8 +886,9 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
 {
     canon_p1_search *s = &ws->search;
     const uint64_t quota = problem->capacity.max_search_nodes;
-    canon_p1_run_options opt = {problem->capacity.work_policy == CANON_WORK_POLICY_PRUNE_1,
-                                NULL};
+    const uint16_t policy = problem->capacity.work_policy;
+    canon_p1_run_options opt = {policy != CANON_WORK_POLICY_UNPRUNED,
+                                policy == CANON_WORK_POLICY_PRUNE_2, NULL};
     canon_status st = CANON_COMPLETE;
     if (problem->certificate) {
         /* spec 20: the producer's certificate names coverage, group verification, the

@@ -51,7 +51,7 @@ static void check_prefixes(canon_symmetry *sym, const t1_sym *s, uint32_t a_mask
     }
     if (len >= 2) {
         CHECK(canon_symmetry_stabiliser(sym, prefix, d) == CANON_COMPLETE);
-        canon_symmetry_cell_orbits(sym, cell, len);
+        canon_symmetry_cell_orbits(sym, cell, len, NULL);
         /* A_S by brute force: elements of A_known fixing the prefix pointwise */
         uint32_t stab = 0;
         for (uint32_t e = 0; e < s->count; ++e) {
@@ -80,6 +80,18 @@ static void check_prefixes(canon_symmetry *sym, const t1_sym *s, uint32_t a_mask
             }
             CHECK(canon_symmetry_rep(sym, b) == rep);
             orbit_checks += 1;
+            /* S7b: with the first-of-orbit representatives given as roots, the same
+             * assignment; with only cell[0] as root, points outside its orbit stay their own */
+            uint8_t roots[4] = {0, 0, 0, 0};
+            for (uint32_t i = 0; i < len; ++i) {
+                roots[i] = canon_symmetry_rep(sym, cell[i]) == cell[i];
+            }
+            canon_symmetry_cell_orbits(sym, cell, len, roots);
+            CHECK(canon_symmetry_rep(sym, b) == rep);
+            uint8_t first[4] = {1, 0, 0, 0};
+            canon_symmetry_cell_orbits(sym, cell, len, first);
+            CHECK(canon_symmetry_rep(sym, b) == (rep == cell[0] ? cell[0] : b));
+            canon_symmetry_cell_orbits(sym, cell, len, NULL); /* restore for the transporter */
             uint32_t a[4] = {0, 1, 2, 3};
             canon_symmetry_transporter(sym, b, a);
             const uint32_t ai = elem_index(s, a);

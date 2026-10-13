@@ -26,10 +26,11 @@ static void free_arrays(canon_p1_search *s)
 {
     canon_partition_free(&s->part);
     free(s->snaps);
-    free(s->leaf_t); /* one block: leaf_t, best_t, prefix, aut */
+    free(s->leaf_t); /* one block: leaf_t, best_t, prefix, aut, inv, roots */
     s->snaps = NULL;
     s->snap_alloc = 0;
-    s->leaf_t = s->best_t = s->prefix = s->aut = NULL;
+    s->leaf_t = s->best_t = s->prefix = s->aut = s->inv = NULL;
+    s->roots = NULL;
     s->ready = false;
     s->cap = 0;
     s->n = 0;
@@ -71,7 +72,7 @@ static canon_status prepare(canon_p1_search *s, const canon_root *x)
             return st;
         }
         size_t words = 0;
-        if (!canon_size_mul((size_t)n, 4u, &words)) {
+        if (!canon_size_mul((size_t)n, 6u, &words)) {
             free_arrays(s);
             return CANON_CAPACITY_LIMIT; /* spec 11.1 */
         }
@@ -84,6 +85,8 @@ static canon_status prepare(canon_p1_search *s, const canon_root *x)
         s->best_t = block + (size_t)n;
         s->prefix = block + 2u * (size_t)n;
         s->aut = block + 3u * (size_t)n;
+        s->inv = block + 4u * (size_t)n;
+        s->roots = (uint8_t *)(void *)(block + 5u * (size_t)n); /* n flags in n words */
         s->cap = n;
         s->ready = true;
     }
@@ -135,6 +138,45 @@ static canon_status stack_slot(uint32_t **stack, size_t *alloc, size_t words, ui
 static canon_status snapshot_slot(canon_p1_search *s, uint32_t depth, uint32_t **slot)
 {
     return stack_slot(&s->snaps, &s->snap_alloc, s->snap_words, depth, slot);
+}
+
+/* S7b (docs/slices/S7b.md, docs/pruning-rules.md source ii): the leaf key equals the
+ * incumbent's, so x^{t_L} = x^{t_best} (the encoding is injective, spec 4.2) and
+ * a = t_L t_best^-1 fixes x (spec 3: "If x^p=x^q then p q^-1 fixes x"); a is a product of two
+ * elements of G.  spec 7.3: "Verify implicit automorphisms by exact membership and object
+ * equality before publication": membership by the group's own test, the action in
+ * canon_symmetry_insert; a failure of either is an engine error, never a silent skip. */
+static canon_status implicit_automorphism(canon_p1_search *s, const canon_group *g,
+                                          const canon_root *x)
+{
+    const uint32_t n = s->n;
+    s->implicit_candidates += 1;
+    canon_perm_inverse(s->best_t, s->inv, n);
+    canon_perm_compose(s->leaf_t, s->inv, s->aut, n); /* (t_L t_best^-1)[v] = t_best^-1[t_L[v]] */
+    bool member = false;
+    canon_status st = g->ops->contains(g, s->aut, &member);
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    if (!member) {
+        return CANON_INTERNAL_ERROR;
+    }
+    bool inserted = false;
+    st = canon_symmetry_insert(&s->sym, x, &s->image, s->aut, &inserted);
+    if (st == CANON_INVALID_INPUT) {
+        return CANON_INTERNAL_ERROR; /* equal keys with x^a != x: the encoding is not injective */
+    }
+    if (st != CANON_COMPLETE) {
+        return st;
+    }
+    if (inserted) {
+        s->implicit_inserted += 1;
+        if (s->cert != NULL) {
+            uint32_t index = 0;
+            st = canon_cert_automorphism(s->cert, s->aut, &index);
+        }
+    }
+    return st;
 }
 
 /* spec 7.2 leaf map: L = singleton order; t_L the unique element minimising L^G; image x^t_L;
@@ -191,6 +233,12 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
         c = canon_bytes_compare(s->leaf_bytes.data, s->leaf_bytes.len, s->best_bytes.data,
                                 s->best_bytes.len);
         if (c == 0) {
+            if (s->implicit) {
+                st = implicit_automorphism(s, g, x);
+                if (st != CANON_COMPLETE) {
+                    return st;
+                }
+            }
             c = canon_perm_lex_compare(s->leaf_t, s->best_t, n);
         }
     }
@@ -214,48 +262,61 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
     return CANON_COMPLETE;
 }
 
-/* Decide the children of the node at `depth` whose target cell holds the `size` points
- * cell[0..size-1] (the snapshot's member order).  Without the prune every child is explored.
- * With it (docs/pruning-rules.md, S7 brief 3.1 rule): A_S, the pointwise stabiliser of the
- * node's prefix in A_known, acts on the cell; the first point of each A_S-orbit in cell order
- * is explored and the others are pruned, each with its representative and, for the
- * certificate, an explicit automorphism a of A_S with representative^a = b.  The decisions go
- * to the depth's slot of s->reps (2 words per cell position: representative or
- * CANON_CERT_NONE, automorphism index) BEFORE any child is visited, because the child visits
- * reuse the symmetry scratch. */
-static canon_status decide_children(canon_p1_search *s, uint32_t depth, const uint32_t *cell,
-                                    uint32_t size, uint32_t **slot_out)
+/* Child decisions of a node (docs/pruning-rules.md rule P1-ORBIT-1; S7b incremental form).
+ * The depth's slot of s->reps holds 2 words per cell position: the state (DECIDE_UNDECIDED,
+ * DECIDE_EXPLORED, or the representative of a pruned child) and the automorphism index the
+ * certificate names.  Children are decided in cell order as they are reached: before member j
+ * is explored, the pointwise stabiliser A_S of the prefix in A_known is (re)computed if A_known
+ * grew since the node's last computation (S7b), the orbits of every explored child and of j
+ * are marked, and every undecided member reached is pruned with that child as representative
+ * and, for the certificate, an explicit automorphism a of A_S with representative^a = b.  The
+ * transporter is read off the Schreier tree at once, before any child is visited (the child
+ * visits reuse the symmetry scratch).  Without the prune every child is explored. */
+#define DECIDE_UNDECIDED (UINT32_MAX - 1u)
+#define DECIDE_EXPLORED UINT32_MAX
+
+static canon_status decide_slot(canon_p1_search *s, uint32_t depth, uint32_t **slot_out)
 {
     size_t words = 0;
     if (!canon_size_mul((size_t)s->n, 2u, &words)) {
         return CANON_CAPACITY_LIMIT;
     }
-    uint32_t *slot = NULL;
-    canon_status st = stack_slot(&s->reps, &s->reps_alloc, words, depth, &slot);
-    if (st != CANON_COMPLETE) {
-        return st;
+    return stack_slot(&s->reps, &s->reps_alloc, words, depth, slot_out);
+}
+
+/* Member j of the cell is about to be explored: prune the undecided members that A_S maps an
+ * explored child, or j, onto.  `roots` is scratch of `size` flags. */
+static canon_status decide_before(canon_p1_search *s, uint32_t depth, const uint32_t *cell,
+                                  uint32_t size, uint32_t j, uint8_t *roots, uint64_t *epoch_seen)
+{
+    if (!s->prune || canon_symmetry_trivial(&s->sym)) {
+        return CANON_COMPLETE;
     }
-    *slot_out = slot;
-    const bool prune = s->prune && !canon_symmetry_trivial(&s->sym);
-    if (prune) {
+    uint32_t *slot = s->reps + (size_t)depth * 2u * (size_t)s->n;
+    if (*epoch_seen != s->sym.epoch) {
         /* spec 7.3 "At each node intersect with the stabiliser of its constraints before
-         * sibling pruning": A_S from A_known and the prefix (a_1..a_d) */
-        st = canon_symmetry_stabiliser(&s->sym, s->prefix, depth);
+         * sibling pruning": A_S from the current A_known and the prefix (a_1..a_d) */
+        canon_status st = canon_symmetry_stabiliser(&s->sym, s->prefix, depth);
         if (st != CANON_COMPLETE) {
             return st;
         }
-        canon_symmetry_cell_orbits(&s->sym, cell, size);
+        *epoch_seen = s->sym.epoch;
     }
-    for (uint32_t j = 0; j < size; ++j) {
-        const uint32_t b = cell[j];
-        const uint32_t rep = prune ? canon_symmetry_rep(&s->sym, b) : b;
-        slot[2u * j] = rep == b ? CANON_CERT_NONE : rep;
-        slot[2u * j + 1u] = CANON_CERT_NONE;
-        if (rep != b && s->cert != NULL && s->cert->active) {
+    for (uint32_t i = 0; i < size; ++i) {
+        roots[i] = slot[2u * i] == DECIDE_EXPLORED || i == j;
+    }
+    canon_symmetry_cell_orbits(&s->sym, cell, size, roots);
+    for (uint32_t i = 0; i < size; ++i) {
+        const uint32_t b = cell[i];
+        if (slot[2u * i] != DECIDE_UNDECIDED || canon_symmetry_rep(&s->sym, b) == b) {
+            continue;
+        }
+        slot[2u * i] = canon_symmetry_rep(&s->sym, b);
+        if (s->cert != NULL && s->cert->active) {
             /* the certificate names one automorphism per pruned child (S7 brief 3.3): the
              * Schreier-tree product with rep^a = b, which fixes the prefix pointwise */
             canon_symmetry_transporter(&s->sym, b, s->aut);
-            st = canon_cert_automorphism(s->cert, s->aut, &slot[2u * j + 1u]);
+            canon_status st = canon_cert_automorphism(s->cert, s->aut, &slot[2u * i + 1u]);
             if (st != CANON_COMPLETE) {
                 return st;
             }
@@ -325,10 +386,13 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
         return CANON_CAPACITY_LIMIT; /* U32(d) must fit; unreachable for n <= 2^32 - 1 */
     }
     uint32_t *decisions = NULL;
-    st = decide_children(s, depth, canon_partition_snapshot_lab(snap, s->n) + lo, hi - lo,
-                         &decisions);
+    st = decide_slot(s, depth, &decisions);
     if (st != CANON_COMPLETE) {
         return st;
+    }
+    for (uint32_t j = 0; j < hi - lo; ++j) {
+        decisions[2u * j] = DECIDE_UNDECIDED;
+        decisions[2u * j + 1u] = CANON_CERT_NONE;
     }
     if (s->cert != NULL) {
         st = canon_cert_branch(s->cert, target, hi - lo);
@@ -339,14 +403,26 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
     /* spec 7.1: "for EACH a in that cell: replace cell C in place by [{a}, C minus {a}];
      * recurse at depth+1, with a fresh node refinement loop".  Members are taken in the cell's
      * current (non-semantic) order from the snapshot; a pruned member is recorded and skipped
-     * (docs/pruning-rules.md: its subtree's keys are those of its representative's). */
+     * (docs/pruning-rules.md: its subtree's keys are those of its representative's).  The
+     * snapshot and decision stacks may move during a child visit, so they are re-read. */
+    uint64_t epoch_seen = UINT64_MAX;
     for (uint32_t j = lo; j < hi; ++j) {
-        snap = s->snaps + (size_t)depth * s->snap_words; /* the stacks may have moved */
+        snap = s->snaps + (size_t)depth * s->snap_words;
         decisions = s->reps + (size_t)depth * 2u * (size_t)s->n;
-        uint32_t a = canon_partition_snapshot_lab(snap, s->n)[j];
+        const uint32_t *cell = canon_partition_snapshot_lab(snap, s->n) + lo;
+        if (decisions[2u * (j - lo)] == DECIDE_UNDECIDED) {
+            st = decide_before(s, depth, cell, hi - lo, j - lo, s->roots, &epoch_seen);
+            if (st != CANON_COMPLETE) {
+                return st;
+            }
+            snap = s->snaps + (size_t)depth * s->snap_words;
+            decisions = s->reps + (size_t)depth * 2u * (size_t)s->n;
+            cell = canon_partition_snapshot_lab(snap, s->n) + lo;
+        }
+        const uint32_t a = cell[j - lo];
         const uint32_t rep = decisions[2u * (j - lo)], aut = decisions[2u * (j - lo) + 1u];
-        if (rep != CANON_CERT_NONE) {
-            s->pruned += 1;
+        if (rep != DECIDE_UNDECIDED) {
+            s->pruned += 1; /* rep < n: a pruned child (an explored one is never reached here) */
             if (s->cert != NULL) {
                 st = canon_cert_child_pruned(s->cert, a, rep, aut);
                 if (st != CANON_COMPLETE) {
@@ -355,6 +431,7 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
             }
             continue;
         }
+        decisions[2u * (j - lo)] = DECIDE_EXPLORED;
         s->explored += 1;
         if (s->cert != NULL) {
             st = canon_cert_child_explored(s->cert, a);
@@ -412,6 +489,7 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
         return st;
     }
     s->prune = opt != NULL && opt->prune;
+    s->implicit = s->prune && opt->implicit;
     s->cert = opt != NULL ? opt->cert : NULL;
     s->have_best = false;
     s->nodes = 0;
@@ -419,6 +497,8 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
     s->images = 0;
     s->pruned = 0;
     s->explored = 0;
+    s->implicit_candidates = 0;
+    s->implicit_inserted = 0;
     canon_buf_truncate(&s->trace, 0);
     canon_buf_truncate(&s->best_trace, 0);
     canon_buf_truncate(&s->best_bytes, 0);

@@ -72,10 +72,11 @@ Slice S6 (class LabelingAndSigned), on the T1 subsets and the G1 digraphs under 
 Every canonical output of both tiers passes `canon-cli validate` and tools/hexdump_stream.py.
 
 Slice S7 (class Pruning, tier P1-prune): every canonical-image tier above is re-run with
-`--prune on` (work policy 0x0002, docs/pruning-rules.md) and compared field by field with
+`--prune on` (work policy 0x0003 since S7b: explicit and implicit automorphisms) and
+`--prune explicit` (0x0002, docs/pruning-rules.md) and compared field by field with
 `--prune off` (0x0001, the reference traversal the model tiers use): trace and bytes in the
 "any" witness mode, the whole record in the deterministic mode; the quota under each policy on
-the spec 7.4 empty-subset case and on Sym(6); `--certificate` on the golden cases and a sample
+the spec 7.4 empty-subset case, on Sym(6) and on the S7b case {0} under Sym(4); `--certificate` on the golden cases and a sample
 of the T1 and G1 tiers piped into canon-check (CANON_CHECK, default build/make/canon-check),
 which must accept (checker/tests/test_checker.py runs the full tiers and the mutations).
 
@@ -1761,20 +1762,22 @@ class Pruning(CliTestCase):
             self.skipTest(msg)
 
     def compare(self, args, cid):
-        """`--prune on` against `--prune off`: equal trace and bytes (any witness), equal
-        records in deterministic mode; the pruned witness is valid (the CLI verified nothing,
-        so the deterministic run, which uses the complete stabiliser, is the oracle)."""
-        on = cli(list(args) + ["--prune", "on"])
+        """`--prune on` (0x0003) and `--prune explicit` (0x0002) against `--prune off`: equal
+        trace and bytes (any witness), equal records in deterministic mode (the deterministic
+        witness comes from the complete stabiliser and is the oracle for the pruned runs)."""
         off = cli(list(args) + ["--prune", "off"])
-        self.assertEqual((on.returncode, off.returncode), (0, 0), cid + on.stderr + off.stderr)
-        fon, foff = on.stdout.split("\t"), off.stdout.split("\t")
-        self.assertEqual(fon[:5], foff[:5], cid)  # id, objective, status, trace, bytes
-        don = cli(list(args) + ["--prune", "on", "--witness", "deterministic"])
         doff = cli(list(args) + ["--prune", "off", "--witness", "deterministic"])
-        self.assertEqual((don.returncode, doff.returncode), (0, 0), cid)
-        self.assertEqual(don.stdout, doff.stdout, cid)
-        self.assertEqual(don.stdout.split("\t")[:5], fon[:5], cid)
-        return fon
+        self.assertEqual((off.returncode, doff.returncode), (0, 0), cid + off.stderr)
+        foff = off.stdout.split("\t")
+        self.assertEqual(doff.stdout.split("\t")[:5], foff[:5], cid)
+        for policy in ("on", "explicit"):
+            on = cli(list(args) + ["--prune", policy])
+            self.assertEqual(on.returncode, 0, cid + on.stderr)
+            self.assertEqual(on.stdout.split("\t")[:5], foff[:5], cid)  # id, obj, status, trace, bytes
+            don = cli(list(args) + ["--prune", policy, "--witness", "deterministic"])
+            self.assertEqual(don.returncode, 0, cid)
+            self.assertEqual(don.stdout, doff.stdout, cid)
+        return foff
 
     def test_t1_subsets(self):
         cases = 0
@@ -1845,12 +1848,20 @@ class Pruning(CliTestCase):
         # spec 7.4 empty subset under Sym(2): 3 nodes unpruned, 2 pruned (one child per orbit)
         base = ["p1-subset", "--n", "2", "--gens", "1,0", "--atoms", "", "--id", "q"]
         for prune, quota, status in (("off", 2, "CAPACITY_LIMIT"), ("off", 3, "COMPLETE"),
+                                     ("explicit", 1, "CAPACITY_LIMIT"), ("explicit", 2, "COMPLETE"),
                                      ("on", 1, "CAPACITY_LIMIT"), ("on", 2, "COMPLETE")):
             proc = cli(base + ["--prune", prune, "--max-nodes", str(quota)])
             self.assertEqual(proc.stdout.split("\t")[2], status, (prune, quota))
-        # D14: the default policy is the prune
+        # D14: the default policy is a prune
         proc = raw_cli(base + ["--max-nodes", "2"])
         self.assertEqual(proc.stdout.split("\t")[2], "COMPLETE")
+        # S7b: {0} under Sym(4): 10 nodes unpruned and explicit, 7 with implicit automorphisms
+        base = ["p1-subset", "--n", "4", "--gens", "1,2,3,0;1,0,2,3", "--atoms", "0", "--id", "q4"]
+        for prune, quota, status in (("off", 9, "CAPACITY_LIMIT"), ("explicit", 9, "CAPACITY_LIMIT"),
+                                     ("explicit", 10, "COMPLETE"), ("on", 6, "CAPACITY_LIMIT"),
+                                     ("on", 7, "COMPLETE")):
+            proc = cli(base + ["--prune", prune, "--max-nodes", str(quota)])
+            self.assertEqual(proc.stdout.split("\t")[2], status, (prune, quota))
         # Sym(6): 1 + 6 + 30 + 120 + 360 + 720 = 1237 nodes unpruned, 6 pruned
         base = ["p1-subset", "--n", "6", "--gens", "1,2,3,4,5,0;1,0,2,3,4,5", "--atoms", "",
                 "--id", "q6"]
@@ -1877,14 +1888,14 @@ class Pruning(CliTestCase):
                         "--colours", colour_arg, "--arcs", arc_arg, "--id", case["id"]]
             else:
                 continue
-            for prune in ("on", "off"):
+            for prune in ("on", "explicit", "off"):
                 fields, verdict = certificate_accepted(args + ["--prune", prune])
                 self.assertEqual(fields[2:5], ["COMPLETE", case["expected_trace_hex"],
                                                case["expected_stream_hex"]], case["id"])
                 self.assertEqual(verdict[0], 0, (case["id"], verdict))
                 self.assertTrue(verdict[1].startswith("ACCEPT "), verdict)
                 accepted += 1
-        self.assertEqual(accepted, 2 * 5)
+        self.assertEqual(accepted, 3 * 5)
         # a sample of the T1 and G1 tiers (the full tiers: checker/tests/test_checker.py)
         rng = random.Random(77)
         for n in range(5):
@@ -1897,7 +1908,7 @@ class Pruning(CliTestCase):
                 cid = f"c-t1-n{n}"
                 args = ["p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
                         "--atoms", ",".join(map(str, atoms)), "--id", cid]
-                fields, verdict = certificate_accepted(args + ["--prune", rng.choice(("on", "off"))])
+                fields, verdict = certificate_accepted(args + ["--prune", rng.choice(("on", "explicit", "off"))])
                 self.assertEqual((fields[2], verdict[0]), ("COMPLETE", 0), (cid, verdict))
                 if n:
                     arcs = tuple((a, b, b"", rng.choice((1, 2))) for a in range(n)
