@@ -295,6 +295,23 @@ static canon_status run(canon_obj_search *s, const canon_group *g, const canon_r
         return st;
     case CANON_OBJECTIVE_TRANSPORTER_ONE:
         st = enumerate(g, v, consume_transporter, &c);
+        if (st == CANON_COMPLETE && c.have && deterministic) {
+            /* spec 3 deterministic witness (M0a, docs/slices/M0a.md 2.1): every solution lies
+             * in A g (spec 8.2), so the least one is r0, the least element of A g, found by the
+             * coset descent (spec 9.4) once A is complete; the quota is the solve's (11.1) */
+            if (n > 0) {
+                memcpy(s->g, s->best, (size_t)n * sizeof *s->g);
+            }
+            canon_bsgs a;
+            st = stabiliser(s, g, x, v, &a);
+            if (st == CANON_COMPLETE) {
+                bool found = false;
+                st = canon_coset_least(&a, 0, s->g, NULL, 0, s->best, &found, &s->stats.coset,
+                                       &s->scratch);
+                st = st == CANON_COMPLETE && !found ? CANON_INTERNAL_ERROR : st;
+            }
+            canon_bsgs_free(&a);
+        }
         if (st == CANON_COMPLETE) {
             /* spec 3.2: "a positive transporter witness needs no negative-search coverage";
              * spec 8.2: "Declare empty only after exhaustion." */
@@ -421,8 +438,8 @@ static canon_status run_p1(canon_obj_search *s, canon_p1_search *p1, const canon
 }
 
 static canon_status labeling(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                             const canon_root *x, const uint32_t *rho, uint64_t quota,
-                             canon_obj_outcome *out)
+                             const canon_root *x, const uint32_t *rho, bool deterministic,
+                             uint64_t quota, canon_obj_outcome *out)
 {
     const uint32_t n = x->n;
     /* spec 3.1: "Compute x' = x^rho and G' = rho^-1 G rho <= Sym(D_n)".  G' is built by the
@@ -467,6 +484,14 @@ static canon_status labeling(canon_obj_search *s, canon_p1_search *p1, const can
                                      &s->scratch);
     }
     canon_bsgs_free(&a);
+    if (st == CANON_COMPLETE && deterministic && n > 0) {
+        /* spec 3 deterministic witness (M0a, docs/slices/M0a.md 2.3): the least labeling in
+         * A lambda is lambda0, which the payload encodes (s->work); t0 = rho^-1 lambda0 lies in
+         * G' (rho^-1 a rho in G' for a in A) and rho t0 = lambda0 (rho^-1 acts first, spec 3) */
+        memcpy(s->lambda, s->work, (size_t)n * sizeof *s->lambda);
+        canon_perm_inverse(rho, s->g, n);
+        canon_perm_compose(s->g, s->lambda, s->best, n);
+    }
     if (st == CANON_COMPLETE) {
         /* spec 3.2: P1's coverage (unpruned tree) for c, the complete stabiliser for A lambda */
         out->flags.image_canonical = true;
@@ -480,8 +505,8 @@ static canon_status labeling(canon_obj_search *s, canon_p1_search *p1, const can
 }
 
 canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                                const canon_root *x, const uint32_t *rho, uint64_t quota,
-                                canon_obj_outcome *out)
+                                const canon_root *x, const uint32_t *rho, bool deterministic,
+                                uint64_t quota, canon_obj_outcome *out)
 {
     canon_status st = start_p1_run(s, g, x, out);
     bool bijective = false;
@@ -492,7 +517,7 @@ canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const 
         st = st == CANON_COMPLETE && !bijective ? CANON_INVALID_INPUT : st;
     }
     if (st == CANON_COMPLETE) {
-        st = labeling(s, p1, g, x, rho, quota, out);
+        st = labeling(s, p1, g, x, rho, deterministic, quota, out);
     }
     canon_root_image_clear(&s->image); /* objectives.h invariant */
     if (st != CANON_COMPLETE) {
@@ -508,11 +533,23 @@ canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const 
  * generators (fast path), so chi(t) = +1 must hold. */
 static canon_status signed_nonzero(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
                                    const canon_root *x, const canon_bsgs *a, uint64_t quota,
-                                   bool even, canon_obj_outcome *out)
+                                   bool even, bool deterministic, canon_obj_outcome *out)
 {
     /* spec 8.4: "run/finish P1 for c=x^t, and return s=chi(t), so [x]=s[c].  If p and q reach
      * c, p q^-1 in A makes their signs equal." */
     canon_status st = run_p1(s, p1, g, x, quota);
+    if (st == CANON_COMPLETE && deterministic) {
+        /* spec 3 deterministic witness (M0a, docs/slices/M0a.md 2.4): the least element of
+         * A t, A complete on this route; chi is constant on A t since A is even, and the sign
+         * is read off the new t below all the same */
+        bool found = false;
+        st = canon_coset_least(a, 0, s->best, NULL, 0, s->g, &found, &s->stats.coset,
+                               &s->scratch);
+        st = st == CANON_COMPLETE && !found ? CANON_INTERNAL_ERROR : st;
+        if (st == CANON_COMPLETE && x->n > 0) {
+            memcpy(s->best, s->g, (size_t)x->n * sizeof *s->best);
+        }
+    }
     int sign = 0;
     if (st == CANON_COMPLETE) {
         st = g->ops->character(g, s->best, s->chi, &sign);
@@ -554,7 +591,8 @@ static void signed_zero(canon_obj_outcome *out)
 }
 
 static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                                 const canon_root *x, uint64_t quota, canon_obj_outcome *out)
+                                 const canon_root *x, bool deterministic, uint64_t quota,
+                                 canon_obj_outcome *out)
 {
     const uint32_t n = x->n;
     const canon_group_signs *sg = g->signs;
@@ -591,12 +629,12 @@ static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const
          * from its generators (spec 9.1). */
         const canon_bsgs *chain = canon_group_chain_of(g);
         if (chain != NULL) {
-            return signed_nonzero(s, p1, g, x, chain, quota, true, out);
+            return signed_nonzero(s, p1, g, x, chain, quota, true, deterministic, out);
         }
         st = canon_bsgs_build_verified(&a, n, n > 0 ? sg->gens.data : NULL,
                                        n > 0 ? sg->gens.count : 0);
         if (st == CANON_COMPLETE) {
-            st = signed_nonzero(s, p1, g, x, &a, quota, true, out);
+            st = signed_nonzero(s, p1, g, x, &a, quota, true, deterministic, out);
             canon_bsgs_free(&a);
         }
         return st;
@@ -613,21 +651,23 @@ static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const
     if (st == CANON_COMPLETE && odd) {
         signed_zero(out);
     } else if (st == CANON_COMPLETE) {
-        st = signed_nonzero(s, p1, g, x, &a, remaining(quota, v.nodes), false, out);
+        st = signed_nonzero(s, p1, g, x, &a, remaining(quota, v.nodes), false, deterministic,
+                            out);
     }
     canon_bsgs_free(&a);
     return st;
 }
 
 canon_status canon_obj_signed(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                              const canon_root *x, uint64_t quota, canon_obj_outcome *out)
+                              const canon_root *x, bool deterministic, uint64_t quota,
+                              canon_obj_outcome *out)
 {
     canon_status st = start_p1_run(s, g, x, out);
     if (st == CANON_COMPLETE && g->signs == NULL) {
         st = CANON_UNSUPPORTED_ACTION; /* module contract: chi needs a signed group */
     }
     if (st == CANON_COMPLETE) {
-        st = signed_image(s, p1, g, x, quota, out);
+        st = signed_image(s, p1, g, x, deterministic, quota, out);
     }
     canon_root_image_clear(&s->image); /* objectives.h invariant */
     if (st != CANON_COMPLETE) {

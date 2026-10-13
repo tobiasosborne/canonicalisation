@@ -4,6 +4,8 @@
 
 **Layout.** `ref-a/`, `ref-b/` (the two independently written references; ref-b is the blind one), `oracle/` (exhaustive enumeration), `compare/` (interchange format and comparison script), `vectors/` (machine-readable golden cases from spec §7.4).
 
+**State (13 October 2026, work package M0a, `docs/slices/M0a.md`).** ref-a exists as the production path plus its case-file adapter `ref-a/run_cases.py`; the generated corpus is produced by `tools/gen_cases.py` (seeds and hashes in `vectors/generated/MANIFEST.json`); the exhaustive oracle is `oracle/oracle.py`; the planted-corruption runs of WP0.7 are logged under `compare/runs/`; ref-a's seal row is in `SEALS.md`. Not done: ref-b (a blind author, to be commissioned by the maintainer), the ref-a/ref-b comparison, the divergence log and the "semantics frozen" tag.
+
 **Brief and schema.** `BRIEF.md` is the brief handed to a blind reference author (ref-b in Julia). `CASES.md` documents the JSON case-input schema (the existing `vectors/golden.json` `p1_cases` form plus the remaining WP0.2 fields, all definitive since 2 October 2026).
 
 ## The blind protocol

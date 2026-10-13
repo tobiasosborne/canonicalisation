@@ -210,6 +210,32 @@ static void coset_deterministic(void)
                                     "00000002 00000000 00000003 00000001"));
     verify_ok(r);
     canon_result_release(r);
+    /* M0a: TRANSPORTER_ONE in deterministic mode reports the same r0 and no group bytes; the
+     * "any" mode reports a hit of the traversal (here the first leaf of the traversal is r0
+     * itself, so only validity is checked) */
+    r = solve(s4, x, y, CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_ORDER_CDAG_BYTE_1,
+              CANON_WITNESS_DETERMINISTIC, 0, &st);
+    w = canon_result_witness(r, &deg);
+    CHECK(st == CANON_COMPLETE && w != NULL && memcmp(w, least, sizeof least) == 0);
+    CHECK(canon_result_group_bytes(r, &len) == NULL);
+    CHECK(flags_are(canon_result_get_flags(r), true, false, false, false, false, false, false));
+    verify_ok(r);
+    canon_result_release(r);
+    r = solve(s4, x, y, CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY,
+              0, &st);
+    w = canon_result_witness(r, &deg);
+    CHECK(st == CANON_COMPLETE && w != NULL);
+    verify_ok(r);
+    canon_result_release(r);
+    /* and the deterministic mode of STABILISER changes nothing */
+    r = solve(s4, x, NULL, CANON_OBJECTIVE_STABILISER, CANON_ORDER_CDAG_BYTE_1,
+              CANON_WITNESS_DETERMINISTIC, 0, &st);
+    b = canon_result_group_bytes(r, &len);
+    CHECK(st == CANON_COMPLETE && b != NULL &&
+          check_hex_is(b, len, "01 00000002 00000002 00000000 00000001 00000002 00000002 "
+                               "00000003"));
+    CHECK(canon_result_witness(r, &deg) == NULL);
+    canon_result_release(r);
     canon_object_release(x);
     canon_object_release(y);
     canon_group_release(s4);
@@ -396,9 +422,12 @@ static void validation(void)
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, NT, CB, NULL) ==
           CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, SU, NULL) == CANON_UNSUPPORTED_ACTION);
-    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, CB, &det) == CANON_UNSUPPORTED_ACTION);
-    CHECK(CREATE(g, x, x, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, &det) ==
-          CANON_UNSUPPORTED_ACTION);
+    /* M0a (docs/slices/M0a.md 2): the deterministic witness mode is accepted everywhere */
+    CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_STABILISER, NT, CB, &det) == CANON_COMPLETE);
+    canon_problem_release(p);
+    CHECK(CREATE(g, x, x, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, &det) == CANON_COMPLETE);
+    canon_problem_release(p);
+    p = (canon_problem *)(void *)&sentinel;
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CANONICAL_LABELING_COSET, NT, CB, NULL) ==
           CANON_UNSUPPORTED_ACTION);
     CHECK(CREATE(g, x, NULL, CANON_OBJECTIVE_CONSTRAINT_ONE, NT, CB, NULL) ==

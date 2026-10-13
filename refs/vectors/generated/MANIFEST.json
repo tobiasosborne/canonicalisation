@@ -1,0 +1,35 @@
+{
+ "schema": "corpus-manifest-1",
+ "generator": "tools/gen_cases.py",
+ "generator_sha256": "4428c389a4df6c5ffa8b41b6e1a23dea93204333dca1586aae0b8c881454d11f",
+ "regenerate": "make corpus",
+ "files": [
+  {
+   "file": "T1-seed20261013.json",
+   "arguments": "--tier T1 --seed 20261013",
+   "tier": "T1",
+   "seed": 20261013,
+   "cases": 31121,
+   "bytes": 12278194,
+   "sha256": "b2d55e603524ef98baf7bcb26cd6e95765c44c410352a927f774113984ced157"
+  },
+  {
+   "file": "T2-seed20261013-count200.json",
+   "arguments": "--tier T2 --seed 20261013 --count 200",
+   "tier": "T2",
+   "seed": 20261013,
+   "cases": 8395,
+   "bytes": 4596802,
+   "sha256": "8c7d3612c066ff1ab21edf3064c6477983f360b5ce9219de85696f9db7556fbb"
+  },
+  {
+   "file": "T3-seed20261013-count50.json",
+   "arguments": "--tier T3 --seed 20261013 --count 50",
+   "tier": "T3",
+   "seed": 20261013,
+   "cases": 1724,
+   "bytes": 2141528,
+   "sha256": "1ee49da144b131269dcf6af9f2177a3ddb48b76a665ca032646cd9bcdde9f7d5"
+  }
+ ]
+}

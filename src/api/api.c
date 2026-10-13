@@ -528,8 +528,7 @@ canon_status canon_stream_validate(canon_context *ctx, const uint8_t *stream, si
  * (slices S1, S4).  "unknown schema/action/profile/encoding versions are unsupported, never
  * reinterpreted" (spec 4.1). */
 static bool combination_supported(canon_objective objective, canon_profile profile,
-                                  canon_encoding encoding, canon_order order,
-                                  canon_witness_mode mode)
+                                  canon_encoding encoding, canon_order order)
 {
     if (encoding != CANON_ENCODING_CDAG_2) {
         return false;
@@ -543,19 +542,16 @@ static bool combination_supported(canon_objective objective, canon_profile profi
         return profile == CANON_PROFILE_NO_TREE &&
                (order == CANON_ORDER_CDAG_BYTE_1 || order == CANON_ORDER_SIMPLE_UPPER_1);
     case CANON_OBJECTIVE_TRANSPORTER_COSET:
-        return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1;
     case CANON_OBJECTIVE_TRANSPORTER_ONE:
     case CANON_OBJECTIVE_STABILISER:
-        /* no deterministic witness for these (S4 brief 2; canon.h) */
-        return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1 &&
-               mode == CANON_WITNESS_ANY;
+        /* M0a (docs/slices/M0a.md 2): the deterministic witness mode is accepted for every
+         * objective (spec 3 defines it for every solution set; vacuous for STABILISER) */
+        return profile == CANON_PROFILE_NO_TREE && order == CANON_ORDER_CDAG_BYTE_1;
     case CANON_OBJECTIVE_CANONICAL_LABELING_COSET:
     case CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE:
         /* S6: spec 4.3 "canonical and signed image objectives use P1"; spec 8.2 "Canonical
-         * labeling coset: Run §7 on target coordinates".  The complete coset A lambda and the
-         * nonzero route already carry A; a deterministic witness is not offered (S6 notes). */
-        return profile == CANON_PROFILE_P1 && order == CANON_ORDER_CDAG_BYTE_1 &&
-               mode == CANON_WITNESS_ANY;
+         * labeling coset: Run §7 on target coordinates".  M0a: both witness modes. */
+        return profile == CANON_PROFILE_P1 && order == CANON_ORDER_CDAG_BYTE_1;
     default:
         return false; /* constraints: later */
     }
@@ -699,7 +695,7 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
         return CANON_INVALID_INPUT;
     }
     /* spec 3.2 / 4.1: unsupported identifiers are refused, never reinterpreted */
-    if (!combination_supported(objective, profile, encoding, order, mode)) {
+    if (!combination_supported(objective, profile, encoding, order)) {
         return CANON_UNSUPPORTED_ACTION;
     }
     /* spec 8.4: the signed objective needs a character; an unsigned group has none */
@@ -1123,11 +1119,13 @@ static canon_status solve_p1_objective(canon_workspace *ws, const canon_problem 
     answer a;
     memset(&a, 0, sizeof a);
     metrics_begin(&a.metrics, problem);
+    const bool det = problem->witness_mode == CANON_WITNESS_DETERMINISTIC; /* M0a */
     canon_status st =
         problem->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET
             ? canon_obj_labeling(s, &ws->search, problem->group, &problem->object->root,
-                                 problem->rho, quota, &o)
-            : canon_obj_signed(s, &ws->search, problem->group, &problem->object->root, quota, &o);
+                                 problem->rho, det, quota, &o)
+            : canon_obj_signed(s, &ws->search, problem->group, &problem->object->root, det, quota,
+                               &o);
     if (o.p1 || st != CANON_COMPLETE) {
         metrics_p1(&a.metrics, &ws->search, problem->group);
     }

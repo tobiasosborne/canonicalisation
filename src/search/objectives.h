@@ -88,7 +88,8 @@ void canon_obj_search_free(canon_obj_search *s);
  * (same degree); y is the target of the transporter objectives (same kind and degree as x),
  * NULL otherwise; `order` is CDAG-BYTE-1 or (minimum only, x in the spec 4.4 class)
  * SIMPLE-UPPER-1; `deterministic` selects the spec 3 deterministic witness (minimum: the least
- * g attaining the minimum; coset: r0); `quota` bounds the visit calls of all enumerations of
+ * g attaining the minimum; coset: r0; transporter one: r0 as well, by the complete stabiliser
+ * and the coset descent, M0a; stabiliser: no witness); `quota` bounds the visit calls of all enumerations of
  * the run (spec 11.1).  Returns CANON_COMPLETE with *out describing the answer, or
  * CANON_CAPACITY_LIMIT, CANON_CANCELLED, CANON_RESOURCE_LIMIT, CANON_INTERNAL_ERROR (out
  * zeroed); CANON_INVALID_INPUT / CANON_UNSUPPORTED_ACTION for arguments the API excludes. */
@@ -103,10 +104,12 @@ canon_status canon_obj_run(canon_obj_search *s, const canon_group *g, const cano
  * the complete stabiliser A of x under G on Omega gives the payload Group(A) || Perm(lambda0)
  * in s->group, lambda0 the least element of A lambda.  rho must be a bijection of
  * {0..n-1} (CANON_INVALID_INPUT otherwise, module contract).  `quota` bounds the P1 NODE tokens
- * plus the enumeration visits (spec 11.1).  Statuses as canon_obj_run. */
+ * plus the enumeration visits (spec 11.1).  `deterministic` (M0a, docs/slices/M0a.md 2.3):
+ * the labeling is lambda0, the least element of A lambda (the one Perm(lambda0) encodes),
+ * and t = rho^-1 lambda0.  Statuses as canon_obj_run. */
 canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                                const canon_root *x, const uint32_t *rho, uint64_t quota,
-                                canon_obj_outcome *out);
+                                const canon_root *x, const uint32_t *rho, bool deterministic,
+                                uint64_t quota, canon_obj_outcome *out);
 
 /* spec 8.4, 7.3 (slice S6): the signed canonical image of x under the signed group g
  * (CANON_UNSUPPORTED_ACTION for an unsigned group, module contract).
@@ -118,10 +121,13 @@ canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const 
  *   exhaustion A is complete and chi = +1 is checked on its generators; P1 gives c = x^t and
  *   s = chi(t), so [x] = s [c].
  * A nonzero outcome has the trace, stream and t as for canon_obj_labeling, the sign in
- * out->sign and Group(A) in s->group.  `quota` bounds the enumeration visits plus the P1 NODE
- * tokens (spec 11.1).  Statuses as canon_obj_run. */
+ * out->sign and Group(A) in s->group.  `deterministic` (M0a, docs/slices/M0a.md 2.4): a
+ * nonzero witness is the least element of A t (same sign: A is even); a zero certificate is
+ * unchanged.  `quota` bounds the enumeration visits plus the P1 NODE tokens (spec 11.1).
+ * Statuses as canon_obj_run. */
 canon_status canon_obj_signed(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
-                              const canon_root *x, uint64_t quota, canon_obj_outcome *out);
+                              const canon_root *x, bool deterministic, uint64_t quota,
+                              canon_obj_outcome *out);
 
 /* spec 3: "minimise A g after A is proved complete": run the stabiliser consumer for x (quota
  * as above) and write the least element of A t into s->best, where t is a witness of the

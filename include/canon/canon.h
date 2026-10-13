@@ -395,8 +395,11 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
  * unpruned P1 tree, as before).  CANON_WITNESS_DETERMINISTIC: spec 3 "minimise the image array
  * among all solutions sending x to the selected c": for CANONICAL_IMAGE by completing the
  * stabiliser A and taking the least element of A t; for LEX_MIN_IMAGE the least g among all
- * attaining the minimum; for TRANSPORTER_COSET the least element r0 of A g.  Not available for
- * TRANSPORTER_ONE and STABILISER (CANON_UNSUPPORTED_ACTION). */
+ * attaining the minimum; for TRANSPORTER_COSET and (M0a, docs/slices/M0a.md 2) TRANSPORTER_ONE
+ * the least element r0 of A g (the transporter completes the stabiliser for it, under the one
+ * quota); for CANONICAL_LABELING_COSET the least labeling lambda0 of A lambda with
+ * t = rho^-1 lambda0; for a nonzero SIGNED_CANONICAL_IMAGE the least element of A t (same
+ * sign); vacuous for STABILISER and for a certified zero.  Accepted for every objective. */
 typedef enum canon_witness_mode {
     CANON_WITNESS_ANY = 0,
     CANON_WITNESS_DETERMINISTIC = 1
@@ -519,12 +522,14 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * unpruned one (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
- * for the coset in deterministic mode the least element r0 of A g).
+ * in deterministic mode the least element r0 of A g, for both since M0a).
  * CANONICAL_LABELING_COSET (S6): t, the element of G' = rho^-1 G rho found by P1 on the target
- * coordinates D_n (x^rho)^t = c; the labeling itself is canon_result_labeling.
+ * coordinates D_n (x^rho)^t = c; the labeling itself is canon_result_labeling (in
+ * deterministic mode lambda0, the least of A lambda, and t = rho^-1 lambda0; M0a).
  * SIGNED_CANONICAL_IMAGE (S6): for a nonzero result the P1 witness t, x^t = c, with
- * [x] = chi(t) [c]; for a certified zero the verified odd automorphism a (a in G, x^a = x,
- * chi(a) = -1), the one-sided zero certificate of spec 8.4. */
+ * [x] = chi(t) [c] (in deterministic mode the least element of A t; M0a); for a certified zero
+ * the verified odd automorphism a (a in G, x^a = x, chi(a) = -1), the one-sided zero
+ * certificate of spec 8.4, in either mode. */
 const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degree);
 /* spec 4.3: the canonical CDAG-2 bytes, only when encoding_complete and either image_canonical
  * (CANONICAL_IMAGE, CANONICAL_LABELING_COSET: c = x^lambda, and a nonzero

@@ -590,15 +590,22 @@ class EnumerationObjectives(CliTestCase):
             code, g2, _ = run_objective("min", n, full_gens, kind, x, None, (), f"{cid}-full")
             self.assertEqual(g2[1:], f[1:4] + [b.cmin.hex(), witness_field(n, b.min_first), "-"])
             runs += 1
-        # STABILISER: canonical Group(A) bytes (spec 9.4)
+        # STABILISER: canonical Group(A) bytes (spec 9.4); the deterministic mode (M0a) is
+        # vacuous
         f = run("stabiliser")
         self.assertEqual(f[1:], ["0004", "COMPLETE", "", "", "-", rc.group_bytes(b.stab).hex()])
-        # TRANSPORTER_ONE: exists iff y in x^G; the first hit of the traversal
+        fd = run("stabiliser", "--witness", "deterministic", case="stab-det")
+        self.assertEqual(fd[1:], f[1:])
+        # TRANSPORTER_ONE: exists iff y in x^G; the first hit of the traversal, or in
+        # deterministic mode (M0a, docs/slices/M0a.md 2.1) the least solution r0
         f = run("transporter", target=y)
+        fd = run("transporter", "--witness", "deterministic", target=y, case="tr-det")
         if b.solutions:
             self.assertEqual(f[3:], ["", "", witness_field(n, b.first_hit), "-"])
+            self.assertEqual(fd[3:], ["", "", witness_field(n, b.solutions[0]), "-"])
         else:
             self.assertEqual(f[3:], ["", "", "-", "-"])
+            self.assertEqual(fd[3:], ["", "", "-", "-"])
         # TRANSPORTER_COSET: empty, or Group(A) || Perm(r0)
         f = run("transporter-coset", target=y)
         fd = run("transporter-coset", "--witness", "deterministic", target=y, case="coset-det")
@@ -833,13 +840,13 @@ class EnumerationObjectives(CliTestCase):
                                        ("--order", "simple-upper"), "su")
             self.assertEqual((code, f), (3, ["su", "0002", "UNSUPPORTED_ACTION", "", "", "-",
                                              "-"]))
-        # no deterministic witness for TRANSPORTER_ONE and STABILISER (canon.h)
+        # M0a: the deterministic witness mode is accepted for TRANSPORTER_ONE and STABILISER
         code, f, _ = run_objective("stabiliser", 2, [(1, 0)], "subset", frozenset(), None,
                                    ("--witness", "deterministic"), "sd")
-        self.assertEqual((code, f[2]), (3, "UNSUPPORTED_ACTION"))
+        self.assertEqual((code, f[2]), (0, "COMPLETE"))
         code, f, _ = run_objective("transporter", 2, [(1, 0)], "subset", frozenset(),
                                    frozenset(), ("--witness", "deterministic"), "td")
-        self.assertEqual((code, f[2]), (3, "UNSUPPORTED_ACTION"))
+        self.assertEqual((code, f[2:]), (0, ["COMPLETE", "", "", "0,1", "-"]))
         # a degree beyond the context limit
         proc = cli(["stabiliser", "--n", "4294967295", "--id", "huge"])
         self.assertEqual((proc.returncode, proc.stdout), (3, "huge\t0004\tCAPACITY_LIMIT\t\t\t-\t-\n"))
@@ -1468,7 +1475,12 @@ class LabelingAndSigned(CliTestCase):
         self.assertEqual(f[1:], ["0005", "COMPLETE", trace.hex(), data.hex(),
                                  witness_field(n, lam), payload.hex()])
         self.check_stream(data)
-        runs = 1
+        # M0a (docs/slices/M0a.md 2.3): the deterministic labeling is the least of A lambda
+        fd = self.run_ok("labeling", n, gens, kind, x, rho_arg + ("--witness", "deterministic"),
+                         cid + "-det")
+        self.assertEqual(fd[1:], ["0005", "COMPLETE", trace.hex(), data.hex(),
+                                  witness_field(n, min(coset)), payload.hex()])
+        runs = 2
         if not extras:
             return runs
         # representative change rho' = k rho, k in G: same c, trace and coset payload
@@ -1530,9 +1542,9 @@ class LabelingAndSigned(CliTestCase):
             # subgroups times subsets times labelings: 1, 1 * 2 * 1, 2 * 4 * 2, 6 * 8 * 6,
             # 30 * 16 * 24
             self.assertEqual(cases, 1 + 2 + 2 * 4 * 2 + 6 * 8 * 6 + 30 * 16 * 24)
-            # one run per case, two more per case with extras (all of n <= 3, two per n = 4
-            # case)
-            self.assertEqual(runs, cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
+            # two runs per case (any and deterministic), two more per case with extras (all of
+            # n <= 3, two per n = 4 case)
+            self.assertEqual(runs, 2 * cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
 
     def test_l1_g1_digraphs(self):
         # the G1 digraphs (n <= 2, every subgroup, every multiplicity vector, both colourings)
@@ -1609,6 +1621,16 @@ class LabelingAndSigned(CliTestCase):
         self.assertEqual(f[1:3] + f[3:], ["0007", "COMPLETE"] + expect)
         if data is not None:
             self.check_stream(data)
+        # M0a (docs/slices/M0a.md 2.4): deterministic mode: a nonzero witness is the least
+        # element of A t (same sign, bytes and group); a zero certificate is unchanged
+        fd = self.run_ok("signed", n, gens, kind, x,
+                         ("--signs", signs_arg(signs), "--witness", "deterministic"), cid + "-d")
+        if s != 0:
+            t = parse_witness(n, f[5].split(";")[0])
+            stab = stabiliser_of(n, group, kind, x)
+            least = min(rc.mul(a, t) for a in stab)
+            expect = expect[:2] + [witness_field(n, least) + ";sign=%+d" % s] + expect[3:]
+        self.assertEqual(fd[1:3] + fd[3:], ["0007", "COMPLETE"] + expect)
         # covariance (spec 8.4): s(x^h) = chi(h) s(x), c unchanged
         for h in hs_:
             xh = rc.act_object(kind, x, h)
