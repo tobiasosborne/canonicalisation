@@ -91,12 +91,26 @@ int canon_p1_sig_compare(const canon_p1_sig_entry *a, size_t a_len, const canon_
  * STAGE_O token. */
 canon_status canon_p1_stage_o(canon_partition *p, const canon_root *x, canon_p1_scratch *s);
 
+/* Observer of the refinement loop (slice S7, docs/slices/S7.md 3.3): the certificate writer
+ * records, per sweep, the partition after the O stage and, after the G stage, the singleton
+ * list F (f entries, partition order), the transporter u with F^u = M and the partition.  Each
+ * callback returns CANON_COMPLETE or a status that aborts the refinement.  NULL callbacks are
+ * skipped. */
+typedef struct canon_p1_observer {
+    void *user;
+    canon_status (*stage_o)(void *user, const canon_partition *p);
+    canon_status (*stage_g)(void *user, const canon_partition *p, const uint32_t *fixed,
+                            uint32_t f, const uint32_t *u);
+} canon_p1_observer;
+
 /* spec 7.1: the node refinement loop, appending NODE(depth) and one STAGE_O and one STAGE_G
  * token per sweep to `trace` (spec 7.2), up to and including the first sweep that does not
  * increase the number of cells.  On failure the trace may hold a partial node; the caller
- * truncates it. */
+ * truncates it.  `obs` (may be NULL) observes every sweep.  On return s->pt.fixed and s->pt.u
+ * hold the last sweep's F (the singletons in partition order) and u. */
 canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, const canon_root *x,
-                                  uint32_t depth, canon_buf *trace, canon_p1_scratch *s);
+                                  uint32_t depth, canon_buf *trace, canon_p1_scratch *s,
+                                  const canon_p1_observer *obs);
 
 /* spec 7.2: append the LEAF token. */
 canon_status canon_p1_trace_leaf(canon_buf *trace);

@@ -409,7 +409,9 @@ static uint64_t remaining(uint64_t quota, uint64_t used)
 static canon_status run_p1(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
                            const canon_root *x, uint64_t quota)
 {
-    canon_status st = canon_p1_search_run(p1, g, x, quota); /* quota 0: refused at the root */
+    canon_status st = canon_p1_search_run(p1, g, x, quota, NULL); /* quota 0: refused at the root;
+        S7: the labeling and signed objectives run the unpruned reference traversal under every
+        work policy (docs/pruning-rules.md: the S7 prune covers CANONICAL_IMAGE only) */
     s->stats.p1_nodes = p1->nodes;
     if (st == CANON_COMPLETE && x->n > 0) {
         memcpy(s->best, p1->best_t, (size_t)x->n * sizeof *s->best);

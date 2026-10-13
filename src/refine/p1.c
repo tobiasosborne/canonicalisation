@@ -298,7 +298,8 @@ canon_status canon_p1_stage_o(canon_partition *p, const canon_root *x, canon_p1_
 }
 
 canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, const canon_root *x,
-                                  uint32_t depth, canon_buf *trace, canon_p1_scratch *s)
+                                  uint32_t depth, canon_buf *trace, canon_p1_scratch *s,
+                                  const canon_p1_observer *obs)
 {
     /* spec 7.1/7.2: append NODE(depth) = 10 || U32(d) */
     canon_status st = canon_buf_put_u8(trace, TOKEN_NODE);
@@ -321,6 +322,12 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
         st = append_stage(trace, TOKEN_STAGE_O, p);
         if (st != CANON_COMPLETE) {
             return st;
+        }
+        if (obs != NULL && obs->stage_o != NULL) {
+            st = obs->stage_o(obs->user, p); /* S7 certificate: cell sizes after O */
+            if (st != CANON_COMPLETE) {
+                return st;
+            }
         }
 
         /* spec 7.1 G stage: "F = singleton atoms in current partition order (not branch
@@ -345,6 +352,13 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
         st = append_stage(trace, TOKEN_STAGE_G, p);
         if (st != CANON_COMPLETE) {
             return st;
+        }
+        if (obs != NULL && obs->stage_g != NULL) {
+            /* S7 certificate: F, u (so M = F^u) and the cell sizes after G */
+            st = obs->stage_g(obs->user, p, s->pt.fixed, f, s->pt.u);
+            if (st != CANON_COMPLETE) {
+                return st;
+            }
         }
         /* spec 7.1: "if number of cells == c0: break"; one complete no-change sweep is always
          * recorded, even at a discrete root and at n = 0. */

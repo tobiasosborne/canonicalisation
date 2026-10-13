@@ -5,8 +5,8 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 to S6 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
- * S6.md).
+ * Status of this header: slices S1 to S7 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
+ * S6.md, S7.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
@@ -20,7 +20,9 @@
  * canon_result_verify_witness (S4), and (S6) signed groups (canon_group_create_signed,
  * canon_group_character) with the objectives CANONICAL_LABELING_COSET and
  * SIGNED_CANONICAL_IMAGE under profile P1 (canon_result_sign, canon_result_labeling, the signed
- * zero payload 00 of canon_result_encode).  Every other entry point is a stub returning
+ * zero payload 00 of canon_result_encode), and (S7) the work-policy ID of the capacity
+ * descriptor (canon_work_policy), the certificate option with canon_result_certificate and
+ * canon_result_evidence.  Every other entry point is a stub returning
  * CANON_UNSUPPORTED_ACTION until its slice lands (canon_solve_batch: S8; checkpoints: M6).
  * ALL argument lists are PROVISIONAL until M4 and will be frozen there together with the
  * section 17 client vectors.
@@ -137,13 +139,31 @@ typedef struct canon_capacity {
     uint64_t max_nodes;
     uint64_t max_refs;
     uint64_t max_literal_bytes;
+    /* S7, spec 11.1: the work-policy ID naming the traversal the quota counts (zero: the
+     * context default, CANON_WORK_POLICY_PRUNE_1).  CANON_WORK_POLICY_UNPRUNED (0x0001) runs
+     * the unpruned reference traversal of spec 7.1 and counts every NODE token;
+     * CANON_WORK_POLICY_PRUNE_1 (0x0002) runs the S7 sequential prune policy
+     * (docs/pruning-rules.md: orbit pruning of the target cell by the input generators that fix
+     * x, for CANONICAL_IMAGE only; every other objective's traversal is the reference one) and
+     * counts the nodes explored.  Both reproduce P1's trace and bytes, so the profile ID stays
+     * CANON_PROFILE_P1; the count is a function of the input, the objective and the descriptor.
+     * Any other value is CANON_UNSUPPORTED_ACTION at problem creation. */
+    uint16_t work_policy;
 } canon_capacity;
+
+/* S7, spec 11.1 work-policy IDs (see canon_capacity.work_policy). */
+typedef uint16_t canon_work_policy;
+enum {
+    CANON_WORK_POLICY_UNPRUNED = 0x0001,
+    CANON_WORK_POLICY_PRUNE_1 = 0x0002
+};
 
 /* spec 17: create an immutable context holding the capacity defaults and the default options
  * (canon_context_create_with_options).  `defaults` may be NULL; a NULL
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
- * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5).
+ * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5), work_policy =
+ * CANON_WORK_POLICY_PRUNE_1 (S7).
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -364,7 +384,22 @@ typedef struct canon_problem_options {
      * (rho[v] = v^rho, a bijection; copied by the problem).  Required for
      * CANONICAL_LABELING_COSET, must be NULL otherwise. */
     const uint32_t *rho;
+    /* S7, spec 3.2, 20: request a certificate (format CERT-0, checker/README.md) with the
+     * result, for the independent checker canon-check.  Available for CANONICAL_IMAGE on a
+     * subset or graph object (CANON_UNSUPPORTED_ACTION otherwise at problem creation: nested
+     * roots and the other objectives are certificate v1). */
+    bool certificate;
 } canon_problem_options;
+
+/* S7, spec 3.2 evidence mode of a result.  CANON_EVIDENCE_TRUSTED_ENGINE: exhaustion asserted
+ * by this engine.  CANON_EVIDENCE_CHECKED_CERTIFICATE: the result carries a certificate
+ * (canon_result_certificate) of its coverage and rules for the independent checker; the claim
+ * is CHECKED only once canon-check accepts that certificate (spec 3.2: "requires an independent
+ * checker"), which this library never does itself. */
+typedef enum canon_evidence {
+    CANON_EVIDENCE_TRUSTED_ENGINE = 0,
+    CANON_EVIDENCE_CHECKED_CERTIFICATE = 1
+} canon_evidence;
 
 /* spec 17, 3, 8 (slice S4): as canon_problem_create, plus an optional second object `target`
  * and options (NULL = defaults: CANON_WITNESS_ANY).  canon_problem_create calls this with
@@ -388,7 +423,10 @@ typedef struct canon_problem_options {
  * Validation, in this order: CANON_INVALID_INPUT for NULL ctx/group/object/out or an unknown
  * witness mode; CANON_UNSUPPORTED_ACTION for a combination not listed above (including a
  * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
- * SIGNED_CANONICAL_IMAGE) or SIGNED_CANONICAL_IMAGE on an unsigned group; CANON_INVALID_INPUT
+ * SIGNED_CANONICAL_IMAGE), SIGNED_CANONICAL_IMAGE on an unsigned group, a work policy other
+ * than CANON_WORK_POLICY_UNPRUNED or CANON_WORK_POLICY_PRUNE_1 (S7), or a certificate request
+ * for an objective other than CANONICAL_IMAGE or an object that is neither a subset nor a
+ * graph (S7); CANON_INVALID_INPUT
  * for a degree mismatch, a missing, superfluous or mismatched target, or a missing, superfluous
  * or non-bijective rho; CANON_UNSUPPORTED_ACTION for SIMPLE-UPPER-1 on an object outside the
  * spec 4.4 class; CANON_CAPACITY_LIMIT as for canon_problem_create, where the output size is
@@ -448,10 +486,12 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * the least LEAF witness attaining the minimal (trace, bytes) key, as spec 7.4's preamble
  * prescribes ("minimise among the witnesses that actually attain that key"); with
  * CANON_WITNESS_DETERMINISTIC (S4) it is the spec 3 deterministic witness, the least element
- * of Aut_G(x) t, computed from the complete stabiliser.  For the UNPRUNED tree the two
- * coincide (tree equivariance, spec 7.2: the attaining leaves carry exactly Aut_G(x) t); S4's
- * tests check this, and once pruning lands (S7) only the deterministic mode keeps the
- * guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
+ * of Aut_G(x) t, computed from the complete stabiliser.  For the UNPRUNED tree (work policy
+ * CANON_WORK_POLICY_UNPRUNED) the two coincide (tree equivariance, spec 7.2: the attaining
+ * leaves carry exactly Aut_G(x) t); S4's tests check this.  Under the S7 prune
+ * (CANON_WORK_POLICY_PRUNE_1, the default) CANON_WITNESS_ANY returns the least t among the
+ * EXPLORED leaves attaining the key, a valid witness that may differ from the unpruned one
+ * (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
  * for the coset in deterministic mode the least element r0 of A g).
@@ -495,6 +535,15 @@ canon_status canon_result_sign(const canon_result *result, int *sign_out);
  * *degree = 0 otherwise.  For degree 0 a produced labeling is a non-NULL pointer with
  * *degree = 0. */
 const uint32_t *canon_result_labeling(const canon_result *result, uint32_t *degree);
+
+/* S7, spec 3.2, 20: the certificate of a complete CANONICAL_IMAGE result solved with
+ * options->certificate (the CERT-0 stream, owned by the result), or NULL with *length = 0.
+ * An incomplete result has none. */
+const uint8_t *canon_result_certificate(const canon_result *result, size_t *length);
+
+/* S7, spec 3.2: the evidence mode of the result (CANON_EVIDENCE_TRUSTED_ENGINE for NULL and for
+ * every result without a certificate). */
+canon_evidence canon_result_evidence(const canon_result *result);
 
 /* spec section 17: per-input statuses, input order preserved regardless of scheduling.
  * STUB until slice S8: returns CANON_UNSUPPORTED_ACTION. */

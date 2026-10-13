@@ -189,12 +189,16 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
         }
     }
     st = wrap(c, degree, out);
+    if (st == CANON_COMPLETE) {
+        /* S7: the handle keeps the input generators for the search's automorphism source */
+        st = canon_group_set_generators(*out, generators, generator_count);
+    }
     if (st == CANON_COMPLETE && is_signed) {
         st = canon_group_set_signs(*out, generators, generator_count, signs);
-        if (st != CANON_COMPLETE) {
-            canon_group_unshare(*out);
-            *out = NULL;
-        }
+    }
+    if (st != CANON_COMPLETE && *out != NULL) {
+        canon_group_unshare(*out);
+        *out = NULL;
     }
     return st;
 }

@@ -52,7 +52,11 @@
  * error, each with its own message); a stream object without --stream, or a stream target
  * without --target-stream, is a usage error.  `validate` prints the two fields "CASE \t STATUS"
  * (not a FORMAT.md record) and takes only --stream and --id.
- * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Exit
+ * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Slice S7:
+ * `--prune on|off` selects the work policy (on: CANON_WORK_POLICY_PRUNE_1, the library
+ * default; off: CANON_WORK_POLICY_UNPRUNED, the reference traversal), and `--certificate FILE`
+ * requests a CERT-0 certificate (canonical image of a subset or graph only) and writes it to
+ * FILE after the record (exit 3 if it cannot be written).  Exit
  * status: 0 on COMPLETE, 3 on any other status, 2 on a usage error.  Uses only the public
  * header. */
 #include <stdbool.h>
@@ -83,7 +87,8 @@ static int usage(const char *msg)
             "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
             "               [--target-stream HEX]\n"
             "       all: [--max-nodes K] [--id CASE] [--backend chain|explicit]\n"
-            "            [--witness any|deterministic]\n",
+            "            [--witness any|deterministic] [--prune on|off]\n"
+            "            [--certificate FILE]\n",
             msg);
     return 2;
 }
@@ -355,6 +360,8 @@ typedef struct options {
     canon_backend backend;
     canon_order order;
     canon_witness_mode witness;
+    uint16_t work_policy;        /* S7: 0 = the library default, else --prune on|off */
+    const char *certificate;     /* S7: --certificate FILE, or NULL */
 } options;
 
 /* Parse argv into *o; returns 0 or a usage exit status (message printed). */
@@ -380,6 +387,8 @@ static int parse_options(int argc, char **argv, options *o)
     o->backend = CANON_BACKEND_CHAIN;
     o->order = CANON_ORDER_CDAG_BYTE_1;
     o->witness = CANON_WITNESS_ANY;
+    o->work_policy = 0;
+    o->certificate = NULL;
     int kind = o->cmd->kind; /* -1 until --kind or a kind-specific option decides */
     bool subset_opt = false, graph_opt = false, stream_opt = false;
     for (int i = 2; i < argc; i += 2) {
@@ -453,6 +462,20 @@ static int parse_options(int argc, char **argv, options *o)
             } else {
                 return usage("--witness expects any or deterministic");
             }
+        } else if (strcmp(opt, "--prune") == 0) {
+            /* S7 (docs/slices/S7.md 6.2 D14): the switch selects the work policy */
+            if (strcmp(val, "on") == 0) {
+                o->work_policy = CANON_WORK_POLICY_PRUNE_1;
+            } else if (strcmp(val, "off") == 0) {
+                o->work_policy = CANON_WORK_POLICY_UNPRUNED;
+            } else {
+                return usage("--prune expects on or off");
+            }
+        } else if (strcmp(opt, "--certificate") == 0) {
+            if (*val == '\0') {
+                return usage("--certificate expects a file name");
+            }
+            o->certificate = val;
         } else if (strcmp(opt, "--max-nodes") == 0) {
             if (!parse_u64(val, strlen(val), UINT64_MAX, &o->max_nodes)) {
                 return usage("--max-nodes expects an unsigned decimal");
@@ -655,6 +678,29 @@ static int run_validate(const options *o)
     return st == CANON_COMPLETE ? 0 : 3;
 }
 
+/* S7: write the result's certificate (canon_result_certificate) to `path`.  Returns 0, or 3
+ * with a message when the result has none or the file cannot be written. */
+static int write_certificate(const char *path, const canon_result *result)
+{
+    size_t len = 0;
+    const uint8_t *cert = canon_result_certificate(result, &len);
+    if (cert == NULL) {
+        fprintf(stderr, "canon-cli: the result carries no certificate\n");
+        return 3;
+    }
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "canon-cli: cannot open %s for writing\n", path);
+        return 3;
+    }
+    const bool ok = (len == 0 || fwrite(cert, 1, len, f) == len) && fflush(f) == 0;
+    if (fclose(f) != 0 || !ok) {
+        fprintf(stderr, "canon-cli: cannot write %s\n", path);
+        return 3;
+    }
+    return 0;
+}
+
 /* Parse --signs: one '+' or '-' per generator (S6).  Returns 0, or 2 on a usage error. */
 static int parse_signs(const char *arg, size_t gen_count, int8_t *signs)
 {
@@ -750,9 +796,10 @@ int main(int argc, char **argv)
     canon_problem *problem = NULL;
     canon_workspace *ws = NULL;
     canon_result *result = NULL;
-    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0};
+    canon_capacity cap = {0, 0, o.max_nodes, 0, 0, 0, 0, o.work_policy};
     const canon_context_options copts = {o.backend};
-    const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL};
+    const canon_problem_options popts = {o.witness, o.rho != NULL ? rho : NULL,
+                                         o.certificate != NULL};
     canon_status st = canon_context_create_with_options(NULL, &copts, &ctx);
     if (st == CANON_COMPLETE) {
         st = o.signs != NULL ? canon_group_create_signed(ctx, n, gen, gen_count, signs, &group)
@@ -784,6 +831,9 @@ int main(int argc, char **argv)
     } else if (rc == 0) {
         rc = st != CANON_COMPLETE ? print_failure(o.id, objective, st)
                                   : print_result(o.id, objective, result);
+        if (rc == 0 && o.certificate != NULL) {
+            rc = write_certificate(o.certificate, result); /* S7 */
+        }
     }
     canon_result_release(result);
     canon_workspace_release(ws);

@@ -38,7 +38,7 @@ The milestones above are gates. Delivery is organised as **vertical slices**: ea
 | **S4** | Coset enumerator and the enumeration objectives: `LEX_MIN_IMAGE` (both orders), `TRANSPORTER_ONE`, `STABILISER`, `TRANSPORTER_COSET`; oracle agreement on T1/T2; canonical `Group(H)` bytes for the stabiliser answer | coset, search (consumers), encoding (Group/Perm records) | Greedy generators by constrained descent; no pruning | 2.6, 2.7, 4.4 (part) |
 | **S5** | Nested objects: tuples, sets, multisets, literals, permutation/subgroup/coset leaves; extensional normalisation; CDAG-2 decoder and validator; `canon_object_create` from a stream; sharing tests to depth 60 | object (dag), encoding (decoder, validator) | none | 3.2, 3.3, 3.6 |
 | **S6** | Labeling cosets and signed images: typed λ = ρt, complete `Aλ`, χ validation by the lifted group, zero certificate, nonzero via complete stabiliser, sign covariance tests, cross-feed `s_A(C_B(x))·s_A(x)=s_B(x)` | search (objectives 0x0005, 0x0007), api | none | 4.4 (rest) |
-| **S7** | Certificate v0 and the independent checker; first prune (node-stabilising automorphism) with its checker rule; mutation rejection | symmetry, checker | checker uses its own slow refinement | 4.5, 4.7 |
+| **S7** (landed 12 October 2026) | Certificate v0 and the independent checker; first prune (node-stabilising automorphism) with its checker rule; mutation rejection | symmetry, search, checker | checker uses its own slow refinement; A_known from the input generators only (S7b: implicit automorphisms) | 4.5, 4.7 |
 | **S8** | Capacity admission, live-memory ledger, metrics, fault injection, fuzz targets; `solve_batch`; output sink pause/fail | arena, metrics, api | none | 4.8, 5.1, 5.2 |
 
 After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruption) and M1 follow; M5 benchmarks and M6 concurrency are scheduled only after M0 closes.
@@ -50,6 +50,14 @@ After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruptio
 - A certified zero is written `a;sign=0` in the FORMAT witness field, with `a` the verified odd automorphism.
 - `verify_witness` on a signed result also checks `χ(a) = −1` for a zero and `χ(t) = s` for a nonzero, since the sign is part of the claim; this extends §17's "membership and exact action".
 - Characters for the Z1 tier are built from consistent sign vectors on the generators rather than enumerated by `review_checks.characters`, which cannot enumerate Sym(4)'s characters in reasonable time; they are checked equal to the model's for every T1 group of order at most 12.
+
+### Readings fixed by S7 (pruning, certificates, checker; `docs/slices/S7-notes.md`)
+
+- The S7 prune (rule P1-ORBIT-1, `docs/pruning-rules.md`) covers `CANONICAL_IMAGE` only; under work policy `0x0002` every other objective, including the P1 runs inside the labeling and signed objectives, runs and counts its reference traversal.
+- Under policy `0x0002` with `witness_mode = ANY` the witness is the least `t` over the explored leaves attaining the key; the model tiers therefore compare under `0x0001`, and the pruned policy is compared with the unpruned one on trace and bytes, and on the witness in deterministic mode.
+- Certificate v0's node records carry a sweep count and explicit child points, its final claim the explored-node count; its automorphism table holds one explicit transporter per pruned child. The checker verifies group equality of a rebased chain by mutual membership of the generating sets, `M`'s minimality by the least point of each level of the chain rebased to `M`, and the leaf's `t` as the last G stage's `u`.
+- Brief corrections: the unpruned node count of the empty subset under `Sym(6)` is 1237 (the brief's example gave no number; the first draft of the test assumed 1957); the drafted node record lacked a sweep count and child points; the certificate's witness is the least explored-leaf witness irrespective of the result's witness mode.
+- WP4.5 and WP4.7 are delivered by S7 except for source (ii) (S7b) and certificate v1.
 
 ### External oracle tier (WP0.9, decided 1 October 2026; scheduled after S6)
 

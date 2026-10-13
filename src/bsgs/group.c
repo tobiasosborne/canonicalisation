@@ -21,6 +21,7 @@ canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void
     g->degree = degree;
     g->impl = impl;
     g->signs = NULL; /* unsigned until canon_group_set_signs (S6) */
+    canon_perm_table_init(&g->gens, degree); /* filled by canon_group_set_generators (S7) */
     g->block = g;
     g->refs = &g->refs_storage;
     canon_ref_init(g->refs); /* one reference, owned by the creator */
@@ -45,8 +46,33 @@ void canon_group_unshare(const canon_group *group)
             free(owned->signs->signs);
             free(owned->signs);
         }
+        canon_perm_table_free(&owned->gens);
         free(owned);
     }
+}
+
+canon_status canon_group_set_generators(canon_group *group, const uint32_t *gens, size_t count)
+{
+    if (count > UINT32_MAX - 1u) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1: generator indices are uint32 */
+    }
+    canon_perm_table copy;
+    canon_perm_table_init(&copy, group->degree);
+    canon_status st = CANON_COMPLETE;
+    for (size_t i = 0; i < count && st == CANON_COMPLETE; ++i) {
+        uint32_t row = 0;
+        /* degree 0: the row is the empty permutation and is not read */
+        st = canon_perm_table_push(&copy, group->degree > 0 ? gens + i * (size_t)group->degree
+                                                            : NULL,
+                                   &row);
+    }
+    if (st != CANON_COMPLETE) {
+        canon_perm_table_free(&copy);
+        return st; /* spec 17: the handle is unchanged */
+    }
+    canon_perm_table_free(&group->gens);
+    group->gens = copy;
+    return CANON_COMPLETE;
 }
 
 canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, size_t count,

@@ -71,6 +71,14 @@ Slice S6 (class LabelingAndSigned), on the T1 subsets and the G1 digraphs under 
      unchanged (every h, three seeded h for n = 4); the cross-feed s(C(x)) = +1 (spec 20).
 Every canonical output of both tiers passes `canon-cli validate` and tools/hexdump_stream.py.
 
+Slice S7 (class Pruning, tier P1-prune): every canonical-image tier above is re-run with
+`--prune on` (work policy 0x0002, docs/pruning-rules.md) and compared field by field with
+`--prune off` (0x0001, the reference traversal the model tiers use): trace and bytes in the
+"any" witness mode, the whole record in the deterministic mode; the quota under each policy on
+the spec 7.4 empty-subset case and on Sym(6); `--certificate` on the golden cases and a sample
+of the T1 and G1 tiers piped into canon-check (CANON_CHECK, default build/make/canon-check),
+which must accept (checker/tests/test_checker.py runs the full tiers and the mutations).
+
 Standard library only.  Without a built CLI the tests skip, unless CANON_REQUIRE_CLI=1, which
 makes them fail.
 """
@@ -92,6 +100,8 @@ import hexdump_stream as hs  # noqa: E402  (no side effects on import)
 
 GOLDEN = json.loads((ROOT / "refs" / "vectors" / "golden.json").read_text(encoding="utf-8"))
 CLI = pathlib.Path(os.environ.get("CANON_CLI") or (ROOT / "build" / "make" / "canon-cli"))
+# Slice S7: the independent checker, for the certificate tier.
+CHECK = pathlib.Path(os.environ.get("CANON_CHECK") or (ROOT / "build" / "make" / "canon-check"))
 # Slice S3: the group backend under test ("" = the CLI default, the chain).
 BACKEND = os.environ.get("CANON_BACKEND", "")
 # Slice S6 review item 8: CANON_E2E_FAST=1 (set by CMake for the sanitizer build) runs the
@@ -107,9 +117,17 @@ if BACKEND not in ("", "chain", "explicit"):
 
 
 def cli(args):
-    """Run canon-cli with the selected backend appended (options may come in any order)."""
+    """Run canon-cli with the selected backend appended (options may come in any order).
+
+    Slice S7 (docs/slices/S7.md 6.2, D14): the model tiers compare against the unpruned
+    reference traversal, so every call selects work policy 0x0001 with `--prune off` unless the
+    caller passes its own `--prune`; the P1-prune tier (class Pruning) passes `--prune on`."""
+    args = list(args)
     extra = ["--backend", BACKEND] if BACKEND else []
-    return subprocess.run([str(CLI)] + list(args) + extra, capture_output=True, text=True,
+    # `validate` takes only --stream and --id (S5 review item 9)
+    if "--prune" not in args and args[:1] != ["validate"]:
+        extra += ["--prune", "off"]
+    return subprocess.run([str(CLI)] + args + extra, capture_output=True, text=True,
                           check=False)
 
 
@@ -1703,3 +1721,217 @@ class LabelingAndSigned(CliTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- Slice S7: pruning and certificates (docs/slices/S7.md section 4) ----
+
+
+def raw_cli(args):
+    """canon-cli without the `--prune off` default of cli(): the library default applies."""
+    extra = ["--backend", BACKEND] if BACKEND else []
+    return subprocess.run([str(CLI)] + list(args) + extra, capture_output=True, text=True,
+                          check=False)
+
+
+def certificate_accepted(args):
+    """Run canon-cli with --certificate and canon-check on the file; return (fields, line)."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".cert", delete=False) as f:
+        path = f.name
+    try:
+        proc = cli(list(args) + ["--certificate", path])
+        if proc.returncode != 0:
+            return proc.stdout.splitlines(), f"cli exit {proc.returncode}: {proc.stderr}"
+        check = subprocess.run([str(CHECK), path], capture_output=True, text=True, check=False)
+    finally:
+        os.unlink(path)
+    fields = proc.stdout.rstrip("\n").split("\t")
+    return fields, (check.returncode, check.stdout.strip())
+
+
+class Pruning(CliTestCase):
+    """Tier P1-prune: work policy 0x0002 against 0x0001, and certificates into canon-check."""
+
+    def setUp(self):
+        super().setUp()
+        if not CHECK.is_file():
+            msg = f"canon-check not found at {CHECK}: run `make` (or set CANON_CHECK)"
+            if REQUIRE_CLI:
+                self.fail(msg)
+            self.skipTest(msg)
+
+    def compare(self, args, cid):
+        """`--prune on` against `--prune off`: equal trace and bytes (any witness), equal
+        records in deterministic mode; the pruned witness is valid (the CLI verified nothing,
+        so the deterministic run, which uses the complete stabiliser, is the oracle)."""
+        on = cli(list(args) + ["--prune", "on"])
+        off = cli(list(args) + ["--prune", "off"])
+        self.assertEqual((on.returncode, off.returncode), (0, 0), cid + on.stderr + off.stderr)
+        fon, foff = on.stdout.split("\t"), off.stdout.split("\t")
+        self.assertEqual(fon[:5], foff[:5], cid)  # id, objective, status, trace, bytes
+        don = cli(list(args) + ["--prune", "on", "--witness", "deterministic"])
+        doff = cli(list(args) + ["--prune", "off", "--witness", "deterministic"])
+        self.assertEqual((don.returncode, doff.returncode), (0, 0), cid)
+        self.assertEqual(don.stdout, doff.stdout, cid)
+        self.assertEqual(don.stdout.split("\t")[:5], fon[:5], cid)
+        return fon
+
+    def test_t1_subsets(self):
+        cases = 0
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for mask in range(1 << n):
+                    cases += 1
+                    if not sampled(cases, 5):
+                        continue
+                    atoms = [a for a in range(n) if mask >> a & 1]
+                    cid = f"p-t1-n{n}-g{gi}-m{mask}"
+                    self.compare(["p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
+                                  "--atoms", ",".join(map(str, atoms)), "--id", cid], cid)
+        self.assertEqual(cases, 1 + 2 + 2 * 4 + 6 * 8 + 30 * 16)
+
+    def test_g1_and_g2_digraphs(self):
+        cases = 0
+        for n in range(3):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for mult, distinct in product(product(range(3), repeat=n * n), (False, True)):
+                    cases += 1
+                    if not sampled(cases, 9):
+                        continue
+                    colours = tuple(bytes([a % 2]) if distinct else b"" for a in range(n))
+                    arcs = tuple((a, b, b"", mult[a * n + b]) for a in range(n) for b in range(n)
+                                 if mult[a * n + b])
+                    cid = "p-g1-n%d-g%d-m%s-c%d" % (n, gi, "".join(map(str, mult)), distinct)
+                    colour_arg = "" if not distinct else ";".join(c.hex() for c in colours)
+                    arc_arg = ";".join(f"{a},{b},{l.hex()},{m}" for a, b, l, m in arcs)
+                    self.compare(["p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
+                                  "--colours", colour_arg, "--arcs", arc_arg, "--id", cid], cid)
+        self.assertEqual(cases, 2 * (1 + 3 + 2 * 81))
+        for n in (3, 4):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for k in range(2 if FAST else 6):
+                    rng = random.Random(7000003 * n + 1009 * gi + k)
+                    arcs = tuple((a, b, label, rng.choice((1, 2)))
+                                 for a in range(n) for b in range(n) for label in (b"", b"a")
+                                 if rng.random() < 0.3)
+                    colours = tuple(rng.choice((b"", b"c")) for _ in range(n))
+                    cid = f"p-g2-n{n}-g{gi}-r{k}"
+                    colour_arg = ";".join(c.hex() for c in colours)
+                    arc_arg = ";".join(f"{a},{b},{l.hex()},{m}" for a, b, l, m in arcs)
+                    self.compare(["p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
+                                  "--colours", colour_arg, "--arcs", arc_arg, "--id", cid], cid)
+
+    def test_d1_streams(self):
+        # nested roots prune too (A_known from the generators that fix x, any root kind)
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            for gi, group in enumerate(rc.subgroups(symmetric, n)):
+                gens = greedy_generators(group, n)
+                for k in range(1 if FAST else 3):
+                    rng = random.Random(9009 + 1000 * n + 37 * gi + k)
+                    records, root = random_dag(n, rng)
+                    stream = raw_stream(n, records, root)
+                    cid = f"p-d1-n{n}-g{gi}-r{k}"
+                    self.compare(["p1-stream", "--n", str(n), "--gens", gens_arg(n, gens),
+                                  "--stream", stream.hex(), "--id", cid], cid)
+
+    def test_quota_under_each_policy(self):
+        # spec 7.4 empty subset under Sym(2): 3 nodes unpruned, 2 pruned (one child per orbit)
+        base = ["p1-subset", "--n", "2", "--gens", "1,0", "--atoms", "", "--id", "q"]
+        for prune, quota, status in (("off", 2, "CAPACITY_LIMIT"), ("off", 3, "COMPLETE"),
+                                     ("on", 1, "CAPACITY_LIMIT"), ("on", 2, "COMPLETE")):
+            proc = cli(base + ["--prune", prune, "--max-nodes", str(quota)])
+            self.assertEqual(proc.stdout.split("\t")[2], status, (prune, quota))
+        # D14: the default policy is the prune
+        proc = raw_cli(base + ["--max-nodes", "2"])
+        self.assertEqual(proc.stdout.split("\t")[2], "COMPLETE")
+        # Sym(6): 1 + 6 + 30 + 120 + 360 + 720 = 1237 nodes unpruned, 6 pruned
+        base = ["p1-subset", "--n", "6", "--gens", "1,2,3,4,5,0;1,0,2,3,4,5", "--atoms", "",
+                "--id", "q6"]
+        for prune, quota, status in (("off", 1236, "CAPACITY_LIMIT"), ("off", 1237, "COMPLETE"),
+                                     ("on", 5, "CAPACITY_LIMIT"), ("on", 6, "COMPLETE")):
+            proc = cli(base + ["--prune", prune, "--max-nodes", str(quota)])
+            self.assertEqual(proc.stdout.split("\t")[2], status, (prune, quota))
+
+    def test_certificates(self):
+        accepted = 0
+        for case in GOLDEN["p1_cases"]:
+            obj = case["object"]
+            n = case["n"]
+            if obj["kind"] == "subset":
+                args = ["p1-subset", "--n", str(n), "--gens", gens_arg(n, case["group_generators"]),
+                        "--atoms", ",".join(map(str, obj["atoms"])), "--id", case["id"]]
+            elif obj["kind"] == "graph":
+                colours = tuple(bytes.fromhex(c) for c in obj["vertex_colours_hex"])
+                colour_arg = "" if all(c == b"" for c in colours) else ";".join(
+                    c.hex() for c in colours)
+                arc_arg = ";".join(f"{a['source']},{a['target']},{a['label_hex']},"
+                                   f"{a['multiplicity']}" for a in obj["arcs"])
+                args = ["p1-graph", "--n", str(n), "--gens", gens_arg(n, case["group_generators"]),
+                        "--colours", colour_arg, "--arcs", arc_arg, "--id", case["id"]]
+            else:
+                continue
+            for prune in ("on", "off"):
+                fields, verdict = certificate_accepted(args + ["--prune", prune])
+                self.assertEqual(fields[2:5], ["COMPLETE", case["expected_trace_hex"],
+                                               case["expected_stream_hex"]], case["id"])
+                self.assertEqual(verdict[0], 0, (case["id"], verdict))
+                self.assertTrue(verdict[1].startswith("ACCEPT "), verdict)
+                accepted += 1
+        self.assertEqual(accepted, 2 * 5)
+        # a sample of the T1 and G1 tiers (the full tiers: checker/tests/test_checker.py)
+        rng = random.Random(77)
+        for n in range(5):
+            symmetric = tuple(permutations(range(n)))
+            groups = list(rc.subgroups(symmetric, n))
+            for _ in range(1 if FAST else 3):
+                group = rng.choice(groups)
+                gens = greedy_generators(group, n)
+                atoms = [a for a in range(n) if rng.random() < 0.5]
+                cid = f"c-t1-n{n}"
+                args = ["p1-subset", "--n", str(n), "--gens", gens_arg(n, gens),
+                        "--atoms", ",".join(map(str, atoms)), "--id", cid]
+                fields, verdict = certificate_accepted(args + ["--prune", rng.choice(("on", "off"))])
+                self.assertEqual((fields[2], verdict[0]), ("COMPLETE", 0), (cid, verdict))
+                if n:
+                    arcs = tuple((a, b, b"", rng.choice((1, 2))) for a in range(n)
+                                 for b in range(n) if rng.random() < 0.4)
+                    arc_arg = ";".join(f"{a},{b},{l.hex()},{m}" for a, b, l, m in arcs)
+                    args = ["p1-graph", "--n", str(n), "--gens", gens_arg(n, gens),
+                            "--arcs", arc_arg, "--id", "c-g-" + cid]
+                    fields, verdict = certificate_accepted(args + ["--prune", "on"])
+                    self.assertEqual((fields[2], verdict[0]), ("COMPLETE", 0), (cid, verdict))
+                    accepted += 1
+                accepted += 1
+        self.assertGreater(accepted, 10)
+
+    def test_statuses_and_usage(self):
+        # a certificate is offered for the canonical image of a subset or graph only
+        proc = cli(["min", "--n", "2", "--gens", "1,0", "--atoms", "0", "--id", "m",
+                    "--certificate", "/dev/null"])
+        self.assertEqual((proc.returncode, proc.stdout.split("\t")[2]), (3, "UNSUPPORTED_ACTION"))
+        tuple_stream = ("434e020001000100000002" "00000002" "0200000000" "03000000020000000000000000"
+                        "00000001")
+        proc = cli(["p1-stream", "--n", "2", "--gens", "1,0", "--stream", tuple_stream,
+                    "--id", "d", "--certificate", "/dev/null"])
+        self.assertEqual((proc.returncode, proc.stdout.split("\t")[2]), (3, "UNSUPPORTED_ACTION"))
+        proc = cli(["p1-stream", "--n", "2", "--gens", "1,0", "--stream", tuple_stream, "--id", "d"])
+        self.assertEqual(proc.returncode, 0)
+        # an unwritable certificate path: the record is printed, the exit status is 3
+        proc = cli(["p1-subset", "--n", "2", "--gens", "1,0", "--atoms", "", "--id", "w",
+                    "--certificate", "/nonexistent-dir/x.cert"])
+        self.assertEqual(proc.returncode, 3)
+        self.assertEqual(proc.stdout.split("\t")[2], "COMPLETE")
+        for args in (["p1-subset", "--n", "1", "--prune", "maybe"],
+                     ["p1-subset", "--n", "1", "--certificate", ""],
+                     ["p1-subset", "--n", "1", "--prune"]):
+            with self.subTest(args):
+                proc = raw_cli(args)
+                self.assertEqual(proc.returncode, 2)
+                self.assertEqual(proc.stdout, "")

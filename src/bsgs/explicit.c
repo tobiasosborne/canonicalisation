@@ -579,6 +579,13 @@ canon_status canon_group_explicit_create(uint32_t degree, const uint32_t *genera
         st = canon_group_alloc(&explicit_ops, degree, e, out);
         if (st != CANON_COMPLETE) {
             explicit_destroy(e); /* frees table too */
+            return st;
+        }
+        /* S7: the handle keeps the input generators for the search's automorphism source */
+        st = canon_group_set_generators(*out, generators, generator_count);
+        if (st != CANON_COMPLETE) {
+            canon_group_unshare(*out);
+            *out = NULL;
         }
     }
     return st;
@@ -624,7 +631,10 @@ canon_status canon_group_explicit_create_signed(uint32_t degree, const uint32_t 
         st = canon_group_alloc(&explicit_ops, degree, e, out);
         if (st == CANON_COMPLETE) {
             e = NULL; /* owned by the handle */
-            st = canon_group_set_signs(*out, generators, generator_count, signs);
+            st = canon_group_set_generators(*out, generators, generator_count); /* S7 */
+            if (st == CANON_COMPLETE) {
+                st = canon_group_set_signs(*out, generators, generator_count, signs);
+            }
             if (st != CANON_COMPLETE) {
                 canon_group_unshare(*out);
                 *out = NULL;

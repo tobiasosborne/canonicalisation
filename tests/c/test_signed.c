@@ -53,7 +53,10 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
 {
     const canon_profile profile =
         objective == CANON_OBJECTIVE_STABILISER ? CANON_PROFILE_NO_TREE : CANON_PROFILE_P1;
-    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0};
+    /* S7: the signed objective's P1 run is unpruned under every policy; the unsigned
+     * CANONICAL_IMAGE solves this file compares it with use policy 0x0001 for the same reason
+     * as test_labeling.c */
+    canon_capacity cap = {0, 0, quota, max_output, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;
     canon_result *r = NULL;
@@ -618,8 +621,8 @@ static void graphs_and_errors(void)
                                CANON_ORDER_CDAG_BYTE_1, NULL, &p) == CANON_UNSUPPORTED_ACTION);
     CHECK(canon_problem_create(ctx_of[0], g, x, S, CANON_PROFILE_NO_TREE, CANON_ENCODING_CDAG_2,
                                CANON_ORDER_CDAG_BYTE_1, NULL, &p) == CANON_UNSUPPORTED_ACTION);
-    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL},
-                                with_rho = {CANON_WITNESS_ANY, swap};
+    const canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false},
+                                with_rho = {CANON_WITNESS_ANY, swap, false};
     CHECK(canon_problem_create_with_options(ctx_of[0], g, x, NULL, S, CANON_PROFILE_P1,
                                             CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
                                             &det, &p) == CANON_UNSUPPORTED_ACTION);
