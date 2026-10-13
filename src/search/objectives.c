@@ -377,11 +377,12 @@ canon_status canon_obj_run(canon_obj_search *s, const canon_group *g, const cano
     memset(out, 0, sizeof *out);
     memset(&s->stats, 0, sizeof s->stats);
     /* module contract (the API checks the same at creation): the transporters need a target of
-     * x's kind and degree, the other objectives take none (S4 review item 1) */
+     * x's degree, the other objectives take none (S4 review item 1).  A target of another kind
+     * is an ordinary empty case: canon_root_equal is false across kinds, so no hit occurs and
+     * exhaustion proves the empty result (M0a decision 4). */
     const bool needs_y = objective == CANON_OBJECTIVE_TRANSPORTER_ONE ||
                          objective == CANON_OBJECTIVE_TRANSPORTER_COSET;
-    if (g->degree != x->n || needs_y != (y != NULL) ||
-        (y != NULL && (y->kind != x->kind || y->n != x->n))) {
+    if (g->degree != x->n || needs_y != (y != NULL) || (y != NULL && y->n != x->n)) {
         return CANON_INVALID_INPUT;
     }
     canon_status st = prepare(s, x->n);

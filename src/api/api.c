@@ -731,10 +731,14 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
             return vs != CANON_COMPLETE ? vs : CANON_INVALID_INPUT;
         }
     }
-    /* spec 3 table: the transporters relate x to a second object y on the same domain */
+    /* spec 3 table: the transporters relate x to a second object y on the same domain.  A
+     * target of another kind (a graph against a subset, a nested root against a set of atoms)
+     * is admitted: no g sends x to it, so the answer is the complete empty result (spec 3:
+     * "or complete empty result"; M0a decision 4, accepted 13 October 2026; S4's INVALID_INPUT
+     * reading is withdrawn, since a reference without this library's kinds reports the empty
+     * result and the two must agree). */
     if (needs_target(objective) != (target != NULL) ||
-        (target != NULL &&
-         (target->root.kind != object->root.kind || target->root.n != object->root.n))) {
+        (target != NULL && target->root.n != object->root.n)) {
         return CANON_INVALID_INPUT;
     }
     /* spec 4.4: "available only for uncoloured simple undirected graphs"; the class is

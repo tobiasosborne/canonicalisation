@@ -92,15 +92,15 @@ The pre-publication history with third-party files is in `~/Projects/canonicalis
 7. **Group leaves.** Verified chains are stored in the arena and conjugated with `canon_bsgs_conjugate` on the action path, never rebuilt per tree node.
 8. **Costs accepted for now (M5 work):** one chain rebuild per step of `tuple_min` and of the coset descent; transient chains in the §9.4 writers; on the signed route each hit is sifted through `A_known` before χ (2 October 2026 follow-up: 264 verified rebuilds instead of 476 on T1, outputs identical) at one extra sift per even non-member; the sanitizer e2e runtime is kept near four minutes by `CANON_E2E_FAST` seeded subsets, while `make check` runs every tier in full (about 105 s).
 
-## Decisions taken in M0a (13 October 2026; `docs/slices/M0a.md`, `M0a-notes.md`; the implementer's, awaiting the maintainer's review)
+## Decisions taken in M0a (13 October 2026; `docs/slices/M0a.md`, `M0a-notes.md`; accepted by the maintainer on 13 October 2026 with the recommendations attached to them)
 
 1. The deterministic witness mode is accepted for every objective, by spec §3's definition: `TRANSPORTER_ONE` reports `r₀` (one hit, the complete stabiliser, the coset descent; the one quota covers it), `STABILISER` is vacuous, the labeling reports `λ₀ = min Aλ` with `t = ρ⁻¹λ₀`, a nonzero signed image the least of `A t` (same sign), a certified zero is unchanged. S4 brief 2 and S6 reading 16 are superseded.
 2. The generated corpus is retained as seeds and SHA-256 hashes (`refs/vectors/generated/MANIFEST.json`, `make corpus`), not as committed files (12 MB for T1); the generator is deterministic and tested so.
 3. The `encoding` corruption switch cannot show on T1 (no nested object there); its evidence is the T2 run. ref-a's three switches were deleted before the seal.
-4. The oracle accepts `INVALID_INPUT` for a transporter whose target has another shape (a set of atoms against a tuple, a subset against a nested root), the library's §17 "mismatched target" reading; an empty result is accepted too.
-5. T3's WP0.6 filter (`COMPLETE` under 10⁶ nodes) is left to the runner's records; a full T3 run was not made: the unpruned enumeration objectives under that quota take minutes per case on `n ≤ 48` (see the notes), so the T3 default is 50 groups and the run is scheduled with the M0 comparison.
+4. A transporter whose target has another shape (a set of atoms against a tuple, a subset against a nested root) is an ordinary case with the complete empty result: the library admits the target (degree must match) and the oracle demands the empty record. S4's `INVALID_INPUT` reading is withdrawn (maintainer, 13 October 2026). To be stated in spec v2.2 with the deterministic-witness cases of decision 1 and the evidence-mode wording of S7 decision 5.
+5. T3's WP0.6 filter (`COMPLETE` under 10⁶ nodes) is left to the runner's records; a full T3 run was not made: the unpruned enumeration objectives under that quota take minutes per case on `n ≤ 48` (see the notes), so the T3 default is 50 groups and the full run (hours of CPU) is scheduled with the M0 comparison; the plan's 10⁶ budget stays.
 
-## Decisions taken in S8 (13 October 2026; `docs/slices/S8.md`, `S8-notes.md`; the implementer's, awaiting the maintainer's review)
+## Decisions taken in S8 (13 October 2026; `docs/slices/S8.md`, `S8-notes.md`; accepted by the maintainer on 13 October 2026)
 
 1. **D15 Pause status.** A paused sink is reported as `CANON_CANCELLED` with the offset retained for `canon_result_encode_resume`, since §3.2's eight statuses are frozen; S1's `OUTPUT_ERROR` reading is withdrawn.
 2. **D16 Plan versus measurement.** Admission is by a deliberately loose plan computed at problem creation (quadratic stacks for a depth-`n` path; a calibrated, not proven, chain estimate); the ledger measures and reports; no status depends on a measurement. `tests/c/test_metrics.c` checks `peak ≤ plan` on every tier.

@@ -85,8 +85,8 @@ void canon_obj_search_init(canon_obj_search *s);
 void canon_obj_search_free(canon_obj_search *s);
 
 /* Run objective LEX_MIN_IMAGE, TRANSPORTER_ONE, STABILISER or TRANSPORTER_COSET for x under g
- * (same degree); y is the target of the transporter objectives (same kind and degree as x),
- * NULL otherwise; `order` is CDAG-BYTE-1 or (minimum only, x in the spec 4.4 class)
+ * (same degree); y is the target of the transporter objectives (same degree as x; another
+ * kind gives the complete empty result, M0a), NULL otherwise; `order` is CDAG-BYTE-1 or (minimum only, x in the spec 4.4 class)
  * SIMPLE-UPPER-1; `deterministic` selects the spec 3 deterministic witness (minimum: the least
  * g attaining the minimum; coset: r0; transporter one: r0 as well, by the complete stabiliser
  * and the coset descent, M0a; stabiliser: no witness); `quota` bounds the visit calls of all enumerations of

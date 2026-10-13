@@ -488,12 +488,15 @@ static void test_dag_roots(canon_workspace *ws)
                 CHECK(mb != NULL && canon_stream_validate(CTX, mb, ml) == CANON_COMPLETE);
                 canon_result_release(rs);
                 canon_result_release(rm);
-                /* a target of another kind (an empty subset) is INVALID_INPUT (S4 rule) */
+                /* a target of another kind (an empty subset against a nested root) is the
+                 * complete empty result (M0a decision 4; S4 read it as INVALID_INPUT) */
                 canon_object *other = NULL;
                 canon_result *ro = NULL;
                 CHECK(canon_object_create_subset(CTX, n, NULL, 0, &other) == CANON_COMPLETE);
                 CHECK(solve(ws, g, xo, other, CANON_OBJECTIVE_TRANSPORTER_ONE, NULL,
-                            CANON_WITNESS_ANY, &ro) == CANON_INVALID_INPUT);
+                            CANON_WITNESS_ANY, &ro) == CANON_COMPLETE);
+                CHECK(canon_result_get_flags(ro).transport_exhausted && !canon_result_get_flags(ro).witness_valid);
+                canon_result_release(ro);
                 canon_object_release(other);
                 canon_result_release(r);
                 canon_object_release(xo);

@@ -444,7 +444,8 @@ typedef enum canon_evidence {
  *                               use P1"; spec 8.2: the labeling coset runs spec 7), order
  *                               CDAG-BYTE-1, witness mode CANON_WITNESS_ANY.
  * The target is required for TRANSPORTER_ONE and TRANSPORTER_COSET and must be NULL
- * otherwise; it must have the object's kind and degree.  The problem retains it.  The labeling
+ * otherwise; it must have the object's degree (a target of another kind is admitted and gives
+ * the complete empty result, M0a).  The problem retains it.  The labeling
  * options->rho is required for CANONICAL_LABELING_COSET and must be NULL otherwise; the problem
  * copies it.  SIGNED_CANONICAL_IMAGE needs a signed group (canon_group_create_signed); the
  * other objectives ignore a group's signs.
