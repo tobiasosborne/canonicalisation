@@ -441,8 +441,23 @@ static void validation(void)
           CANON_INVALID_INPUT);
     CHECK(CREATE(g, x, x, CANON_OBJECTIVE_STABILISER, NT, CB, NULL) == CANON_INVALID_INPUT);
     CHECK(CREATE(g, x, x, CANON_OBJECTIVE_CANONICAL_IMAGE, P1, CB, NULL) == CANON_INVALID_INPUT);
-    CHECK(CREATE(g, x, graph, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, NULL) ==
-          CANON_INVALID_INPUT);
+    /* M0a decision 4: a target of another kind is admitted and the transporter is proved
+     * empty (no g sends a subset to a graph); a target of another degree is refused */
+    {
+        canon_status st;
+        canon_result *re = solve(g, x, graph, CANON_OBJECTIVE_TRANSPORTER_ONE, CB,
+                                 CANON_WITNESS_ANY, 0, &st);
+        uint32_t deg = 7;
+        CHECK(st == CANON_COMPLETE && canon_result_witness(re, &deg) == NULL && deg == 0);
+        CHECK(flags_are(canon_result_get_flags(re), false, false, false, false, false, true, false));
+        canon_result_release(re);
+        re = solve(g, x, graph, CANON_OBJECTIVE_TRANSPORTER_COSET, CB, CANON_WITNESS_DETERMINISTIC,
+                   0, &st);
+        size_t len = 1;
+        CHECK(st == CANON_COMPLETE && canon_result_group_bytes(re, &len) == NULL && len == 0);
+        CHECK(canon_result_get_flags(re).transport_exhausted);
+        canon_result_release(re);
+    }
     CHECK(CREATE(g, x, x3, CANON_OBJECTIVE_TRANSPORTER_ONE, NT, CB, NULL) == CANON_INVALID_INPUT);
     CHECK(CREATE(g3, x, NULL, CANON_OBJECTIVE_STABILISER, NT, CB, NULL) == CANON_INVALID_INPUT);
     CHECK(p == NULL);

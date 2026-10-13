@@ -69,7 +69,8 @@ After S8 the M0 gate (ref-b commissioning, corpus tiers T2/T3, planted corruptio
 
 ### Readings fixed by M0a (M0 preparation; `docs/slices/M0a.md`, `M0a-notes.md`)
 
-- The deterministic witness of spec §3 is defined for every objective: `TRANSPORTER_ONE` reports `r₀` (the least of `A g`), `STABILISER` accepts the mode with no witness, the labeling reports `λ₀ = min Aλ` with `t = ρ⁻¹λ₀`, a nonzero signed image the least of `A t`; S4's and S6's refusals are withdrawn (the M0 schema requests the mode on every case).
+- The deterministic witness of spec §3 is defined for every objective: `TRANSPORTER_ONE` reports `r₀` (the least of `A g`), `STABILISER` accepts the mode with no witness, the labeling reports `λ₀ = min Aλ` with `t = ρ⁻¹λ₀`, a nonzero signed image the least of `A t`; S4's and S6's refusals are withdrawn (the M0 schema requests the mode on every case). Accepted by the maintainer on 13 October 2026, to be stated in spec v2.2.
+- A transporter target of another kind than the object (a graph against a subset, a nested root against a set of atoms) is admitted and answered with the complete empty result; S4's `INVALID_INPUT` reading is withdrawn (maintainer, 13 October 2026), so that a reference without this library's root kinds agrees. To be stated in spec v2.2.
 - WP0.3 is `refs/oracle/oracle.py`; WP0.6 is `tools/gen_cases.py` with the corpus retained as seeds and hashes (`refs/vectors/generated/MANIFEST.json`, `make corpus`), the WP0.6 counts being `--count` arguments (defaults 200 and 50 groups; targets 2 000 and 500 cases per objective); WP0.7's three switches were run on a T1 sample (`sign`, `action`) and a T2 sample (`encoding`: T1 has no nested object, so the height-ordering switch cannot show there), logged under `refs/compare/runs/`, and removed before ref-a's seal; WP0.4 ref-a is `refs/ref-a/run_cases.py` over `canon-cli`, sealed in `refs/SEALS.md`. WP0.5 (ref-b), WP0.7's comparison against ref-b and WP0.8 wait on a blind author.
 - T3 under the unpruned enumeration objectives and a 10⁶ quota takes minutes per case for `n ≤ 48`; the full T3 run is scheduled with the ref-a/ref-b comparison.
 
@@ -198,7 +199,7 @@ T3 cases are filtered by both references returning `COMPLETE` under a fixed `max
 
 ### WP0.7 Comparison and corruption sensitivity
 
-`refs/compare/compare.py` reports per-case agreement across ref-a, ref-b and the oracle. Corruption planting goes beyond the nibble flip: the harness runs ref-a under three environment switches implemented for this purpose only, `CANON_PLANT=sign` (negate `χ` on one generator), `=action` (compose on the wrong side in one leaf action), `=encoding` (omit the DAG height ordering). Each must produce at least one disagreement on T1. The switches are deleted before sealing; the run logs are retained under `refs/compare/runs/`.
+`refs/compare/compare.py` reports per-case agreement across ref-a, ref-b and the oracle. Corruption planting goes beyond the nibble flip: the harness runs ref-a under three environment switches implemented for this purpose only, `CANON_PLANT=sign` (negate `χ` on one generator), `=action` (compose on the wrong side in one leaf action), `=encoding` (omit the DAG height ordering). Each must produce at least one disagreement on T1, or on T2 for a corruption that only nested objects can show (the height ordering of §4.2: T1 holds no nested object, amended 13 October 2026). The switches are deleted before sealing; the run logs are retained under `refs/compare/runs/`.
 
 ### WP0.8 Divergence protocol
 

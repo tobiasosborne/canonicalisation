@@ -29,8 +29,10 @@ enumeration of the group:
                        an odd automorphism; nonzero: bytes in the orbit, witness t in G with
                        x^t = c and sign chi(t), group_hex = Group(A); deterministic mode: the
                        least of A t; across the file, s(x^h) = chi(h) s(x) with c unchanged.
-  A signed labeling problem must be UNSUPPORTED_ACTION.  CAPACITY_LIMIT records are skipped
-  (not checkable here); any other non-COMPLETE status is a failure.
+  A signed labeling problem must be UNSUPPORTED_ACTION.  A transporter target of another shape
+  (a tuple against a set, a graph against a nested object) is an ordinary empty case.
+  CAPACITY_LIMIT records are skipped (not checkable here); any other non-COMPLETE status is a
+  failure.
 
 Traces are not checked beyond invariance: they are defined by P1, not by the orbit.  The
 encoder, normaliser and Group(H) writer below are written from the spec text; this file reuses
@@ -183,24 +185,6 @@ def parse_graph(obj, n):
         key = (a["source"], a["target"], bytes.fromhex(a["label_hex"]))
         arcs[key] = arcs.get(key, 0) + a["multiplicity"]
     return (colours, tuple(sorted(arcs.items())))
-
-
-def shape(value):
-    """The structural kind a reference may distinguish at input validation: a set of atoms (the
-    subset object), a graph, an atom tuple, or a nested object by the kind of its root."""
-    kind, v = value
-    if kind == "subset":
-        return "set-of-atoms"
-    if kind in ("tuple", "graph"):
-        return kind
-    rk, rv = v
-    if rk == "set" and all(c[0] == "atom" for c in rv):
-        return "set-of-atoms"
-    if rk == "graph":
-        return "graph"
-    if rk == "tuple" and all(c[0] == "atom" for c in rv):
-        return "tuple"
-    return "nested-" + rk
 
 
 def act(value, g):
@@ -443,20 +427,10 @@ class Oracle:
                 self.fail(cid, "objective name and tag disagree: must be INVALID_INPUT")
             self.checked += 1
             return
-        if objective in ("TRANSPORTER_ONE", "TRANSPORTER_COSET"):
-            try:
-                shapes = (shape(parse(case["object"], n)), shape(parse(case["target"], n)))
-            except ValueError as e:
-                return self.fail(cid, f"object not parseable: {e}")
-            if shapes[0] != shapes[1]:
-                # a set of atoms is never the image of a tuple, a tuple never that of a graph:
-                # the reference may refuse the pair (spec 17 "mismatched target") or report the
-                # exhausted empty result
-                if status == "INVALID_INPUT" or (status == "COMPLETE" and wtext == "-" and
-                                                 ghex == "-"):
-                    self.checked += 1
-                    return
-                return self.fail(cid, "target of another shape: INVALID_INPUT or an empty result")
+        # a transporter target of another shape (a set of atoms against a tuple, a graph
+        # against a nested root) is an ordinary case: no g sends x to y, so the record must be
+        # the complete empty result (spec 3; M0a decision 4, accepted 13 October 2026); the
+        # generic transporter rule below checks exactly that
         if case["object"]["kind"] == "dag" and status == "UNSUPPORTED_ACTION" and any(
                 r["tag"] >= 6 for r in case["object"]["records"]):
             self.checked += 1  # leaves of tags 06-0a are outside the M0 scope (refs/BRIEF.md 2)
