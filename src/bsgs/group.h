@@ -100,6 +100,10 @@ struct canon_group {
     void *impl;                   /* backend state, freed by ops->destroy */
     canon_group_signs *signs;     /* S6: NULL for an unsigned group; owned, freed with the
                                      handle (canon_group_set_signs) */
+    canon_perm_table gens;        /* S7: the input generators as given, in input order (spec
+                                     7.3 "Known automorphisms": the input generators that fix
+                                     x are the first source of A_known), copied by
+                                     canon_group_set_generators; degree 0: rows not read */
     canon_refcount *refs;         /* = &refs_storage */
     void *block;                  /* = this handle's allocation */
     canon_refcount refs_storage;  /* the count itself; access only through refs */
@@ -110,6 +114,13 @@ struct canon_group {
  * it). */
 canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void *impl,
                                canon_group **out);
+
+/* spec 7.3 (slice S7): give a handle that was just allocated (and not yet shared) a copy of
+ * its `count` input generators of degree `degree` (flat image arrays, not read for degree 0),
+ * in input order; every backend calls it, so the search can test the generators against x on
+ * either backend (docs/slices/S7.md 3.1 source i).  On failure the handle is unchanged.
+ * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
+canon_status canon_group_set_generators(canon_group *group, const uint32_t *gens, size_t count);
 
 /* spec 8.4 (slice S6): give a handle that was just allocated (and not yet shared) its signed
  * generators: copies the `count` generators of degree `degree` (flat image arrays, not read for

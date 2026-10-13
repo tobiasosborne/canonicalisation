@@ -3,7 +3,8 @@
 #   make            build library, checker, canon-cli and C tests
 #   make test       run the C tests
 #   make check      review_checks.py plus the Python tests (vectors, hexdump, CLI end to end
-#                   with the chain backend, then again with the explicit backend)
+#                   with the chain backend, then again with the explicit backend) and the
+#                   checker harness (certificates through the CLI, canon-check, mutations)
 #   make format     clang-format (no-op with a message if unavailable)
 #   make clean
 # Options: CC=clang  SANITIZE=1 (address,undefined)  LTO=1  BUILD=dir
@@ -33,7 +34,8 @@ LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c \
            src/coset/least.c src/coset/enumerate.c src/partition/partition.c \
            src/util/sort.c \
-           src/refine/p1.c src/search/p1_tree.c src/search/objectives.c
+           src/refine/p1.c src/search/p1_tree.c src/search/objectives.c \
+           src/search/certificate.c src/symmetry/symmetry.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
@@ -42,7 +44,8 @@ UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition te
              test_search_graph test_chain test_reference_schreier test_verify test_provenance \
              test_coset_least test_enumerate test_group_stream test_objectives \
              test_dag test_cdag_decode test_dag_action test_search_dag \
-             test_signed_group test_labeling test_signed
+             test_signed_group test_labeling test_signed \
+             test_symmetry test_prune test_certificate
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
@@ -59,9 +62,11 @@ $(LIB): $(LIB_OBJ)
 	ar rcs $@ $^
 
 # The checker is deliberately independent: no libcanon, no include paths into src/ or include/.
-$(CHECKER): checker/main.c
+CHECKER_SRC = checker/main.c checker/cc_check.c checker/cc_chain.c checker/cc_object.c \
+              checker/cc_reader.c checker/cc_refine.c
+$(CHECKER): $(CHECKER_SRC) checker/cc.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $(CHECKER_SRC) -o $@ $(LDFLAGS)
 
 # The CLI uses only the public header (no -Isrc).
 $(CLI): tools/canon-cli.c $(LIB)
@@ -83,10 +88,13 @@ test: all
 # make check builds the CLI first: tests/python/test_e2e.py drives it through CANON_CLI.
 # The discover run uses the default (chain) group backend; the second run repeats the CLI end
 # to end test with the explicit backend (slice S3: both must agree with the model).
-check: $(CLI)
+# Slice S7: the checker harness (checker/tests/test_checker.py) produces certificates through
+# the CLI and runs canon-check on them, including the mutation tests.
+check: $(CLI) $(CHECKER)
 	nice -n 19 python3 checks/review_checks.py
-	CANON_CLI=$(abspath $(CLI)) CANON_REQUIRE_CLI=1 nice -n 19 python3 -m unittest discover -s tests/python -q
-	CANON_CLI=$(abspath $(CLI)) CANON_REQUIRE_CLI=1 CANON_BACKEND=explicit nice -n 19 python3 tests/python/test_e2e.py
+	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 nice -n 19 python3 -m unittest discover -s tests/python -q
+	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 CANON_BACKEND=explicit nice -n 19 python3 tests/python/test_e2e.py
+	CANON_CLI=$(abspath $(CLI)) CANON_CHECK=$(abspath $(CHECKER)) CANON_REQUIRE_CLI=1 nice -n 19 python3 checker/tests/test_checker.py
 
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \

@@ -87,7 +87,7 @@ static void validation(void)
         canon_group_release(g);
     }
     /* the context's max_n is checked first (spec 11.1) */
-    canon_capacity small = {1, 0, 0, 0, 0, 0, 0};
+    canon_capacity small = {1, 0, 0, 0, 0, 0, 0, 0};
     canon_context *tiny = NULL;
     CHECK(canon_context_create(&small, &tiny) == CANON_COMPLETE);
     canon_group *g = NULL;
@@ -100,7 +100,7 @@ static void validation(void)
  * before any generator or table is touched (no generators: nothing could be read anyway). */
 static void capacity(void)
 {
-    canon_capacity huge = {UINT32_MAX, 0, 0, 0, 0, 0, 0};
+    canon_capacity huge = {UINT32_MAX, 0, 0, 0, 0, 0, 0, 0};
     for (int b = 0; b < 2; ++b) {
         const canon_context_options opts = {b == 0 ? CANON_BACKEND_CHAIN : CANON_BACKEND_EXPLICIT};
         canon_context *ctx = NULL;

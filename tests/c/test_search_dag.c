@@ -58,7 +58,7 @@ static canon_status solve(canon_workspace *ws, const canon_group *g, const canon
                           const canon_capacity *cap, canon_witness_mode mode, canon_result **out)
 {
     canon_problem *p = NULL;
-    const canon_problem_options opts = {mode, NULL};
+    const canon_problem_options opts = {mode, NULL, false};
     *out = NULL;
     canon_status st = canon_problem_create_with_options(
         CTX, g, x, y, objective,
@@ -190,7 +190,7 @@ static void test_create_statuses(void)
     CHECK(from_hex(2, ok, &x) == CANON_COMPLETE && x != NULL);
     canon_object_release(x);
     /* limits of the normal form against the context defaults */
-    canon_capacity d = {0, 0, 0, 0, 2, 1, 1};
+    canon_capacity d = {0, 0, 0, 0, 2, 1, 1, 0};
     canon_context *small = NULL;
     CHECK(canon_context_create(&d, &small) == CANON_COMPLETE);
     CHECK(canon_object_create(small, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, 2, buf,
@@ -526,10 +526,10 @@ static void test_problem_capacity(canon_workspace *ws)
         canon_capacity cap;
         canon_status want;
     } cases[] = {
-        {{0, 0, 0, 0, 3, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 4, 0, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 2, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 3, 0}, CANON_COMPLETE},
-        {{0, 0, 0, 0, 0, 0, 1}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 0, 2}, CANON_COMPLETE},
-        {{0, 0, 0, 52, 0, 0, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 53, 0, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 3, 0, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 4, 0, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 2, 0, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 3, 0, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 0, 0, 0, 1, 0}, CANON_CAPACITY_LIMIT},  {{0, 0, 0, 0, 0, 0, 2, 0}, CANON_COMPLETE},
+        {{0, 0, 0, 52, 0, 0, 0, 0}, CANON_CAPACITY_LIMIT}, {{0, 0, 0, 53, 0, 0, 0, 0}, CANON_COMPLETE},
     };
     for (size_t i = 0; i < sizeof cases / sizeof *cases; ++i) {
         CHECK(solve(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, &cases[i].cap,
@@ -551,7 +551,7 @@ static void test_problem_capacity(canon_workspace *ws)
     CHECK(from_hex(4, c4, &x) == CANON_COMPLETE);
     const uint32_t s4[8] = {1, 0, 2, 3, 1, 2, 3, 0};
     CHECK(canon_group_create(CTX, 4, s4, 2, &g) == CANON_COMPLETE);
-    canon_capacity cap = {0, 0, 0, 96, 0, 0, 0};
+    canon_capacity cap = {0, 0, 0, 96, 0, 0, 0, 0};
     CHECK(solve(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, &cap, CANON_WITNESS_ANY, &r) ==
           CANON_CAPACITY_LIMIT);
     cap.max_output_bytes = 97;
@@ -687,7 +687,7 @@ static void test_chain_reuse(void)
                 canon_p1_search a, b;
                 canon_p1_search_init(&a);
                 canon_p1_search_init(&b);
-                CHECK(canon_p1_search_run(&a, g, &x, 1u << 20) == CANON_COMPLETE);
+                CHECK(canon_p1_search_run(&a, g, &x, 1u << 20, NULL) == CANON_COMPLETE);
                 /* drop the stored chains: every leaf image then rebuilds (the old path) */
                 for (uint32_t i = 0; i < x.u.dag.chains_cap; ++i) {
                     if (x.u.dag.chains[i] != NULL) {
@@ -696,7 +696,7 @@ static void test_chain_reuse(void)
                         x.u.dag.chains[i] = NULL;
                     }
                 }
-                CHECK(canon_p1_search_run(&b, g, &x, 1u << 20) == CANON_COMPLETE);
+                CHECK(canon_p1_search_run(&b, g, &x, 1u << 20, NULL) == CANON_COMPLETE);
                 CHECK(a.best_bytes.len == b.best_bytes.len &&
                       memcmp(a.best_bytes.data, b.best_bytes.data, a.best_bytes.len) == 0 &&
                       a.best_trace.len == b.best_trace.len &&

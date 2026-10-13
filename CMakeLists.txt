@@ -39,7 +39,8 @@ add_library(canon STATIC
   src/bsgs/group.c src/bsgs/explicit.c src/bsgs/provenance.c src/bsgs/chain.c
   src/bsgs/verify.c src/bsgs/chain_backend.c src/bsgs/reference.c
   src/coset/least.c src/coset/enumerate.c src/partition/partition.c
-  src/util/sort.c src/refine/p1.c src/search/p1_tree.c src/search/objectives.c)
+  src/util/sort.c src/refine/p1.c src/search/p1_tree.c src/search/objectives.c
+  src/search/certificate.c src/symmetry/symmetry.c)
 target_include_directories(canon PUBLIC include PRIVATE src)
 target_link_libraries(canon PRIVATE canon_options)
 
@@ -48,7 +49,8 @@ add_executable(canon-cli tools/canon-cli.c)
 target_link_libraries(canon-cli PRIVATE canon canon_options)
 
 # Independent certificate checker: must NOT link canon and must not see src/ or include/.
-add_executable(canon-check checker/main.c)
+add_executable(canon-check checker/main.c checker/cc_check.c checker/cc_chain.c
+  checker/cc_object.c checker/cc_reader.c checker/cc_refine.c)
 target_link_libraries(canon-check PRIVATE canon_options)
 
 enable_testing()
@@ -67,7 +69,8 @@ foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_
           test_search_graph test_chain test_reference_schreier test_verify test_provenance
           test_coset_least test_enumerate test_group_stream test_objectives
           test_dag test_cdag_decode test_dag_action test_search_dag
-          test_signed_group test_labeling test_signed)
+          test_signed_group test_labeling test_signed
+          test_symmetry test_prune test_certificate)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)
@@ -80,9 +83,9 @@ if(Python3_Interpreter_FOUND)
   # Slice S6 review item 8: under the sanitizers the e2e tiers run on seeded subsets
   # (CANON_E2E_FAST=1, tests/python/README.md); without them, in full.
   if(CANON_SANITIZE)
-    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1;CANON_E2E_FAST=1")
+    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_CHECK=$<TARGET_FILE:canon-check>;CANON_REQUIRE_CLI=1;CANON_E2E_FAST=1")
   else()
-    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_REQUIRE_CLI=1")
+    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_CHECK=$<TARGET_FILE:canon-check>;CANON_REQUIRE_CLI=1")
   endif()
   add_test(NAME test_e2e
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
@@ -96,7 +99,11 @@ else()
   message(WARNING "python3 not found: test_e2e is not registered")
 endif()
 
-# Exit status 2 is the intended M0-M3 behaviour of the checker stub.
-add_test(NAME canon_check_stub COMMAND canon-check)
-set_tests_properties(canon_check_stub PROPERTIES PASS_REGULAR_EXPRESSION
-  "no certificate rules implemented")
+# Slice S7: the checker harness (acceptance tiers and mutation rejection) and the usage exit.
+if(Python3_Interpreter_FOUND)
+  add_test(NAME test_checker
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/checker/tests/test_checker.py)
+  set_tests_properties(test_checker PROPERTIES ENVIRONMENT "${CANON_E2E_ENV}")
+endif()
+add_test(NAME canon_check_usage COMMAND canon-check)
+set_tests_properties(canon_check_usage PROPERTIES WILL_FAIL TRUE)

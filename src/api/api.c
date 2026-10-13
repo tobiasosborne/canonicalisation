@@ -22,6 +22,7 @@
 #include "encoding/simple_upper.h"
 #include "object/subset.h"
 #include "perm/perm.h"
+#include "search/certificate.h"
 #include "search/objectives.h"
 #include "search/p1_tree.h"
 
@@ -34,6 +35,8 @@
 #define DEFAULT_MAX_NODES ((uint64_t)1 << 20)
 #define DEFAULT_MAX_REFS ((uint64_t)1 << 22)
 #define DEFAULT_MAX_LITERAL_BYTES ((uint64_t)1 << 26)
+/* docs/slices/S7.md 6.2 (D14): the default work policy is the S7 prune */
+#define DEFAULT_WORK_POLICY CANON_WORK_POLICY_PRUNE_1
 
 /* Largest chunk handed to a sink in one call (spec 17: ordered borrowed chunks). */
 #define SINK_CHUNK ((size_t)1 << 16)
@@ -64,6 +67,7 @@ struct canon_problem {
     const canon_object *target; /* S4: transporter target, shared, retained; else NULL */
     uint32_t *rho;              /* S6: owned copy of the labeling rho (labeling only); else NULL */
     canon_witness_mode witness_mode; /* S4 */
+    bool certificate;           /* S7: emit a certificate with the result */
     canon_objective objective;
     canon_profile profile;
     canon_encoding encoding;
@@ -75,6 +79,7 @@ struct canon_workspace {
     canon_refcount refs;
     canon_p1_search search; /* spec 17: one active owner; storage reused across solves */
     canon_obj_search obj;   /* S4: enumeration objectives and the deterministic witness */
+    canon_cert cert;        /* S7: certificate writer, storage reused across solves */
 };
 
 struct canon_result {
@@ -94,6 +99,8 @@ struct canon_result {
     uint32_t *labeling; /* S6: lambda = rho t (one spare entry for n = 0); NULL if none */
     uint32_t *rho;      /* S6: the problem's rho, for canon_result_verify_witness; else NULL */
     int sign;           /* S6: +1/-1 nonzero, 0 certified zero (SIGNED_CANONICAL_IMAGE) */
+    uint8_t *certificate; /* S7: the CERT-0 stream (owned copy); NULL if none */
+    size_t certificate_len;
     canon_objective objective;
     /* S4, for canon_result_verify_witness: the problem's immutable inputs, retained (owned
      * references, not borrowed pointers); NULL in a status-only result. */
@@ -130,6 +137,9 @@ static canon_capacity resolve_capacity(const canon_capacity *given, const canon_
         if (given->max_literal_bytes != 0) {
             c.max_literal_bytes = given->max_literal_bytes;
         }
+        if (given->work_policy != 0) {
+            c.work_policy = given->work_policy; /* S7, spec 11.1 */
+        }
     }
     return c;
 }
@@ -160,7 +170,8 @@ canon_status canon_context_create_with_options(const canon_capacity *defaults,
                                     DEFAULT_MAX_OUTPUT_BYTES,
                                     DEFAULT_MAX_NODES,
                                     DEFAULT_MAX_REFS,
-                                    DEFAULT_MAX_LITERAL_BYTES};
+                                    DEFAULT_MAX_LITERAL_BYTES,
+                                    DEFAULT_WORK_POLICY};
     canon_context *ctx = malloc(sizeof *ctx);
     if (ctx == NULL) {
         return CANON_RESOURCE_LIMIT;
@@ -235,6 +246,7 @@ void canon_workspace_release(canon_workspace *workspace)
     if (workspace != NULL && canon_ref_release(&workspace->refs)) {
         canon_p1_search_free(&workspace->search);
         canon_obj_search_free(&workspace->obj);
+        canon_cert_free(&workspace->cert);
         free(workspace);
     }
 }
@@ -256,6 +268,7 @@ void canon_result_release(canon_result *result)
         free(result->key);
         free(result->labeling);
         free(result->rho);
+        free(result->certificate);
         canon_group_unshare(result->group);
         object_unshare(result->object);
         object_unshare(result->target);
@@ -580,6 +593,19 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     if (objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE && group->signs == NULL) {
         return CANON_UNSUPPORTED_ACTION;
     }
+    canon_capacity cap = resolve_capacity(capacity, &ctx->defaults);
+    /* S7, spec 11.1: the work policy names a traversal; an unknown ID is "unsupported, never
+     * reinterpreted" (spec 4.1) */
+    if (cap.work_policy != CANON_WORK_POLICY_UNPRUNED && cap.work_policy != CANON_WORK_POLICY_PRUNE_1) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
+    /* S7: certificate v0 covers the canonical image of a subset or graph root (S7 brief 1) */
+    const bool certificate = options != NULL && options->certificate;
+    if (certificate && (objective != CANON_OBJECTIVE_CANONICAL_IMAGE ||
+                        (object->root.kind != CANON_ROOT_SUBSET &&
+                         object->root.kind != CANON_ROOT_GRAPH))) {
+        return CANON_UNSUPPORTED_ACTION;
+    }
     if (group->degree != object->root.n) {
         return CANON_INVALID_INPUT; /* group and object must act on the same domain */
     }
@@ -608,7 +634,6 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
          !canon_simple_upper_in_class(&object->root.u.graph))) {
         return CANON_UNSUPPORTED_ACTION;
     }
-    canon_capacity cap = resolve_capacity(capacity, &ctx->defaults);
     /* spec 11.1: "Validation is deterministic over the normalised input." */
     if (object->root.n > cap.max_n) {
         return CANON_CAPACITY_LIMIT;
@@ -709,6 +734,7 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
     object_share(object);
     object_share(target);
     pr->witness_mode = mode;
+    pr->certificate = certificate;
     pr->objective = objective;
     pr->profile = profile;
     pr->encoding = encoding;
@@ -734,6 +760,7 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out)
     canon_ref_init(&ws->refs);
     canon_p1_search_init(&ws->search); /* lazy: arrays are sized on the first solve */
     canon_obj_search_init(&ws->obj);
+    canon_cert_init(&ws->cert);
     *out = ws;
     return CANON_COMPLETE;
 }
@@ -767,6 +794,8 @@ typedef struct answer {
     const uint32_t *witness;                      /* NULL: not produced */
     const uint32_t *labeling;                     /* S6: lambda; NULL: not produced */
     int sign;                                     /* S6: signed objective only */
+    const uint8_t *certificate;                   /* S7: CERT-0 stream; NULL: none */
+    size_t certificate_len;
 } answer;
 
 static const canon_buf *if_set(bool set, const canon_buf *b)
@@ -810,6 +839,11 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
             memcpy(r->witness, a->witness, (size_t)n * sizeof *r->witness);
         }
     }
+    if (ok && a->certificate != NULL) {
+        /* S7: the certificate (owned copy, spec 17) */
+        ok = (r->certificate = copy_bytes(a->certificate, a->certificate_len)) != NULL;
+        r->certificate_len = a->certificate_len;
+    }
     if (ok && a->labeling != NULL) {
         /* S6: lambda, and rho for canon_result_verify_witness (owned copies) */
         ok = (r->labeling = canon_alloc_array(n, sizeof *r->labeling, &alloc)) != NULL &&
@@ -840,14 +874,31 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     return CANON_COMPLETE;
 }
 
-/* spec 7, 3: CANONICAL_IMAGE by the unpruned P1 tree; with the deterministic witness mode the
- * least element of A t (spec 3), A the complete stabiliser from the spec 8.2 consumer. */
+/* spec 7, 3: CANONICAL_IMAGE by the P1 tree under the descriptor's work policy (S7, spec
+ * 11.1: 0x0001 the unpruned reference traversal, 0x0002 the orbit prune of
+ * docs/pruning-rules.md), with a certificate when requested; with the deterministic witness
+ * mode the least element of A t (spec 3), A the complete stabiliser from the spec 8.2
+ * consumer. */
 static canon_status solve_canonical(canon_workspace *ws, const canon_problem *problem,
                                     canon_result **out)
 {
     canon_p1_search *s = &ws->search;
     const uint64_t quota = problem->capacity.max_search_nodes;
-    canon_status st = canon_p1_search_run(s, problem->group, &problem->object->root, quota);
+    canon_p1_run_options opt = {problem->capacity.work_policy == CANON_WORK_POLICY_PRUNE_1,
+                                NULL};
+    canon_status st = CANON_COMPLETE;
+    if (problem->certificate) {
+        /* spec 20: the producer's certificate names coverage, group verification, the
+         * symmetry rules and the final claim (src/search/certificate.h) */
+        st = canon_cert_begin(&ws->cert, problem->group, &problem->object->root,
+                              problem->capacity.work_policy);
+        opt.cert = &ws->cert;
+    } else {
+        canon_cert_reset(&ws->cert); /* no stale certificate survives in the workspace */
+    }
+    if (st == CANON_COMPLETE) {
+        st = canon_p1_search_run(s, problem->group, &problem->object->root, quota, &opt);
+    }
     const uint32_t *witness = s->best_t;
     if (st == CANON_COMPLETE && problem->witness_mode == CANON_WITNESS_DETERMINISTIC) {
         /* spec 11.1: one quota for the solve; the enumeration gets what P1 left */
@@ -855,9 +906,10 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
                                              s->best_t, quota - s->nodes);
         witness = ws->obj.best;
     }
-    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the full unpruned traversal
-     * (TRUSTED_ENGINE evidence): the witness is an element of G sending x to the returned
-     * image, the image is the P1 canonical image, and the encoding is complete. */
+    /* spec 3.2: COMPLETE for CANONICAL_IMAGE after the full traversal (TRUSTED_ENGINE
+     * evidence, or a certificate for the checker): the witness is an element of G sending x
+     * to the returned image, the image is the P1 canonical image, and the encoding is
+     * complete. */
     answer a;
     memset(&a, 0, sizeof a);
     a.flags.witness_valid = true;
@@ -866,6 +918,12 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
     a.trace = &s->best_trace;
     a.bytes = &s->best_bytes;
     a.witness = witness;
+    if (problem->certificate) {
+        a.certificate = canon_cert_bytes(&ws->cert, &a.certificate_len);
+        if (st == CANON_COMPLETE && a.certificate == NULL) {
+            st = CANON_INTERNAL_ERROR; /* a complete run with a certificate always finishes it */
+        }
+    }
     return finish_result(problem, st, &a, out);
 }
 
@@ -1041,6 +1099,23 @@ canon_status canon_result_sign(const canon_result *result, int *sign_out)
     }
     *sign_out = result->flags.zero_certified ? 0 : result->sign;
     return CANON_COMPLETE;
+}
+
+/* S7, spec 3.2, 20: the certificate of a complete result. */
+const uint8_t *canon_result_certificate(const canon_result *r, size_t *length)
+{
+    return r == NULL ? bytes_if(false, NULL, 0, length)
+                     : bytes_if(r->status == CANON_COMPLETE, r->certificate, r->certificate_len,
+                                length);
+}
+
+canon_evidence canon_result_evidence(const canon_result *result)
+{
+    size_t len = 0;
+    /* spec 3.2: "A valid witness alone never upgrades one to the other": only an attached
+     * certificate selects the checked mode, and only the checker's acceptance makes it so */
+    return canon_result_certificate(result, &len) != NULL ? CANON_EVIDENCE_CHECKED_CERTIFICATE
+                                                           : CANON_EVIDENCE_TRUSTED_ENGINE;
 }
 
 /* spec 3.1 (S6): lambda = rho t of a complete labeling-coset result. */

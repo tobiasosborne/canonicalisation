@@ -1,6 +1,6 @@
-# Handoff: canonicalisation, foundation slices S1–S6 on `main`
+# Handoff: canonicalisation, slices S1–S7 on `main`
 
-**State on 2 October 2026 (after a short follow-up session; the first implementation session ended 1 October).** Specification v2.1 (2 October 2026; v2.0 plus the editorial decisions listed under "Decisions taken on 2 October 2026" below, no golden value changed) is the normative document. The repository is scaffolded, has a [milestone plan](docs/implementation-plan.md) and a [detailed work-package plan](docs/detailed-implementation-plan.md), and is being implemented in **vertical slices** (detailed plan §0a): a written brief under `docs/slices/`, an Opus implementer, a separate high-effort code review, fixes, then landing on the working branch and fast-forwarding `main`. Slices **S1–S6 are landed, reviewed and on `main`**: every objective of spec §3 except the constraint predicates works end to end with oracle agreement. The **S7 brief is a draft for the maintainer's review** (`docs/slices/S7.md`): it carries the first pruning lemma and the certificate format and must not be implemented before that review. No Lean proofs, benchmarks or performance work exist, by decision. Read [README.md](README.md) first for what the project is; this file records state, decisions, constraints and next steps.
+**State on 12 October 2026 (after the S7 session; the 2 October follow-up and the first implementation session, ended 1 October, precede it).** Specification v2.1 (2 October 2026; v2.0 plus the editorial decisions listed under "Decisions taken on 2 October 2026" below, no golden value changed) is the normative document. The repository is scaffolded, has a [milestone plan](docs/implementation-plan.md) and a [detailed work-package plan](docs/detailed-implementation-plan.md), and is being implemented in **vertical slices** (detailed plan §0a): a written brief under `docs/slices/`, an implementer, a code review, fixes, then landing on the working branch and fast-forwarding `main`. Slices **S1–S7 are landed and on `main`**: every objective of spec §3 except the constraint predicates works end to end with oracle agreement, and the canonical image of a subset or graph can emit a certificate that the independent checker `canon-check` verifies. S7 was implemented by a single agent on the maintainer's instruction ("work alone"), with a self-review recorded in `docs/slices/S7-notes.md` instead of the separate review of S1–S6. No Lean proofs, benchmarks or performance work exist, by decision. Read [README.md](README.md) first for what the project is; this file records state, decisions, constraints and next steps.
 
 ## What works now (all through the public API and `tools/canon-cli`)
 
@@ -14,7 +14,9 @@
 
 | Typed labeling coset (λ = ρt, complete `Aλ` payload) and signed canonical image (characters validated by the §8.4 lift on both backends, §7.3 generator fast path, one-sided zero certificate with the odd automorphism as witness, nonzero via complete stabiliser, `00` payload, extended `verify_witness`) | S6 | Every ρ and every character on the T1 tier against the model, both backends; covariance `s(x^h) = χ(h)s(x)`; representative change and coordinate rename invariance |
 
-Still stubs: `CONSTRAINT_*`, `solve_batch`, checkpoints; the checker prints a placeholder until S7.
+| Orbit pruning of the canonical-image search by the input generators that fix `x` (rule P1-ORBIT-1, `docs/pruning-rules.md`), selected by the work-policy ID `0x0002` (default; `0x0001` is the unpruned reference), with the quota counting the explored nodes; certificate v0 (`CERT-0`) for the canonical image of a subset or graph; the independent checker `canon-check` (no shared code) replaying every refinement step from a verified chain per G stage, every automorphism and every child entry | S7 | Pruned and unpruned runs byte-identical on trace and bytes on every tier, both backends, identical deterministic witnesses; 1 822 certificates accepted (T1, G1, random groups on 5 and 6 points); 17 mutations rejected with the named reason; `Sym(6)` empty subset 1237 nodes unpruned against 6 pruned |
+
+Still stubs: `CONSTRAINT_*`, `solve_batch`, checkpoints. Certificates exist for `CANONICAL_IMAGE` on subset and graph roots only (v0).
 
 ## Process (follow it; it has caught an error in every brief so far)
 
@@ -24,7 +26,7 @@ Still stubs: `CONSTRAINT_*`, `solve_batch`, checkpoints; the checker prints a pl
 4. Run `/code-review high <base>..HEAD`; send every finding to the implementer; verify the fix commit the same way.
 5. Record the brief's errors the implementer found in the detailed plan; update README, HANDOFF and CLAUDE.md; commit; push the branch and fast-forward `main` (`git push origin HEAD:main`).
 
-Each slice has cost about 0.5–0.75 M subagent tokens and 40–60 minutes wall-clock including review and fixes. Reviews have found no mathematical defect so far; findings have been contract gaps, hot-path waste, lifetime hazards and duplication, all fixed within the slice.
+Each slice has cost about 0.5–0.75 M subagent tokens and 40–60 minutes wall-clock including review and fixes. Reviews have found no mathematical defect so far; findings have been contract gaps, hot-path waste, lifetime hazards and duplication, all fixed within the slice. S7 departed from steps 2 and 4 on the maintainer's instruction (one agent, no subagents); its self-review is in `docs/slices/S7-notes.md`. A later independent review of S7 (`/code-review high` on the S7 commits) remains advisable before the M4 gate.
 
 ## Standing constraints
 
@@ -41,14 +43,15 @@ Each slice has cost about 0.5–0.75 M subagent tokens and 40–60 minutes wall-
 | [docs/specification.md](docs/specification.md) | Architecture/implementation specification v2.0 (normative) |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | Milestones M0–M8, H0/H1, gates, obligations ledger, effort judgments |
 | [docs/detailed-implementation-plan.md](docs/detailed-implementation-plan.md) | Work packages, internal interfaces, decided policies, §0a slice process and schedule, WP0.9 external oracle tier, corrections found during slices |
-| `docs/slices/` | Briefs `S1.md`–`S7.md` (S7 is a draft) and notes `S1-notes.md`–`S5-notes.md` (spec readings, deviations, review fixes, counters, what was left out) |
+| `docs/slices/` | Briefs `S1.md`–`S7.md` and notes `S1-notes.md`–`S7-notes.md` (spec readings, deviations, review fixes, counters, what was left out); `S8-batch-reading.md` |
+| [docs/pruning-rules.md](docs/pruning-rules.md) | Every prune of the P1 search with its coverage lemma, objective scope, quota rule and checker rule (S7: P1-ORBIT-1) |
 | [docs/performance-lower-bounds.md](docs/performance-lower-bounds.md) | Hardware model, U/A/H bound taxonomy, envelopes |
 | `reviews/` | Referee report on v1.0, response, literature audits, TensorGR learnings |
 | `include/canon/canon.h` | Public header: statuses, objective tags, frozen IDs, opaque handles, the S1–S5 API (provisional until M4) |
-| `src/<module>/` | perm, bsgs (chain, verify, provenance, conjugate, explicit), coset (descent, enumerator), object (subset, graph, dag, root dispatch), encoding (wire, Nat, streams, Group/Perm, SIMPLE-UPPER-1, CDAG-2 encoder/decoder/validator), partition, refine (P1 stages), search (P1 tree, objectives), api, arena, util; scheduler, checkpoint, metrics, symmetry, cpu_dispatch are READMEs only |
-| `checker/` | Independent checker stub (shares no code with `src/`; S7 fills it) |
-| `tools/` | `canon-cli` (every objective, both backends, FORMAT records, `validate`), `hexdump_stream.py` (strict CDAG-2 dumper) |
-| `tests/c/`, `tests/python/` | 26 C test programs; `test_e2e.py` tiers T1, G1, G2, S4 objectives, D1, under both backends; golden vectors; dumper and compare tests |
+| `src/<module>/` | perm, bsgs (chain, verify, provenance, conjugate, explicit; stored generators), coset (descent, enumerator), object (subset, graph, dag, root dispatch), encoding (wire, Nat, streams, Group/Perm, SIMPLE-UPPER-1, CDAG-2 encoder/decoder/validator), partition, refine (P1 stages, observer), search (P1 tree with orbit pruning, certificate writer, objectives), symmetry (A_known, prefix stabilisers, cell orbits), api, arena, util; scheduler, checkpoint, metrics, cpu_dispatch are READMEs only |
+| `checker/` | The independent checker `canon-check` (six C17 sources, no shared code with `src/`; `README.md` restates the `CERT-0` format and the rules) and its harness `tests/test_checker.py` |
+| `tools/` | `canon-cli` (every objective, both backends, FORMAT records, `validate`, `--prune`, `--certificate`), `hexdump_stream.py` (strict CDAG-2 dumper) |
+| `tests/c/`, `tests/python/` | 29 C test programs (32 ctest entries with the Python ones); `test_e2e.py` tiers T1, G1, G2, S4 objectives, D1, L1, Z1, P1-prune, under both backends; golden vectors; dumper and compare tests |
 | [refs/](refs/README.md) | M0 blind protocol, `SEALS.md` (empty), seven-field `FORMAT.md`, `compare.py` with `--plant`, `vectors/golden.json` (spec §7.4, test-verified) |
 | [checks/review_checks.py](checks/review_checks.py) | Finite sanity checks and the Python P1 model the e2e tiers compare against (not a blind reference) |
 | `review_sources/` | Provenance only |
@@ -68,6 +71,7 @@ Each slice has cost about 0.5–0.75 M subagent tokens and 40–60 minutes wall-
 | `563d799`, `82e3567` | S7 draft brief; HANDOFF rewrite |
 | S6 commits and the "Land slice S6" commit | See `git log`; the latest on `main` at the time of writing |
 | 2 October 2026 commits | Signed-route sift (`cd7a5eb`), blind brief and schema, batch reading, spec v2.1 (SHA-256 `b4e23af1a9acb820e5bb42abc68ed34e39142033fd44e76879c21c4ee0e65b33`), S7/S8 decisions, maintainer answers |
+| 12 October 2026 commits | Slice S7: pruning, certificates, checker (see `git log`) |
 
 The pre-publication history with third-party files is in `~/Projects/canonicalisation-pre-publication-2026-09-30.bundle` on the maintainer's machine; never push it. Local copies of the sources remain git-ignored under `review_sources/`.
 
@@ -81,6 +85,15 @@ The pre-publication history with third-party files is in `~/Projects/canonicalis
 6. **Output size.** Exact stream length for subsets, graphs and nested objects with tags 01–06; the §9.4 bound for subgroup and coset leaves, whose payload length is not invariant under conjugation (S5 counterexample: C₄ on 4 points).
 7. **Group leaves.** Verified chains are stored in the arena and conjugated with `canon_bsgs_conjugate` on the action path, never rebuilt per tree node.
 8. **Costs accepted for now (M5 work):** one chain rebuild per step of `tuple_min` and of the coset descent; transient chains in the §9.4 writers; on the signed route each hit is sifted through `A_known` before χ (2 October 2026 follow-up: 264 verified rebuilds instead of 476 on T1, outputs identical) at one extra sift per even non-member; the sanitizer e2e runtime is kept near four minutes by `CANON_E2E_FAST` seeded subsets, while `make check` runs every tier in full (about 105 s).
+
+## Decisions taken in S7 (12 October 2026; details in `docs/slices/S7-notes.md`)
+
+1. The certificate's node records carry a sweep count and explicit child points, so the checker never depends on the engine's internal cell member order; the final claim carries the explored-node count, checked against the policy.
+2. The automorphism table lists the inserted input generators and one explicit transporter per pruned child (a product of `A_known`'s generators read off the Schreier tree); the checker verifies each by its own sift and action and needs no orbit computation.
+3. Every group handle keeps a copy of its input generators (both backends).
+4. Policy `0x0002` prunes `CANONICAL_IMAGE` only; the labeling and signed P1 runs and every enumeration stay unpruned under both policies.
+5. A result with a certificate reports evidence mode `CHECKED_CERTIFICATE`, meaning "a certificate for the independent checker is attached"; only `canon-check`'s acceptance makes the claim checked.
+6. A requested certificate that cannot be written fails the solve (`RESOURCE_LIMIT`/`CAPACITY_LIMIT`); it is never dropped silently.
 
 ## Decisions taken on 2 October 2026 (maintainer, on the session's recommendations)
 
@@ -98,7 +111,7 @@ The pre-publication history with third-party files is in `~/Projects/canonicalis
 
 ## Open items, in order
 
-1. **S7 (decided 2 October 2026, ready to implement after the S8 batch reading is folded in).** The three open points are settled in `docs/slices/S7.md` §6: the quota under pruning counts the nodes explored under the fixed sequential prune policy, selected by a work-policy ID in the capacity descriptor (`0x0001` unpruned reference, `0x0002` the S7 policy; the profile ID stays `0x0001` because the outputs are P1's), and parallel modes must reproduce that count (spec §11.1 v2.1); certificate v0 embeds a rebased chain per G stage; implicit automorphism discovery from equal leaf keys is deferred to its own slice S7b.
+1. **S7b (next slice candidate): implicit automorphisms** from equal leaf keys (source ii of `docs/pruning-rules.md`, soundness argument recorded there), with their certificate representation; and an **independent review of S7** (`/code-review high` over the S7 commits), since S7 had none. **Certificate v1** (enumeration, labeling and signed objectives; nested roots) is scheduled with the coverage rules of spec §8.2.
 2. **S8:** capacity admission and live-memory ledger, metrics, `solve_batch`, sink pause/resume, fault injection and fuzzing (detailed plan §0a schedule). `docs/slices/S8-batch-reading.md` (2 October 2026) quotes every spec sentence on batches: §17 pins per-input statuses and input order; the overall status, stop-or-continue, call-level errors, admission scope and execution mode are open and must be decided in the S8 brief.
 3. **External oracle tier (detailed plan WP0.9), needs the user's go-ahead for acquisition:** GAP with the `images` package first, SymPy second, nauty third, xperm with the tensor wrapper; each pinned in `SOURCES.json`; none checks P1 traces or bytes.
 4. **M0 blind reference (brief answered 2 October 2026, ready to commission).** `refs/BRIEF.md` carries the maintainer's answers to its fourteen questions and `refs/CASES.md` is the definitive case schema (golden.json field names; WP0.2 amended). Decisions: ref-a is the sealed snapshot of the unpruned C path, recorded in `refs/SEALS.md` as not blind with respect to `checks/` and `tools/`; ref-b in Julia carries its own minimal JSON parser (no downloads); every M0 case requests the deterministic witness; the nine flags are out of M0 scope; the spec readings the brief asked about are now stated in spec v2.1 rather than told to the authors. Next: commission ref-b from an author who has not seen `src/`, `checks/`, `tools/` or `tests/`.
@@ -106,10 +119,10 @@ The pre-publication history with third-party files is in `~/Projects/canonicalis
 6. **Spec v2.1 (applied 2 October 2026).** Items (a), (b), (d), (e), (f), (g), (h) and (i) of the earlier list are now stated in the spec: §9.1 verifier nesting condition; `Group(1)` is `01 00000000` for every degree; cycle conjugation for the convention vector; status values 0–7 in listed order; `SIMPLE-UPPER-1` for n ≤ 1 is `U32(n)` alone; rule-1 Group blocks are disjoint and ordered; the labeling stabiliser is reported on Ω; the quota counts the traversal named by the descriptor's work-policy ID (root shortcuts visit no nodes; `0x0001` is the unpruned reference; a count-changing prune policy has its own ID and the profile ID names output semantics only). §17 now carries the `solve_batch` contract (call-level `INVALID_INPUT` only for NULL workspace or arrays or size overflow; otherwise every input attempted in order with its own status; `COMPLETE` iff every input was attempted; admission per input). Still open: (c) the DAG golden case's trace and witness are stated only by reference; the signed labeling orientation σ_ρ remains deferred (an implementation may return `UNSUPPORTED_ACTION`). `docs/implementation-plan.md` still says "aligned with v2.0"; nothing in it changes.
 7. **Earlier open items unchanged:** the engineering-appendix decision (restore v1.0's engineering guidance or record it as dropped); H0 (retrieve the `hex` repositories at pinned commits, needs network); named obligations SIGN-COVER, PROFILE-EQUIV, ADAPTER-FAITHFUL, GROUP-CERT, RUNTIME-REFINE, SOURCE-GATE; Lean (M1) after the foundation slices.
 
-Do not start S7 or a new research cycle without the user's direction.
+Do not start S7b, S8 or a new research cycle without the user's direction.
 
 ## Validation record
 
 - **Finite checks.** `nice -n 19 python3 checks/review_checks.py` passes (40 subgroups at degrees 0–4; 3,536 leaf identities; 2,997 coset partitions; 2,059 normalisation cases; 361 graph-prefix cases; 143 subset and 494 digraph P1 transports; 307 labeling cases; 95 signed cases; 16 golden checks; 10 greedy sequences). Sanity checks, not proofs; the file is unmodified since publication.
-- **Slices (state after S6).** `make` and `make CC=clang`: zero diagnostics under `-Werror`. `make SANITIZE=1 test`: 29 C tests clean under ASan/UBSan (gcc; the local clang has no ASan runtime, CI covers it). `make check`: finite checks plus 52 Python tests under the chain backend and 32 under the explicit backend, about 100 s. CMake with `CANON_SANITIZE=ON` and `ctest`: 32 of 32; the sanitizer e2e tiers run reduced seeded subsets under `CANON_E2E_FAST` to keep that run near five minutes (see `tests/python/README.md`). Every tier is byte-identical with the Python model under both backends; pruned paths do not exist yet.
+- **Slices (state after S7).** `make` and `make CC=clang`: zero diagnostics under `-Werror`. `make SANITIZE=1 test`: 32 C tests clean under ASan/UBSan (gcc). `make check`: finite checks, the Python tests under the chain backend and the e2e file under the explicit backend, then the checker harness (1 822 certificates accepted, 17 mutations rejected). CMake with `CANON_SANITIZE=ON` and `ctest`: 36 of 36 in about 325 s (`test_e2e` 145 s, `test_e2e_explicit` 140 s, `test_checker` 9 s); the sanitizer e2e and checker tiers run reduced seeded subsets under `CANON_E2E_FAST` (see `tests/python/README.md`). Every model tier is byte-identical with the Python model under both backends under work policy `0x0001`; the pruned policy `0x0002` agrees with it on trace and bytes on every tier and on the deterministic witness.
 - **Hand verification and provenance.** As recorded at publication: every §7.4 golden case re-derived by hand; `fetch_sources.py` reports 150/150 OK on the maintainer's machine; all relative links resolve.

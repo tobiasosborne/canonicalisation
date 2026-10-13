@@ -330,9 +330,11 @@ int main(void)
         canon_result_release(r2);
     }
 
-    /* spec 11.1: logical work quota.  The n=2 empty subset under Sym(2) has 3 NODE tokens. */
+    /* spec 11.1: logical work quota.  The n=2 empty subset under Sym(2) has 3 NODE tokens
+     * under the unpruned reference traversal (work policy 0x0001, set explicitly: S7's default
+     * policy prunes the second child, docs/pruning-rules.md, and explores 2 nodes). */
     {
-        canon_capacity cap = {0, 0, 2, 0, 0, 0, 0};
+        canon_capacity cap = {0, 0, 2, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
         canon_result *r = NULL;
         CHECK(solve_case(ctx, ws, &cases[3], &cap, &r) == CANON_CAPACITY_LIMIT);
         CHECK(r != NULL);
@@ -361,10 +363,10 @@ int main(void)
     /* spec 11.1: degree, group order and output byte limits at problem time. */
     {
         canon_result *r = NULL;
-        canon_capacity cap = {1, 0, 0, 0, 0, 0, 0};
+        canon_capacity cap = {1, 0, 0, 0, 0, 0, 0, 0};
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
         CHECK(r == NULL);
-        cap = (canon_capacity){0, 1, 0, 0, 0, 0, 0};
+        cap = (canon_capacity){0, 1, 0, 0, 0, 0, 0, 0};
         /* S3 brief 2.5: max_group_order bounds the explicit backend only, so this S1 check
          * selects it; the default chain backend admits the problem. */
         const canon_context_options explicit_backend = {CANON_BACKEND_EXPLICIT};
@@ -375,14 +377,14 @@ int main(void)
         canon_context_release(ectx);
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_COMPLETE);
         canon_result_release(r);
-        cap = (canon_capacity){0, 0, 0, 32, 0, 0, 0}; /* one-atom stream is 33 bytes */
+        cap = (canon_capacity){0, 0, 0, 32, 0, 0, 0, 0}; /* one-atom stream is 33 bytes */
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_CAPACITY_LIMIT);
-        cap = (canon_capacity){0, 0, 0, 33, 0, 0, 0};
+        cap = (canon_capacity){0, 0, 0, 33, 0, 0, 0, 0};
         CHECK(solve_case(ctx, ws, &cases[1], &cap, &r) == CANON_COMPLETE);
         canon_result_release(r);
         /* Context-level limits apply to the builders. */
         canon_context *small = NULL;
-        canon_capacity d = {1, 1, 0, 0, 0, 0, 0};
+        canon_capacity d = {1, 1, 0, 0, 0, 0, 0, 0};
         /* S3 brief 2.5: the group-order limit is the explicit backend's (see above). */
         CHECK(canon_context_create_with_options(&d, &explicit_backend, &small) ==
               CANON_COMPLETE);

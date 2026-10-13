@@ -2,7 +2,7 @@
 
 ## Project summary
 - An exact, dependency-free C17 library (`canon`) for canonical forms of objects under finite permutation groups, with a frozen wire format (`CDAG-2`) and an independent certificate checker.
-- Design-stage: `docs/specification.md` (v2.1, 2 October 2026) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage), S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) S4 (coset enumeration objectives, canonical Group bytes), S5 (nested objects, CDAG-2 decoder and validator) and S6 (labeling cosets, signed images) have landed; the constraint objectives, solve_batch and checkpoints are stubs returning UNSUPPORTED_ACTION; the checker is a placeholder until S7.
+- Design-stage: `docs/specification.md` (v2.1, 2 October 2026) is **normative**; `docs/implementation-plan.md` owns milestones M0-M8. Delivery is by vertical slices (`docs/detailed-implementation-plan.md` §0a; briefs under `docs/slices/`). S1 (subset canonical image through the public API and `canon-cli`), S2 (coloured directed multigraphs, O stage), S3 (verified stabiliser chain as the default group backend; explicit backend as oracle) S4 (coset enumeration objectives, canonical Group bytes), S5 (nested objects, CDAG-2 decoder and validator), S6 (labeling cosets, signed images) and S7 (orbit pruning under a work-policy ID, certificate v0, the independent checker `canon-check`; rules in `docs/pruning-rules.md`) have landed; the constraint objectives, solve_batch and checkpoints are stubs returning UNSUPPORTED_ACTION; certificates cover the canonical image of subsets and graphs only.
 - Read `README.md` and `HANDOFF.md` first. Do not start a new research cycle without the user's direction.
 
 ## Standing constraints (from HANDOFF.md)
@@ -23,11 +23,12 @@ make SANITIZE=1 BUILD=build/san test        # address,undefined
 cmake -S . -B build && cmake --build build && ctest --test-dir build   # parallel definition
 nice -n 19 python3 -m unittest discover -s tests/python -q
 nice -n 19 python3 checks/review_checks.py                              # finite sanity checks (~0.6 s)
+nice -n 19 python3 checker/tests/test_checker.py                        # certificates through the CLI into canon-check
 python3 review_sources/fetch_sources.py                                 # offline provenance check
 ```
 
 ## Layout
-`include/canon/` public headers; `src/<module>/` one directory per spec §5 module (api, object, encoding, perm, bsgs, coset, partition, refine, search, symmetry, scheduler, arena, checkpoint, cpu_dispatch, metrics); `checker/` independent certificate checker (must not link the library or include `src/`); `refs/` M0 blind references, oracle, comparison and golden vectors; `tests/c`, `tests/python`; `tools/`; `bench/`; `lean/` (skeleton, not built); `docs/`, `reviews/`, `checks/`, `review_sources/` (coordinator-owned, do not edit without being asked).
+`include/canon/` public headers; `src/<module>/` one directory per spec §5 module (api, object, encoding, perm, bsgs, coset, partition, refine, search, symmetry, scheduler, arena, checkpoint, cpu_dispatch, metrics); `checker/` independent certificate checker `canon-check` (must not link the library or include `src/`; its own tests under `checker/tests/`); `refs/` M0 blind references, oracle, comparison and golden vectors; `tests/c`, `tests/python`; `tools/`; `bench/`; `lean/` (skeleton, not built); `docs/`, `reviews/`, `checks/`, `review_sources/` (coordinator-owned, do not edit without being asked).
 
 ## Rules for code
 - **The spec is normative; code must cite the spec section in a comment at each rule it implements** (e.g. `/* spec 7.2: leaf map */`). If the spec is ambiguous, stop and report the quoted sentence; do not guess.
@@ -35,4 +36,5 @@ python3 review_sources/fetch_sources.py                                 # offlin
 - Permutation convention: `p[v] = v^p`, `(pq)[v] = q[p[v]]`. Test array direction, product order and inverses explicitly.
 - Do not modify `docs/specification.md`, `docs/implementation-plan.md`, `docs/performance-lower-bounds.md`, `reviews/*`, `review_sources/*`, `LICENSE` or `checks/review_checks.py` unless the user asks.
 - C17 only; no external dependencies; check sizes, overflow, aliasing and ownership; wire streams never dump structs.
-- Every faster path must reproduce P1 exactly or carry a new profile ID (PROFILE-EQUIV); never claim stronger completeness than the evidence supports.
+- Every faster path must reproduce P1 exactly or carry a new profile ID (PROFILE-EQUIV); never claim stronger completeness than the evidence supports. A prune needs its coverage lemma in `docs/pruning-rules.md` and a checker rule before it is enabled; a prune that changes the node count needs its own work-policy ID (spec §11.1).
+- The checker is written from the specification only: never copy producer code into `checker/`, and keep `checker/` free of includes from `src/` and `include/`.
