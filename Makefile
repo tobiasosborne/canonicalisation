@@ -35,7 +35,7 @@ LIB_SRC  = src/api/version.c src/api/stubs.c src/api/api.c \
            src/coset/least.c src/coset/enumerate.c src/partition/partition.c \
            src/util/sort.c \
            src/refine/p1.c src/search/p1_tree.c src/search/objectives.c \
-           src/search/certificate.c src/symmetry/symmetry.c
+           src/search/certificate.c src/symmetry/symmetry.c src/arena/mem.c
 LIB_OBJ  = $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB      = $(BUILD)/libcanon.a
 # Unit tests that may include internal headers from src/ (tests/c/README.md).
@@ -45,14 +45,20 @@ UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition te
              test_coset_least test_enumerate test_group_stream test_objectives \
              test_dag test_cdag_decode test_dag_action test_search_dag \
              test_signed_group test_labeling test_signed \
-             test_symmetry test_prune test_certificate
+             test_symmetry test_prune test_certificate \
+             test_sink test_batch test_metrics test_faults
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
 FORMAT_FILES = $(shell find include src checker tests/c tools -name '*.c' -o -name '*.h' 2>/dev/null)
 
-.PHONY: all test check format clean
-all: $(LIB) $(CHECKER) $(CLI) $(TESTS)
+# Slice S8 fuzz targets: libFuzzer entry points with a deterministic replay driver (fuzz/run.sh);
+# the checker target compiles the checker's own sources and nothing from src/.
+FUZZ     = $(BUILD)/fuzz_cdag_decode $(BUILD)/fuzz_checker
+FUZZ_ITER ?= 2000
+
+.PHONY: all test check format clean fuzz
+all: $(LIB) $(CHECKER) $(CLI) $(TESTS) $(FUZZ)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -82,8 +88,18 @@ $(BUILD)/test_header_abi: tests/c/test_header_abi.c $(LIB)
 $(UNIT_TESTS:%=$(BUILD)/%): $(BUILD)/%: tests/c/%.c tests/c/check.h tests/c/t1_groups.h $(LIB)
 	$(CC) $(CFLAGS) -Iinclude -Isrc $< $(LIB) -o $@ $(LDFLAGS)
 
+$(BUILD)/fuzz_cdag_decode: fuzz/fuzz_cdag_decode.c fuzz/fuzz_driver.h $(LIB)
+	$(CC) $(CFLAGS) -DCANON_FUZZ_MAIN -Iinclude $< $(LIB) -o $@ $(LDFLAGS)
+
+$(BUILD)/fuzz_checker: fuzz/fuzz_checker.c fuzz/fuzz_driver.h $(filter-out checker/main.c,$(CHECKER_SRC)) checker/cc.h
+	$(CC) $(CFLAGS) -DCANON_FUZZ_MAIN $< $(filter-out checker/main.c,$(CHECKER_SRC)) -o $@ $(LDFLAGS)
+
 test: all
 	@set -e; for t in $(TESTS); do echo "run $$t"; $$t; done
+	nice -n 19 sh fuzz/run.sh $(BUILD) $(FUZZ_ITER)
+
+fuzz: $(FUZZ) $(CLI)
+	nice -n 19 sh fuzz/run.sh $(BUILD) $(FUZZ_ITER)
 
 # make check builds the CLI first: tests/python/test_e2e.py drives it through CANON_CLI.
 # The discover run uses the default (chain) group backend; the second run repeats the CLI end

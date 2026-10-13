@@ -1,5 +1,6 @@
 /* Root-object dispatch (spec sections 2.1, 4.1, 4.2, 7.1, 11.1). */
 #include "object/object.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -67,8 +68,8 @@ static canon_status reserve_subset(canon_root_image *img, uint32_t n)
     uint32_t *atoms = canon_alloc_array(n, sizeof *atoms, &st);
     uint64_t *bits = canon_alloc_array(canon_bitset_words(n), sizeof *bits, &st);
     if (atoms == NULL || bits == NULL) {
-        free(atoms);
-        free(bits);
+        canon_mem_free(atoms);
+        canon_mem_free(bits);
         return st;
     }
     canon_root_image_free(img);
@@ -229,7 +230,7 @@ static canon_status root_from_dag(canon_root *x, canon_dag *d)
                 atoms[j] = canon_dag_atom(d, d->child[top->child_off + j]);
             }
             st = canon_subset_init(&x->u.subset, n, atoms, top->child_count);
-            free(atoms);
+            canon_mem_free(atoms);
         }
         if (st == CANON_COMPLETE) {
             x->kind = CANON_ROOT_SUBSET;
@@ -241,7 +242,7 @@ static canon_status root_from_dag(canon_root *x, canon_dag *d)
          * item 7) */
         if (d->graph != NULL) {
             x->u.graph = *d->graph; /* moved: the arrays now belong to the root */
-            free(d->graph);
+            canon_mem_free(d->graph);
             d->graph = NULL;
             x->kind = CANON_ROOT_GRAPH;
         } else {

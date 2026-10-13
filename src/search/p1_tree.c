@@ -2,6 +2,7 @@
  * reference traversal (slices S1, S2) and, from slice S7, orbit pruning by prefix-fixing
  * automorphisms (docs/pruning-rules.md) with certificate emission (src/search/certificate.h). */
 #include "search/p1_tree.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +26,8 @@ void canon_p1_search_init(canon_p1_search *s)
 static void free_arrays(canon_p1_search *s)
 {
     canon_partition_free(&s->part);
-    free(s->snaps);
-    free(s->leaf_t); /* one block: leaf_t, best_t, prefix, aut, inv, roots */
+    canon_mem_free(s->snaps);
+    canon_mem_free(s->leaf_t); /* one block: leaf_t, best_t, prefix, aut, inv, roots */
     s->snaps = NULL;
     s->snap_alloc = 0;
     s->leaf_t = s->best_t = s->prefix = s->aut = s->inv = NULL;
@@ -39,7 +40,7 @@ static void free_arrays(canon_p1_search *s)
 void canon_p1_search_free(canon_p1_search *s)
 {
     free_arrays(s);
-    free(s->reps);
+    canon_mem_free(s->reps);
     s->reps = NULL;
     s->reps_alloc = 0;
     canon_p1_scratch_free(&s->scratch);
@@ -123,7 +124,7 @@ static canon_status stack_slot(uint32_t **stack, size_t *alloc, size_t words, ui
         if (!canon_size_mul(grown_words, sizeof(uint32_t), &bytes)) {
             return CANON_CAPACITY_LIMIT;
         }
-        uint32_t *grown = realloc(*stack, bytes);
+        uint32_t *grown = canon_mem_realloc(*stack, bytes);
         if (grown == NULL) {
             return CANON_RESOURCE_LIMIT;
         }
@@ -453,20 +454,35 @@ static canon_status visit(canon_p1_search *s, const canon_group *g, const canon_
 
 /* spec 7.3 source (i) of A_known (S7 brief 3.1): every input generator of G that fixes x,
  * checked by exact action, is inserted into the verified subgroup (and listed in the
- * certificate).  Generators that move x are skipped. */
+ * certificate).  Generators that move x are skipped.  Without `insert` (the unpruned
+ * reference run without a certificate) only the action is checked, for the spec 7.3
+ * singleton-orbit indicator ("Record root-discrete and singleton-orbit frequencies
+ * separately"): s->fixing counts the generators that fix x. */
 static canon_status root_automorphisms(canon_p1_search *s, const canon_group *g,
-                                       const canon_root *x)
+                                       const canon_root *x, bool insert)
 {
+    s->fixing = 0;
     for (uint32_t k = 0; k < g->gens.count; ++k) {
         const uint32_t *gen = canon_perm_table_row(&g->gens, k);
         bool inserted = false;
-        canon_status st = canon_symmetry_insert(&s->sym, x, &s->image, gen, &inserted);
+        canon_status st;
+        if (!insert) {
+            st = canon_root_act_into(x, gen, &s->image); /* spec 2.1 action */
+            if (st != CANON_COMPLETE) {
+                return st;
+            }
+            s->fixing += canon_root_equal(&s->image.root, x);
+            canon_root_image_clear(&s->image);
+            continue;
+        }
+        st = canon_symmetry_insert(&s->sym, x, &s->image, gen, &inserted);
         if (st == CANON_INVALID_INPUT) {
             continue; /* x^gen != x: not an automorphism */
         }
         if (st != CANON_COMPLETE) {
             return st;
         }
+        s->fixing += 1;
         if (inserted && s->cert != NULL) {
             uint32_t index = 0;
             st = canon_cert_automorphism(s->cert, gen, &index);
@@ -503,10 +519,10 @@ canon_status canon_p1_search_run(canon_p1_search *s, const canon_group *g, const
     canon_buf_truncate(&s->best_trace, 0);
     canon_buf_truncate(&s->best_bytes, 0);
     st = canon_symmetry_reset(&s->sym, x->n);
-    if (st == CANON_COMPLETE && (s->prune || s->cert != NULL)) {
-        /* A_known is needed by the prune; the certificate lists its generators too.  A
-         * certificate writer that has already failed records nothing. */
-        st = root_automorphisms(s, g, x);
+    if (st == CANON_COMPLETE) {
+        /* A_known is needed by the prune; the certificate lists its generators too; the
+         * reference run only counts the fixing generators (S8 metrics). */
+        st = root_automorphisms(s, g, x, s->prune || s->cert != NULL);
     }
     if (st == CANON_COMPLETE) {
         /* spec 7.1 root: initial key partition; spec 7.2: n = 0 gives an empty list and the

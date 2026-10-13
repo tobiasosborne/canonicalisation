@@ -6,6 +6,7 @@
  * Slice S6: a signed group (spec 8.4) also keeps the verified chain of its lifted group on
  * n + 2 points, from which `character` reads chi; `conjugate` relabels the chain (spec 3.1). */
 #include "bsgs/chain_backend.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 
@@ -25,9 +26,9 @@ static void chain_destroy(void *impl)
         canon_bsgs_free(&c->chain);
         if (c->lift != NULL) {
             canon_bsgs_free(c->lift);
-            free(c->lift);
+            canon_mem_free(c->lift);
         }
-        free(c);
+        canon_mem_free(c);
     }
 }
 
@@ -112,7 +113,7 @@ static canon_status chain_conjugate(const canon_group *group, const uint32_t *g,
     c->lift = NULL; /* the conjugate is unsigned (signed labeling: deferred, S6 notes) */
     st = canon_bsgs_conjugate(chain(group), g, &c->chain);
     if (st != CANON_COMPLETE) {
-        free(c); /* canon_bsgs_conjugate left the chain empty */
+        canon_mem_free(c); /* canon_bsgs_conjugate left the chain empty */
         return st;
     }
     return wrap(c, group->degree, out);
@@ -159,7 +160,7 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
      * constructor (src/bsgs/verify.c). */
     st = canon_bsgs_build_verified(&c->chain, degree, generators, count);
     if (st != CANON_COMPLETE) {
-        free(c); /* the build left the chain empty */
+        canon_mem_free(c); /* the build left the chain empty */
         return st;
     }
     if (is_signed) {
@@ -176,13 +177,13 @@ static canon_status create(uint32_t degree, const uint32_t *generators, size_t g
         if (c->lift != NULL) {
             st = canon_bsgs_build_verified(c->lift, degree + 2u, lifted, generator_count);
             if (st != CANON_COMPLETE) {
-                free(c->lift); /* left empty by the build */
+                canon_mem_free(c->lift); /* left empty by the build */
                 c->lift = NULL;
             } else if (c->lift->order != c->chain.order) {
                 st = CANON_INVALID_INPUT; /* spec 8.4: "Reject inconsistent signs" */
             }
         }
-        free(lifted);
+        canon_mem_free(lifted);
         if (st != CANON_COMPLETE) {
             chain_destroy(c);
             return st;

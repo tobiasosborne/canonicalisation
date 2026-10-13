@@ -179,6 +179,11 @@ canon_status canon_bsgs_conjugate(const canon_bsgs *src, const uint32_t *g, cano
  * orbit_id[v] = rank of the orbit of v, orbits ranked by their least point. */
 void canon_bsgs_orbit_ids(const canon_bsgs *c, uint32_t level, uint32_t *orbit_id);
 
+/* spec 11.2 (slice S8): the bytes the chain's storage holds (levels, tables, provenance,
+ * inputs), the measured term the admission plan charges for the group and for every chain
+ * derived from it. */
+uint64_t canon_bsgs_bytes(const canon_bsgs *c);
+
 /* spec 7.2 tuple minimum (and spec 7.1 G stage): see canon_group_ops.tuple_min in
  * src/bsgs/group.h for the contract; c must be a verified chain.  CANON_INVALID_INPUT for an
  * entry of L >= n, CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure.  The

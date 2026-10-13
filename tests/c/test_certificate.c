@@ -127,7 +127,7 @@ typedef struct built {
 static canon_result *solve(const built *b, bool certificate, canon_objective objective,
                            uint16_t policy, canon_status *st)
 {
-    canon_capacity cap = {0, 0, 0, 0, 0, 0, 0, policy};
+    canon_capacity cap = {0, 0, 0, 0, 0, 0, 0, policy, 0};
     canon_problem_options opts = {CANON_WITNESS_ANY, NULL, certificate};
     canon_problem *p = NULL;
     canon_workspace *ws = NULL;
@@ -275,7 +275,7 @@ static void statuses(void)
     /* a capacity-limited run has no certificate */
     CHECK(canon_object_create_subset(ctx, 2, NULL, 0, &b.x) == CANON_COMPLETE);
     {
-        canon_capacity cap = {0, 0, 1, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
+        canon_capacity cap = {0, 0, 1, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
         canon_problem_options opts = {CANON_WITNESS_ANY, NULL, true};
         canon_problem *p = NULL;
         canon_workspace *ws = NULL;

@@ -1,5 +1,6 @@
 /* Ordered partitions (spec sections 7.1, 10, 11.2). */
 #include "partition/partition.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -56,13 +57,13 @@ canon_status canon_partition_init(canon_partition *p, uint32_t cap)
         !canon_size_mul(entries, sizeof(canon_partition_pair), &pair_bytes)) {
         return CANON_CAPACITY_LIMIT; /* spec 11.1 */
     }
-    p->lab = malloc(bytes);
-    p->pos = malloc(bytes);
-    p->cell_of = malloc(bytes);
-    p->start = malloc(start_bytes);
-    p->new_start = malloc(start_bytes);
-    p->pairs = malloc(pair_bytes);
-    p->pairs_tmp = malloc(pair_bytes);
+    p->lab = canon_mem_malloc(bytes);
+    p->pos = canon_mem_malloc(bytes);
+    p->cell_of = canon_mem_malloc(bytes);
+    p->start = canon_mem_malloc(start_bytes);
+    p->new_start = canon_mem_malloc(start_bytes);
+    p->pairs = canon_mem_malloc(pair_bytes);
+    p->pairs_tmp = canon_mem_malloc(pair_bytes);
     if (p->lab == NULL || p->pos == NULL || p->cell_of == NULL || p->start == NULL ||
         p->new_start == NULL || p->pairs == NULL || p->pairs_tmp == NULL) {
         canon_partition_free(p);
@@ -76,13 +77,13 @@ canon_status canon_partition_init(canon_partition *p, uint32_t cap)
 
 void canon_partition_free(canon_partition *p)
 {
-    free(p->lab);
-    free(p->pos);
-    free(p->cell_of);
-    free(p->start);
-    free(p->new_start);
-    free(p->pairs);
-    free(p->pairs_tmp);
+    canon_mem_free(p->lab);
+    canon_mem_free(p->pos);
+    canon_mem_free(p->cell_of);
+    canon_mem_free(p->start);
+    canon_mem_free(p->new_start);
+    canon_mem_free(p->pairs);
+    canon_mem_free(p->pairs_tmp);
     memset(p, 0, sizeof *p);
 }
 

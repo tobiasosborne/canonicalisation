@@ -21,6 +21,12 @@
 
 #define CC_NONE UINT32_MAX
 
+/* The largest single allocation this checker makes (bytes).  A size beyond it is CC_CAPACITY, a
+ * limit of the checker and never a verdict on the certificate; every array sized from the stream
+ * is also bounded by the bytes that must follow it (CC_TRUNCATED), so this cap is only reached
+ * by the p x n provenance evaluation of a chain. */
+#define CC_MAX_ALLOC ((size_t)1 << 30)
+
 /* ---- reasons: every rejection names its rule ---- */
 
 typedef enum cc_reason {

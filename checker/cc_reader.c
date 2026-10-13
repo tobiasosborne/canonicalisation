@@ -63,8 +63,8 @@ void *cc_alloc(size_t count, size_t size, cc_reason *why)
     if (size == 0) {
         size = 1;
     }
-    if (count > SIZE_MAX / size) {
-        *why = CC_CAPACITY;
+    if (count > CC_MAX_ALLOC / size) {
+        *why = CC_CAPACITY; /* beyond CC_MAX_ALLOC (or SIZE_MAX) */
         return NULL;
     }
     void *block = malloc(count * size);

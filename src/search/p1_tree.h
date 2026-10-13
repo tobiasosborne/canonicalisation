@@ -73,6 +73,8 @@ typedef struct canon_p1_search {
     uint64_t explored;     /* children explored in the last run */
     uint64_t implicit_candidates; /* S7b: leaves with the incumbent's key */
     uint64_t implicit_inserted;   /* S7b: implicit automorphisms that enlarged A_known */
+    uint64_t fixing;              /* S8: input generators that fix x (spec 7.3 singleton orbit
+                                     iff fixing == generator count) */
 } canon_p1_search;
 
 /* Options of one run (slices S7, S7b).  prune selects a pruning policy (docs/pruning-rules.md):

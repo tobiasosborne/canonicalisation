@@ -1,5 +1,6 @@
 /* CDAG-2 wire primitives (spec section 4.1) and the byte order of spec section 4.3. */
 #include "encoding/wire.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,7 @@ void canon_buf_init(canon_buf *buf)
 
 void canon_buf_free(canon_buf *buf)
 {
-    free(buf->data);
+    canon_mem_free(buf->data);
     canon_buf_init(buf);
 }
 
@@ -35,7 +36,7 @@ canon_status canon_buf_reserve(canon_buf *buf, size_t extra)
         }
         cap *= 2;
     }
-    uint8_t *grown = realloc(buf->data, cap);
+    uint8_t *grown = canon_mem_realloc(buf->data, cap);
     if (grown == NULL) {
         return CANON_RESOURCE_LIMIT; /* spec section 17: old state is kept */
     }

@@ -1,6 +1,7 @@
 /* Profile P1 refinement (spec sections 7.1, 7.2, 10) for any root object: subset (S1) and
  * coloured directed multigraph (S2, O-stage arc-count signatures). */
 #include "refine/p1.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -42,8 +43,8 @@ void canon_p1_scratch_init(canon_p1_scratch *s)
 
 void canon_p1_scratch_free(canon_p1_scratch *s)
 {
-    free(s->pt.block);
-    free(s->entries); /* entries_tmp is the second half of this block */
+    canon_mem_free(s->pt.block);
+    canon_mem_free(s->entries); /* entries_tmp is the second half of this block */
     canon_p1_scratch_init(s);
 }
 
@@ -86,7 +87,7 @@ canon_status canon_p1_scratch_reserve(canon_p1_scratch *s, const canon_root *x)
         if (st != CANON_COMPLETE) {
             return st; /* spec 17: the previous arrays stay */
         }
-        free(s->pt.block);
+        canon_mem_free(s->pt.block);
         s->pt = fresh; /* swapped wholesale */
         s->cap_n = x->n;
     }
@@ -108,7 +109,7 @@ canon_status canon_p1_scratch_reserve(canon_p1_scratch *s, const canon_root *x)
     if (entries == NULL) {
         return st;
     }
-    free(s->entries);
+    canon_mem_free(s->entries);
     s->entries = entries;
     s->entries_tmp = entries + both / 2u;
     s->cap_entries = both / 2u;

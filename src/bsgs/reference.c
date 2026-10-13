@@ -10,6 +10,7 @@
  * Convention (spec 3): (pq)[v] = q[p[v]].  A point y = x^s discovered from x through s gets
  * t_y = t_x s, so that i^(t_y) = (i^(t_x))^s = x^s = y. */
 #include "bsgs/reference.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -48,9 +49,9 @@ static canon_status normalise(uint32_t *rows, size_t count, uint32_t n, size_t *
         st = CANON_CAPACITY_LIMIT;
     }
     if (idx == NULL || tmp == NULL || copy == NULL) {
-        free(idx);
-        free(tmp);
-        free(copy);
+        canon_mem_free(idx);
+        canon_mem_free(tmp);
+        canon_mem_free(copy);
         return st;
     }
     for (size_t i = 0; i < count; ++i) {
@@ -73,9 +74,9 @@ static canon_status normalise(uint32_t *rows, size_t count, uint32_t n, size_t *
     if (kept > 0) {
         memcpy(rows, copy, kept * n * sizeof *rows);
     }
-    free(idx);
-    free(tmp);
-    free(copy);
+    canon_mem_free(idx);
+    canon_mem_free(tmp);
+    canon_mem_free(copy);
     *out_count = kept;
     return CANON_COMPLETE;
 }
@@ -84,13 +85,13 @@ void canon_ref_free(canon_ref_chain *r)
 {
     if (r->levels != NULL) {
         for (uint32_t i = 0; i < r->n; ++i) {
-            free(r->levels[i].orbit);
-            free(r->levels[i].pos);
-            free(r->levels[i].trans);
-            free(r->levels[i].trans_inv);
+            canon_mem_free(r->levels[i].orbit);
+            canon_mem_free(r->levels[i].pos);
+            canon_mem_free(r->levels[i].trans);
+            canon_mem_free(r->levels[i].trans_inv);
         }
     }
-    free(r->levels);
+    canon_mem_free(r->levels);
     r->levels = NULL;
     r->order = 0;
 }
@@ -183,8 +184,8 @@ canon_status canon_ref_build(uint32_t n, const uint32_t *gens, size_t count, can
         uint32_t *T = canon_alloc_array(nw, sizeof *T, &st);
         uint32_t *tmp = canon_alloc_array(n, sizeof *tmp, &st);
         if (T == NULL || tmp == NULL) {
-            free(T);
-            free(tmp);
+            canon_mem_free(T);
+            canon_mem_free(tmp);
             break;
         }
         for (uint32_t p = 0; p < len; ++p) {
@@ -197,8 +198,8 @@ canon_status canon_ref_build(uint32_t n, const uint32_t *gens, size_t count, can
                 ++next;
             }
         }
-        free(tmp);
-        free(S);
+        canon_mem_free(tmp);
+        canon_mem_free(S);
         S = T;
         s_count = next; /* "Recurse with the deduplicated nonidentity Schreier generators" */
         st = normalise(S, s_count, n, &s_count);
@@ -211,7 +212,7 @@ canon_status canon_ref_build(uint32_t n, const uint32_t *gens, size_t count, can
             }
         }
     }
-    free(S);
+    canon_mem_free(S);
     if (st != CANON_COMPLETE) {
         canon_ref_free(out);
     }

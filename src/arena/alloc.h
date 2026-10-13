@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "arena/checked.h"
+#include "arena/mem.h"
 #include "canon/canon.h"
 
 /* Allocate max(count, 1) * size bytes.  Returns the block, or NULL with *status set to
@@ -29,7 +30,7 @@ static inline void *canon_alloc_array(size_t count, size_t size, canon_status *s
         *status = CANON_CAPACITY_LIMIT;
         return NULL;
     }
-    void *block = malloc(bytes);
+    void *block = canon_mem_malloc(bytes);
     if (block == NULL) {
         *status = CANON_RESOURCE_LIMIT;
     }
@@ -65,7 +66,7 @@ static inline canon_status canon_grow_array_to(void **data, uint32_t *cap, uint3
     if (used > 0 && elem_bytes > 0) {
         memcpy(grown, *data, (size_t)used * elem_bytes); /* fits: the old block held it */
     }
-    free(*data);
+    canon_mem_free(*data);
     *data = grown;
     *cap = new_cap;
     return CANON_COMPLETE;

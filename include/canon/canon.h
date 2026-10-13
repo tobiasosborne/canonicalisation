@@ -5,8 +5,8 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 to S7b (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
- * S6.md, S7.md, S7b.md).
+ * Status of this header: slices S1 to S8 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
+ * S6.md, S7.md, S7b.md, S8.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
@@ -22,8 +22,10 @@
  * SIGNED_CANONICAL_IMAGE under profile P1 (canon_result_sign, canon_result_labeling, the signed
  * zero payload 00 of canon_result_encode), and (S7) the work-policy ID of the capacity
  * descriptor (canon_work_policy), the certificate option with canon_result_certificate and
- * canon_result_evidence.  Every other entry point is a stub returning
- * CANON_UNSUPPORTED_ACTION until its slice lands (canon_solve_batch: S8; checkpoints: M6).
+ * canon_result_evidence, and (S8) canon_solve_batch, canon_result_encode_resume, the
+ * live-memory budget max_live_bytes with canon_problem_planned_bytes, canon_memory_get and
+ * canon_result_metrics.  The checkpoint entry points are stubs returning
+ * CANON_UNSUPPORTED_ACTION until M6.
  * ALL argument lists are PROVISIONAL until M4 and will be frozen there together with the
  * section 17 client vectors.
  */
@@ -108,10 +110,11 @@ typedef struct canon_checkpoint canon_checkpoint; /* spec sections 17, 18 */
 /* Output sink (spec section 17): ordered borrowed chunks valid only during the callback.
  * Provisional: returns 0 = continue, 1 = pause (offset retained), other = fail (OUTPUT_ERROR).
  * *accepted receives the number of bytes taken.
- * Slice S1: pause/resume is DEFERRED to slice S8; a return of 1 is treated as failure
- * (CANON_OUTPUT_ERROR).  On return 0, *accepted must be in 1..length; the remaining bytes of
- * the chunk are offered again in a following call.  *accepted == 0 with return 0, or
- * *accepted > length, is a failure (CANON_OUTPUT_ERROR). */
+ * Slice S8: a return of 1 pauses the stream (CANON_CANCELLED from the encode call; *accepted
+ * bytes, 0..length, are kept and the offset is retained for canon_result_encode_resume).  On
+ * return 0, *accepted must be in 1..length; the remaining bytes of the chunk are offered again
+ * in a following call.  *accepted == 0 with return 0, or *accepted > length, is a failure
+ * (CANON_OUTPUT_ERROR). */
 typedef int (*canon_sink_fn)(void *user, const uint8_t *chunk, size_t length, size_t *accepted);
 
 /* ---- Version (implemented, src/api/version.c). ---- */
@@ -152,7 +155,25 @@ typedef struct canon_capacity {
      * count is a function of the input, the objective and the descriptor.  Any other value is
      * CANON_UNSUPPORTED_ACTION at problem creation. */
     uint16_t work_policy;
+    /* S8, spec 11.1-11.2: the live-memory budget of one solve in bytes (zero: the context
+     * default, 1 << 30).  At problem creation a deterministic plan of the solve's own
+     * allocations is computed from the input (docs/slices/S8.md 1.4) and the problem is refused
+     * with CANON_CAPACITY_LIMIT when the plan exceeds the budget; the plan is the policy, the
+     * measured peak (canon_metrics) never changes a status. */
+    uint64_t max_live_bytes;
 } canon_capacity;
+
+/* S8, spec 11.2: the process-wide live-memory ledger of the library's allocations (every
+ * allocation the library makes is counted; the ledger is process-wide, so several threads
+ * aggregate into it).  canon_memory_get reads it at any time. */
+typedef struct canon_memory_stats {
+    uint64_t live_bytes;   /* bytes allocated and not yet freed */
+    uint64_t peak_bytes;   /* the largest live count since the start or the last solve */
+    uint64_t allocations;  /* blocks allocated (a resize of a block is not counted) */
+    uint64_t frees;
+    uint64_t failures;     /* allocation failures (and injected faults in tests) */
+} canon_memory_stats;
+void canon_memory_get(canon_memory_stats *out);
 
 /* S7, S7b, spec 11.1 work-policy IDs (see canon_capacity.work_policy). */
 typedef uint16_t canon_work_policy;
@@ -167,7 +188,7 @@ enum {
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
  * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5), work_policy =
- * CANON_WORK_POLICY_PRUNE_2 (S7b).
+ * CANON_WORK_POLICY_PRUNE_2 (S7b), max_live_bytes = 1 << 30 (S8).
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -549,8 +570,51 @@ const uint8_t *canon_result_certificate(const canon_result *result, size_t *leng
  * every result without a certificate). */
 canon_evidence canon_result_evidence(const canon_result *result);
 
-/* spec section 17: per-input statuses, input order preserved regardless of scheduling.
- * STUB until slice S8: returns CANON_UNSUPPORTED_ACTION. */
+/* S8, spec 19 and 8.3 ("must appear in metrics"): the counters of one solve, observable in
+ * scalar code (no times: no benchmark before M5).  For a status-only result the counters
+ * describe the work done before the status was reached (spec 3.2: interrupted results report
+ * what they did); output_bytes and certificate_bytes are then zero. */
+typedef struct canon_metrics {
+    uint64_t p1_nodes;              /* NODE tokens of the P1 traversal (the quota's P1 part) */
+    uint64_t p1_leaves;             /* leaves reached */
+    uint64_t p1_images;             /* leaves whose image was materialised (trace <= best) */
+    uint64_t children_explored;     /* children visited at branches */
+    uint64_t children_pruned;       /* children pruned by rule P1-ORBIT-1 */
+    uint64_t automorphism_candidates; /* generators and implicit candidates offered to A_known */
+    uint64_t automorphisms_inserted;  /* those that enlarged A_known (verified rebuilds) */
+    uint64_t implicit_candidates;   /* leaves with the incumbent's key (policy 0x0003) */
+    uint64_t implicit_inserted;
+    uint64_t stabiliser_rebases;    /* transient rebases of A_known to a node prefix */
+    uint64_t enumeration_visits;    /* spec 8.1 visit calls (the quota's enumeration part) */
+    uint64_t enumeration_leaves;    /* spec 8.2 consume calls */
+    uint64_t stabiliser_hits;       /* x^r = x (or = y) hits */
+    uint64_t stabiliser_rebuilds;   /* verified rebuilds of the stabiliser chain */
+    uint64_t coset_descents;        /* spec 9.4 least-element descents */
+    uint64_t coset_rebuilds;        /* transient chain rebuilds of the descents */
+    uint64_t character_evaluations; /* chi evaluations (signed objective) */
+    bool signed_fast_path;          /* spec 7.3 generator fast path taken */
+    bool root_discrete;             /* spec 7.3: the P1 root was a leaf */
+    bool singleton_orbit;           /* spec 7.3: every generator fixes x */
+    uint64_t output_bytes;          /* canonical stream (or payload) bytes */
+    uint64_t certificate_bytes;
+    uint64_t planned_bytes;         /* the admission plan of the problem (spec 11.1) */
+    uint64_t live_bytes_before;     /* process-wide live bytes when the solve started */
+    uint64_t peak_live_bytes;       /* process-wide peak during the solve */
+} canon_metrics;
+/* The metrics of a result (CANON_INVALID_INPUT for NULL arguments). */
+canon_status canon_result_metrics(const canon_result *result, canon_metrics *out);
+/* The admission plan of a problem in bytes (spec 11.1; CANON_INVALID_INPUT for NULL). */
+canon_status canon_problem_planned_bytes(const canon_problem *problem, uint64_t *out);
+
+/* spec section 17 v2.1 (slice S8, decision D12 of docs/slices/S8-batch-reading.md): solve
+ * `count` problems on the one workspace in caller order (CALLER_THREADS, spec 14.1: no hidden
+ * threads).  The whole batch is rejected with CANON_INVALID_INPUT, nothing written, only for a
+ * NULL workspace, a NULL problems/results/statuses array with count > 0, or a count whose
+ * byte size overflows.  Otherwise every input is attempted and statuses[i]/results[i] are
+ * exactly what canon_solve would return for that input alone (a NULL problems[i] gives
+ * CANON_INVALID_INPUT and a NULL result for that entry only); admission and the quota are per
+ * input.  The call returns CANON_COMPLETE iff every input was attempted; per-input failures
+ * appear only in statuses[].  Pool execution (M6) must reproduce the same statuses and bytes. */
 canon_status canon_solve_batch(canon_workspace *workspace, const canon_problem *const *problems,
                                size_t count, canon_result **results, canon_status *statuses);
 
@@ -572,9 +636,20 @@ canon_status canon_result_verify_witness(const canon_result *result, bool *valid
  * (spec 17: "or the signed 00 payload when zero is certified"; spec 4.3: "A certified zero has
  * distinguished payload byte 00 under the signed objective").
  * CANON_COMPLETE after the last byte is accepted; CANON_INVALID_INPUT for NULL arguments or a
- * result without canonical bytes; CANON_OUTPUT_ERROR when the sink fails (see canon_sink_fn;
- * pause is deferred to S8).  The result is never modified. */
+ * result without canonical bytes; CANON_OUTPUT_ERROR when the sink fails (see canon_sink_fn);
+ * S8: CANON_CANCELLED when the sink pauses (returns 1), the bytes accepted so far being a
+ * prefix of the stream that canon_result_encode_resume continues from.  The result is never
+ * modified. */
 canon_status canon_result_encode(const canon_result *result, canon_sink_fn sink, void *user);
+
+/* S8, spec 17 ("PAUSE retains the offset for resume ... No bytes are skipped or duplicated on
+ * resume"): as canon_result_encode from byte *offset of the stream; on return *offset is the
+ * number of bytes the sink has accepted in total, which is the resume point after
+ * CANON_CANCELLED (a pause: sink returned 1) and the point of failure after
+ * CANON_OUTPUT_ERROR.  CANON_INVALID_INPUT for NULL arguments or an offset beyond the stream;
+ * an offset at the end of the stream is CANON_COMPLETE with no sink call. */
+canon_status canon_result_encode_resume(const canon_result *result, size_t *offset,
+                                        canon_sink_fn sink, void *user);
 
 /* spec sections 17, 18: write a checkpoint of an interrupted search.  STUB until M6. */
 canon_status canon_checkpoint_write(const canon_workspace *workspace, canon_sink_fn sink,

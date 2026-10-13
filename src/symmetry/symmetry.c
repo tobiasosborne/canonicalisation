@@ -1,6 +1,7 @@
 /* The verified known-automorphism subgroup and prefix-stabiliser orbits (spec 7.3, 9.2; slice
  * S7, docs/slices/S7.md 3.1-3.2). */
 #include "symmetry/symmetry.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,7 @@ void canon_symmetry_init(canon_symmetry *s)
 
 static void free_arrays(canon_symmetry *s)
 {
-    free(s->scratch); /* one block: scratch, mark, parent_point, parent_gen, rep, queue */
+    canon_mem_free(s->scratch); /* one block: scratch, mark, parent_point, parent_gen, rep, queue */
     s->scratch = s->mark = s->parent_point = s->parent_gen = s->rep = s->queue = NULL;
     s->cap = 0;
     s->ready = false;
@@ -91,6 +92,7 @@ canon_status canon_symmetry_insert(canon_symmetry *s, const canon_root *x, canon
     if (!fixes) {
         return CANON_INVALID_INPUT;
     }
+    s->stats.fixing += 1;
     /* spec 7.3 "verified subgroup": membership in A_known by one sift, else a verified rebuild
      * of the chain of <gens, g> (canon_bsgs_insert_verified) */
     st = canon_bsgs_insert_verified(&s->a, &s->gens, g, s->scratch, inserted);

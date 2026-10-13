@@ -3,6 +3,7 @@
  * 8.2) and the signed canonical image (spec 8.4, 7.3) of slice S6 (docs/slices/S6.md 3.2,
  * 3.3). */
 #include "search/objectives.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +29,7 @@ void canon_obj_search_init(canon_obj_search *s)
 
 void canon_obj_search_free(canon_obj_search *s)
 {
-    free(s->best); /* one block: best, work, g, lambda, chi */
+    canon_mem_free(s->best); /* one block: best, work, g, lambda, chi */
     canon_coset_scratch_free(&s->scratch);
     canon_root_image_free(&s->image);
     canon_root_image_free(&s->prime);
@@ -56,7 +57,7 @@ static canon_status prepare(canon_obj_search *s, uint32_t n)
     if (block == NULL) {
         return st; /* the old arrays are kept (spec 17) */
     }
-    free(s->best);
+    canon_mem_free(s->best);
     s->best = block;
     s->work = block + (size_t)n;
     s->g = block + 2u * (size_t)n;
@@ -747,7 +748,7 @@ canon_status canon_obj_check_labeling(const canon_group *g, const canon_root *x,
         }
         st = g->ops->contains(g, rho_t, &member);
     }
-    free(tmp);
+    canon_mem_free(tmp);
     if (st != CANON_COMPLETE || !member) {
         return st;
     }

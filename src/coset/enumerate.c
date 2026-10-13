@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "arena/alloc.h"
+#include "arena/mem.h"
 #include "coset/coset.h"
 #include "perm/perm.h"
 #include "util/sort.h"
@@ -87,7 +88,7 @@ static void node_degree(canon_coset_scratch *s, uint32_t n)
 {
     if (n > s->node_n) {
         for (uint32_t d = 0; d < s->node_count; ++d) {
-            free(s->nodes[d]);
+            canon_mem_free(s->nodes[d]);
         }
         s->node_count = 0;
         s->node_n = n;
@@ -170,7 +171,7 @@ canon_status canon_coset_enumerate(const canon_bsgs *c, canon_coset_visitor *v)
         }
         v->stopped = false;
         st = visit(c, 0, id, v, s, 0); /* spec 8.1: "start visit(G, id)" */
-        free(id);
+        canon_mem_free(id);
     }
     if (v->scratch == NULL) {
         canon_coset_scratch_free(&local);

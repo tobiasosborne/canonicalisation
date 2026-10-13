@@ -58,7 +58,7 @@ static canon_result *solve(canon_workspace *ws, const canon_group *g, const cano
      * and this file compares its t with a CANONICAL_IMAGE solve, so that solve runs unpruned
      * too (policy 0x0001; under the default prune the "any" witness may differ,
      * docs/pruning-rules.md). */
-    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED};
+    canon_capacity cap = {0, 0, quota, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
     canon_problem_options opts = {CANON_WITNESS_ANY, rho, false};
     canon_problem *p = NULL;
     canon_workspace *own = NULL;

@@ -1,5 +1,6 @@
 /* The subset object (spec sections 2.1, 4.2, 7.1). */
 #include "object/subset.h"
+#include "arena/mem.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +52,7 @@ canon_status canon_subset_init(canon_subset *s, uint32_t n, const uint32_t *atom
         return CANON_COMPLETE; /* spec 7.1: empty sets qualify as subsets; n = 0 allowed */
     }
     size_t words = canon_bitset_words(n);
-    s->bits = calloc(words, sizeof *s->bits);
+    s->bits = canon_mem_calloc(words, sizeof *s->bits);
     if (s->bits == NULL) {
         return CANON_RESOURCE_LIMIT;
     }
@@ -63,10 +64,10 @@ canon_status canon_subset_init(canon_subset *s, uint32_t n, const uint32_t *atom
         /* spec 11.1: size product checked before allocation */
         size_t bytes = 0;
         if (canon_size_mul((size_t)k, sizeof *s->atoms, &bytes)) {
-            s->atoms = malloc(bytes);
+            s->atoms = canon_mem_malloc(bytes);
         }
         if (s->atoms == NULL) {
-            free(s->bits);
+            canon_mem_free(s->bits);
             s->atoms = NULL;
             s->bits = NULL;
             return CANON_RESOURCE_LIMIT;
@@ -79,8 +80,8 @@ canon_status canon_subset_init(canon_subset *s, uint32_t n, const uint32_t *atom
 
 void canon_subset_free(canon_subset *s)
 {
-    free(s->atoms);
-    free(s->bits);
+    canon_mem_free(s->atoms);
+    canon_mem_free(s->bits);
     s->atoms = NULL;
     s->bits = NULL;
     s->k = 0;
