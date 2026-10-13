@@ -7,8 +7,9 @@
  * Slice S7 (docs/slices/S7.md 3.1-3.3, docs/pruning-rules.md) adds the first prune, selected by
  * the run options: orbit pruning of the target cell by the pointwise stabiliser of the node's
  * prefix in the verified automorphism subgroup A_known (spec 7.3 "a checked node-stabilising
- * automorphism and retained equivalent subtree"), whose only source in S7 is the input
- * generators of G that fix x.  The pruned and the unpruned run give the same least key; with
+ * automorphism and retained equivalent subtree"), whose sources are the input generators of G
+ * that fix x and, from slice S7b (docs/slices/S7b.md), the implicit automorphisms
+ * t_L t_best^-1 of leaves whose key equals the incumbent's, verified by membership and action.  The pruned and the unpruned run give the same least key; with
  * the prune the witness of the run is the least t among the EXPLORED leaves attaining it.  The
  * run can also emit a certificate (src/search/certificate.h) for the independent checker.
  * Spec 7.3 "The unpruned evaluator above is normative": work policy 0x0001 runs it unchanged.
@@ -61,18 +62,27 @@ typedef struct canon_p1_search {
                               reps + d * 2 n: (representative or CANON_CERT_NONE for an
                               explored child, automorphism index) per cell position */
     size_t reps_alloc;     /* words allocated in reps (only grows) */
-    uint32_t *aut;         /* cap: the automorphism of a pruned child (certificate) */
+    uint32_t *aut;         /* cap: the automorphism of a pruned child (certificate), or the
+                              implicit automorphism of a leaf (S7b) */
+    uint32_t *inv;         /* cap: t_best^-1 (S7b) */
+    uint8_t *roots;        /* cap: representative flags of a cell (S7b) */
     bool prune;            /* the run's work policy prunes */
+    bool implicit;         /* S7b: implicit automorphisms from equal leaf keys are inserted */
     canon_cert *cert;      /* the run's certificate writer, or NULL */
     uint64_t pruned;       /* children pruned in the last run */
     uint64_t explored;     /* children explored in the last run */
+    uint64_t implicit_candidates; /* S7b: leaves with the incumbent's key */
+    uint64_t implicit_inserted;   /* S7b: implicit automorphisms that enlarged A_known */
 } canon_p1_search;
 
-/* Options of one run (slice S7).  prune selects work policy 0x0002 (docs/pruning-rules.md);
- * cert (may be NULL, else begun by canon_cert_begin) receives the certificate; a writer failure
+/* Options of one run (slices S7, S7b).  prune selects a pruning policy (docs/pruning-rules.md):
+ * with implicit false the explicit automorphisms only (work policy 0x0002), with implicit true
+ * also the implicit ones from equal leaf keys (0x0003); neither without prune (0x0001).  cert
+ * (may be NULL, else begun by canon_cert_begin) receives the certificate; a writer failure
  * fails the run with the writer's status. */
 typedef struct canon_p1_run_options {
     bool prune;
+    bool implicit;
     canon_cert *cert;
 } canon_p1_run_options;
 

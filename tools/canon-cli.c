@@ -53,8 +53,9 @@
  * without --target-stream, is a usage error.  `validate` prints the two fields "CASE \t STATUS"
  * (not a FORMAT.md record) and takes only --stream and --id.
  * `--max-nodes K` sets the spec 11.1 logical work quota (0 = the context default).  Slice S7:
- * `--prune on|off` selects the work policy (on: CANON_WORK_POLICY_PRUNE_1, the library
- * default; off: CANON_WORK_POLICY_UNPRUNED, the reference traversal), and `--certificate FILE`
+ * `--prune on|explicit|off` selects the work policy (on: CANON_WORK_POLICY_PRUNE_2, the library
+ * default, explicit and implicit automorphisms; explicit: CANON_WORK_POLICY_PRUNE_1, the S7
+ * policy; off: CANON_WORK_POLICY_UNPRUNED, the reference traversal), and `--certificate FILE`
  * requests a CERT-0 certificate (canonical image of a subset or graph only) and writes it to
  * FILE after the record (exit 3 if it cannot be written).  Exit
  * status: 0 on COMPLETE, 3 on any other status, 2 on a usage error.  Uses only the public
@@ -87,7 +88,7 @@ static int usage(const char *msg)
             "       TARGET: [--target-atoms ...] [--target-colours ...] [--target-arcs ...]\n"
             "               [--target-stream HEX]\n"
             "       all: [--max-nodes K] [--id CASE] [--backend chain|explicit]\n"
-            "            [--witness any|deterministic] [--prune on|off]\n"
+            "            [--witness any|deterministic] [--prune on|explicit|off]\n"
             "            [--certificate FILE]\n",
             msg);
     return 2;
@@ -463,13 +464,15 @@ static int parse_options(int argc, char **argv, options *o)
                 return usage("--witness expects any or deterministic");
             }
         } else if (strcmp(opt, "--prune") == 0) {
-            /* S7 (docs/slices/S7.md 6.2 D14): the switch selects the work policy */
+            /* S7 (docs/slices/S7.md 6.2 D14), S7b: the switch selects the work policy */
             if (strcmp(val, "on") == 0) {
+                o->work_policy = CANON_WORK_POLICY_PRUNE_2;
+            } else if (strcmp(val, "explicit") == 0) {
                 o->work_policy = CANON_WORK_POLICY_PRUNE_1;
             } else if (strcmp(val, "off") == 0) {
                 o->work_policy = CANON_WORK_POLICY_UNPRUNED;
             } else {
-                return usage("--prune expects on or off");
+                return usage("--prune expects on, explicit or off");
             }
         } else if (strcmp(opt, "--certificate") == 0) {
             if (*val == '\0') {

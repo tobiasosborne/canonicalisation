@@ -1,8 +1,8 @@
-/* Slice S7: pruned versus unpruned P1 runs (docs/pruning-rules.md; docs/slices/S7.md 3.1,
- * 3.2, 4) through the public API: on every T1 subset and on seeded digraphs, under both group
- * backends, the two work policies give the same trace and bytes (any witness mode) and the
- * same witness (deterministic mode); node counts are logged and checked on the cases the
- * brief names.  The internal search is used for the counters. */
+/* Slices S7 and S7b: pruned versus unpruned P1 runs (docs/pruning-rules.md; docs/slices/S7.md
+ * 3.1, 3.2, 4; S7b.md) through the public API: on every T1 subset and on seeded digraphs, under
+ * both group backends, the three work policies give the same trace and bytes (any witness
+ * mode) and the same witness (deterministic mode); node counts are logged and checked on the
+ * cases the briefs name.  The internal search is used for the counters. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,36 +44,44 @@ static int same_bytes(const uint8_t *(*get)(const canon_result *, size_t *), con
 
 static uint64_t cases, det_cases;
 
-/* The pair of runs for one (group, object): identical trace and bytes; identical witness in
- * deterministic mode; a valid witness in any mode under both policies. */
+static const uint16_t PRUNES[2] = {CANON_WORK_POLICY_PRUNE_1, CANON_WORK_POLICY_PRUNE_2};
+
+/* The runs for one (group, object): each pruning policy against the reference, identical trace
+ * and bytes; identical witness in deterministic mode; a valid witness in any mode. */
 static void compare(canon_context *ctx, canon_workspace *ws, const canon_group *g,
                     const canon_object *x, uint32_t n, bool deterministic_too)
 {
     canon_status st1, st2;
     canon_result *off = solve(ctx, ws, g, x, CANON_WORK_POLICY_UNPRUNED, CANON_WITNESS_ANY, 0, &st1);
-    canon_result *on = solve(ctx, ws, g, x, CANON_WORK_POLICY_PRUNE_1, CANON_WITNESS_ANY, 0, &st2);
-    CHECK(st1 == CANON_COMPLETE && st2 == CANON_COMPLETE);
-    CHECK(same_bytes(canon_result_trace, off, on));
-    CHECK(same_bytes(canon_result_bytes, off, on));
-    bool valid = false;
-    CHECK(canon_result_verify_witness(on, &valid) == CANON_COMPLETE && valid);
-    CHECK(canon_result_evidence(on) == CANON_EVIDENCE_TRUSTED_ENGINE);
+    CHECK(st1 == CANON_COMPLETE);
+    for (int k = 0; k < 2; ++k) {
+        canon_result *on = solve(ctx, ws, g, x, PRUNES[k], CANON_WITNESS_ANY, 0, &st2);
+        CHECK(st2 == CANON_COMPLETE);
+        CHECK(same_bytes(canon_result_trace, off, on));
+        CHECK(same_bytes(canon_result_bytes, off, on));
+        bool valid = false;
+        CHECK(canon_result_verify_witness(on, &valid) == CANON_COMPLETE && valid);
+        CHECK(canon_result_evidence(on) == CANON_EVIDENCE_TRUSTED_ENGINE);
+        canon_result_release(on);
+    }
     cases += 1;
     canon_result_release(off);
-    canon_result_release(on);
     if (!deterministic_too) {
         return;
     }
     off = solve(ctx, ws, g, x, CANON_WORK_POLICY_UNPRUNED, CANON_WITNESS_DETERMINISTIC, 0, &st1);
-    on = solve(ctx, ws, g, x, CANON_WORK_POLICY_PRUNE_1, CANON_WITNESS_DETERMINISTIC, 0, &st2);
-    CHECK(st1 == CANON_COMPLETE && st2 == CANON_COMPLETE);
-    uint32_t d1 = 0, d2 = 0;
-    const uint32_t *w1 = canon_result_witness(off, &d1), *w2 = canon_result_witness(on, &d2);
-    CHECK(w1 != NULL && w2 != NULL && d1 == n && d2 == n &&
-          (n == 0 || memcmp(w1, w2, n * sizeof *w1) == 0));
+    CHECK(st1 == CANON_COMPLETE);
+    for (int k = 0; k < 2; ++k) {
+        canon_result *on = solve(ctx, ws, g, x, PRUNES[k], CANON_WITNESS_DETERMINISTIC, 0, &st2);
+        CHECK(st2 == CANON_COMPLETE);
+        uint32_t d1 = 0, d2 = 0;
+        const uint32_t *w1 = canon_result_witness(off, &d1), *w2 = canon_result_witness(on, &d2);
+        CHECK(w1 != NULL && w2 != NULL && d1 == n && d2 == n &&
+              (n == 0 || memcmp(w1, w2, n * sizeof *w1) == 0));
+        canon_result_release(on);
+    }
     det_cases += 1;
     canon_result_release(off);
-    canon_result_release(on);
 }
 
 static void t1_subsets(void)
@@ -162,17 +170,25 @@ static void digraphs(void)
     }
 }
 
-/* Node counts through the internal search: the empty subset under Sym(2) (spec 7.4) has 3
+/* Node counts through the internal search.  The empty subset under Sym(2) (spec 7.4) has 3
  * nodes unpruned and 2 pruned; under Sym(6), 1237 unpruned (1 + 6 + 30 + 120 + 360 + 720:
- * after five individualisations the partition is discrete) and 6 pruned (one child per
- * level: the orbit count); the pruned count is the CAPACITY_LIMIT boundary of the pruned
- * run. */
+ * after five individualisations the partition is discrete) and 6 pruned (one child per level:
+ * the orbit count); every generator fixes the empty subset, so A_known = G from the start and
+ * the implicit policy finds nothing new.  The subset {0} under Sym(4) = <(0 1 2 3), (0 1)> has
+ * no explicit automorphism (both generators move 0), so the explicit policy explores the whole
+ * tree: the root cell {1, 2, 3}, each child with a cell of two, 1 + 3 (1 + 2) = 10 nodes.  Under
+ * the implicit policy the second leaf below child 1 has the incumbent's key and yields (2 3);
+ * at the root, child 3 is then in the orbit of child 2 and is pruned; below child 2 the second
+ * leaf yields (1 3), so A_known = Sym({1, 2, 3}) of order 6 and 1 + 2 (1 + 2) = 7 nodes.  The
+ * pruned count is the CAPACITY_LIMIT boundary of the pruned run. */
 static void node_counts(void)
 {
+    const uint32_t zero[1] = {0};
     const struct {
-        uint32_t n;
-        uint64_t unpruned, pruned;
-    } want[] = {{2, 3, 2}, {6, 1237, 6}};
+        uint32_t n, k;
+        const uint32_t *atoms;
+        uint64_t unpruned, explicit_count, implicit_count, a_order;
+    } want[] = {{2, 0, NULL, 3, 2, 2, 2}, {6, 0, NULL, 1237, 6, 6, 720}, {4, 1, zero, 10, 10, 7, 6}};
     for (size_t i = 0; i < sizeof want / sizeof *want; ++i) {
         const uint32_t n = want[i].n;
         uint32_t gens[12];
@@ -186,22 +202,37 @@ static void node_counts(void)
         memset(&x, 0, sizeof x);
         x.kind = CANON_ROOT_SUBSET;
         x.n = n;
-        CHECK(canon_subset_init(&x.u.subset, n, NULL, 0) == CANON_COMPLETE);
+        CHECK(canon_subset_init(&x.u.subset, n, want[i].atoms, want[i].k) == CANON_COMPLETE);
         canon_p1_search s;
         canon_p1_search_init(&s);
-        const canon_p1_run_options prune = {true, NULL};
+        const canon_p1_run_options explicit_only = {true, false, NULL};
+        const canon_p1_run_options implicit_too = {true, true, NULL};
         CHECK(canon_p1_search_run(&s, g, &x, 1u << 20, NULL) == CANON_COMPLETE);
-        CHECK(s.nodes == want[i].unpruned && s.pruned == 0);
-        CHECK(canon_p1_search_run(&s, g, &x, 1u << 20, &prune) == CANON_COMPLETE);
-        CHECK(s.nodes == want[i].pruned);
+        const uint64_t unpruned = s.nodes;
+        CHECK(s.pruned == 0);
+        CHECK(canon_p1_search_run(&s, g, &x, 1u << 20, &explicit_only) == CANON_COMPLETE);
+        const uint64_t explicit_count = s.nodes;
         CHECK(s.explored == s.nodes - 1u); /* every explored child is a node */
-        printf("empty subset under Sym(%u): nodes unpruned %llu, pruned %llu (pruned children "
-               "%llu, rebases %llu)\n",
-               (unsigned)n, (unsigned long long)want[i].unpruned, (unsigned long long)s.nodes,
-               (unsigned long long)s.pruned, (unsigned long long)s.sym.stats.rebases);
-        /* spec 11.1: the quota under policy 0x0002 is the explored-node count */
-        CHECK(canon_p1_search_run(&s, g, &x, want[i].pruned - 1u, &prune) == CANON_CAPACITY_LIMIT);
-        CHECK(canon_p1_search_run(&s, g, &x, want[i].pruned, &prune) == CANON_COMPLETE);
+        CHECK(s.implicit_candidates == 0 && s.implicit_inserted == 0);
+        CHECK(canon_p1_search_run(&s, g, &x, 1u << 20, &implicit_too) == CANON_COMPLETE);
+        const uint64_t implicit_count = s.nodes;
+        CHECK(s.explored == s.nodes - 1u);
+        printf("subset of %u atoms under Sym(%u): nodes unpruned %llu, explicit %llu, implicit "
+               "%llu (pruned children %llu, rebases %llu, implicit automorphisms %llu of %llu "
+               "candidates)\n",
+               (unsigned)want[i].k, (unsigned)n, (unsigned long long)unpruned,
+               (unsigned long long)explicit_count, (unsigned long long)implicit_count,
+               (unsigned long long)s.pruned, (unsigned long long)s.sym.stats.rebases,
+               (unsigned long long)s.implicit_inserted, (unsigned long long)s.implicit_candidates);
+        CHECK(implicit_count <= explicit_count && explicit_count <= unpruned);
+        CHECK(unpruned == want[i].unpruned && explicit_count == want[i].explicit_count &&
+              implicit_count == want[i].implicit_count);
+        CHECK(s.sym.a.order == want[i].a_order); /* A_known at the end of the implicit run */
+        /* spec 11.1: the quota under each pruning policy is its explored-node count */
+        CHECK(canon_p1_search_run(&s, g, &x, explicit_count - 1u, &explicit_only) == CANON_CAPACITY_LIMIT);
+        CHECK(canon_p1_search_run(&s, g, &x, explicit_count, &explicit_only) == CANON_COMPLETE);
+        CHECK(canon_p1_search_run(&s, g, &x, implicit_count - 1u, &implicit_too) == CANON_CAPACITY_LIMIT);
+        CHECK(canon_p1_search_run(&s, g, &x, implicit_count, &implicit_too) == CANON_COMPLETE);
         canon_p1_search_free(&s);
         canon_root_free(&x);
         canon_group_release(g);
@@ -219,7 +250,7 @@ static void statuses(void)
     CHECK(canon_object_create_subset(ctx_of[0], 2, NULL, 0, &x) == CANON_COMPLETE);
     CHECK(canon_workspace_create(ctx_of[0], &ws) == CANON_COMPLETE);
     canon_status st = CANON_COMPLETE;
-    canon_result *r = solve(ctx_of[0], ws, g, x, 3, CANON_WITNESS_ANY, 0, &st);
+    canon_result *r = solve(ctx_of[0], ws, g, x, 4, CANON_WITNESS_ANY, 0, &st);
     CHECK(st == CANON_UNSUPPORTED_ACTION && r == NULL);
     /* default policy: the tree of the spec 7.4 empty-subset case has 2 explored nodes */
     r = solve(ctx_of[0], ws, g, x, 0, CANON_WITNESS_ANY, 2, &st);
@@ -259,8 +290,8 @@ int main(void)
     digraphs();
     node_counts();
     statuses();
-    printf("pruned versus unpruned: %llu cases (any witness), %llu (deterministic), both "
-           "backends\n",
+    printf("pruned (two policies) versus unpruned: %llu cases (any witness), %llu "
+           "(deterministic), both backends\n",
            (unsigned long long)cases, (unsigned long long)det_cases);
     canon_context_release(ctx_of[0]);
     canon_context_release(ctx_of[1]);

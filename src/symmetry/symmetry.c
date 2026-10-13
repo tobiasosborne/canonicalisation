@@ -67,6 +67,7 @@ canon_status canon_symmetry_reset(canon_symmetry *s, uint32_t n)
     s->stab_depth = 0;
     s->n = n;
     s->stamp = 0;
+    s->epoch = 0;
     for (uint32_t v = 0; v < n; ++v) {
         s->mark[v] = 0;
     }
@@ -95,6 +96,7 @@ canon_status canon_symmetry_insert(canon_symmetry *s, const canon_root *x, canon
     st = canon_bsgs_insert_verified(&s->a, &s->gens, g, s->scratch, inserted);
     if (st == CANON_COMPLETE && *inserted) {
         s->stats.inserted += 1;
+        s->epoch += 1;
         s->stab_depth = 0; /* any stabiliser computed so far is stale: A_known grew */
     }
     return st;
@@ -153,13 +155,62 @@ static uint32_t next_stamp(canon_symmetry *s)
     return ++s->stamp;
 }
 
-void canon_symmetry_cell_orbits(canon_symmetry *s, const uint32_t *cell, uint32_t len)
+/* BFS of the orbit of the representative r under the level generators, marking every point
+ * reached that is not yet marked with the current stamp. */
+static void grow_orbit(canon_symmetry *s, const canon_bsgs *c, const canon_bsgs_level *L,
+                       uint32_t r, uint32_t st)
+{
+    const uint32_t gen_count = L != NULL ? L->gen_count : 0;
+    uint32_t head = 0, tail = 0;
+    s->queue[tail++] = r;
+    while (head < tail) {
+        const uint32_t p = s->queue[head++];
+        for (uint32_t k = 0; k < gen_count; ++k) {
+            const uint32_t id = L->gen_ids[k];
+            const uint32_t q = canon_perm_table_row(&c->gens, id)[p]; /* p^s */
+            if (s->mark[q] != st) {
+                s->mark[q] = st;
+                s->rep[q] = r;
+                s->parent_point[q] = p;
+                s->parent_gen[q] = id;
+                s->queue[tail++] = q; /* orbits are disjoint: at most n points in all */
+            }
+        }
+    }
+}
+
+void canon_symmetry_cell_orbits(canon_symmetry *s, const uint32_t *cell, uint32_t len,
+                                const uint8_t *root)
 {
     uint32_t level = 0;
     const canon_bsgs *c = stab_chain(s, &level);
     const canon_bsgs_level *L = c->depth > level ? &c->levels[level] : NULL;
-    const uint32_t gen_count = L != NULL ? L->gen_count : 0;
     const uint32_t st = next_stamp(s);
+    if (root != NULL) {
+        /* S7b: the representatives are given; mark them first so that a representative
+         * reached from another one (two explored children whose orbits merged when A_known
+         * grew) keeps itself as representative */
+        for (uint32_t j = 0; j < len; ++j) {
+            if (root[j]) {
+                s->mark[cell[j]] = st;
+                s->rep[cell[j]] = cell[j];
+                s->parent_point[cell[j]] = CANON_BSGS_NONE;
+                s->parent_gen[cell[j]] = CANON_BSGS_NONE;
+            }
+        }
+        for (uint32_t j = 0; j < len; ++j) {
+            if (root[j]) {
+                s->stats.orbits += 1;
+                grow_orbit(s, c, L, cell[j], st);
+            }
+        }
+        for (uint32_t j = 0; j < len; ++j) {
+            if (s->mark[cell[j]] != st) {
+                s->rep[cell[j]] = cell[j]; /* reached by no representative: undecided */
+            }
+        }
+        return;
+    }
     for (uint32_t j = 0; j < len; ++j) {
         const uint32_t r = cell[j];
         if (s->mark[r] == st) {
@@ -172,22 +223,7 @@ void canon_symmetry_cell_orbits(canon_symmetry *s, const uint32_t *cell, uint32_
         s->rep[r] = r;
         s->parent_point[r] = CANON_BSGS_NONE;
         s->parent_gen[r] = CANON_BSGS_NONE;
-        uint32_t head = 0, tail = 0;
-        s->queue[tail++] = r;
-        while (head < tail) {
-            const uint32_t p = s->queue[head++];
-            for (uint32_t k = 0; k < gen_count; ++k) {
-                const uint32_t id = L->gen_ids[k];
-                const uint32_t q = canon_perm_table_row(&c->gens, id)[p]; /* p^s */
-                if (s->mark[q] != st) {
-                    s->mark[q] = st;
-                    s->rep[q] = r;
-                    s->parent_point[q] = p;
-                    s->parent_gen[q] = id;
-                    s->queue[tail++] = q; /* orbits are disjoint: at most n points in all */
-                }
-            }
-        }
+        grow_orbit(s, c, L, r, st);
     }
 }
 

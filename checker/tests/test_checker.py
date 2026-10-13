@@ -6,8 +6,8 @@ default build/make/canon-check):
 
   * acceptance: every certificate emitted on the T1 subset tier (every subgroup of Sym(n),
     n <= 4, every subset) and the G1 digraph tier (n <= 2, every multiplicity vector in
-    {0,1,2}^(n*n), two colourings), under both work policies, is accepted, and the node count
-    the checker reports equals the number of node records;
+    {0,1,2}^(n*n), two colourings), under the three work policies (S7b), is accepted, and the
+    node count the checker reports equals the number of node records;
   * mutation rejection, one per rule of docs/slices/S7.md 3.4: a generator, an automorphism,
     a STAGE_O size, u, M, a rebased chain's orbit, a pruned child's automorphism index, a leaf
     t, the final bytes and the node count are tampered with, an explored child is deleted, the
@@ -194,13 +194,18 @@ def run_check(data):
     return proc.returncode, proc.stdout.strip()
 
 
+POLICIES = {"off": 1, "explicit": 2, "on": 3}  # --prune value -> work-policy ID (S7, S7b)
+
+
 def certificate(cmd_args, prune):
-    """Run canon-cli with --certificate; return (record fields, certificate bytes)."""
+    """Run canon-cli with --certificate; `prune` is a --prune value (or a bool, True = "on");
+    return (record fields, certificate bytes)."""
+    if isinstance(prune, bool):
+        prune = "on" if prune else "off"
     with tempfile.NamedTemporaryFile(suffix=".cert", delete=False) as f:
         path = f.name
     try:
-        proc = run_cli(list(cmd_args) + ["--prune", "on" if prune else "off",
-                                         "--certificate", path])
+        proc = run_cli(list(cmd_args) + ["--prune", prune, "--certificate", path])
         assert proc.returncode == 0, proc.stderr + proc.stdout
         data = pathlib.Path(path).read_bytes()
     finally:
@@ -245,11 +250,11 @@ class CheckerTestCase(unittest.TestCase):
         fields, data = certificate(args, prune)
         self.assertEqual(fields[2], "COMPLETE")
         parsed = Parsed(data)
-        self.assertEqual(parsed.work_policy, 2 if prune else 1)
+        self.assertEqual(parsed.work_policy, POLICIES[prune])
         self.assertEqual(bytes.fromhex(fields[3]), parsed.trace)
         self.assertEqual(bytes.fromhex(fields[4]), parsed.best_bytes)
         self.assertEqual(parsed.count, parsed.node_records)
-        if not prune:
+        if prune == "off":
             self.assertEqual(parsed.pruned, 0)
         t0 = time.perf_counter()
         code, line = run_check(data)
@@ -276,7 +281,7 @@ class Acceptance(CheckerTestCase):
                     if FAST and i % 7 != 0:
                         continue
                     atoms = [a for a in range(n) if mask >> a & 1]
-                    for prune in (False, True):
+                    for prune in POLICIES:
                         self.accept(subset_args(n, gens, atoms, f"t1-n{n}-g{gi}-m{mask}"),
                                     prune, stats)
         print("checker T1 subsets:", stats)
@@ -296,7 +301,7 @@ class Acceptance(CheckerTestCase):
                     arcs = tuple((a, b, b"", mult[a * n + b]) for a in range(n) for b in range(n)
                                  if mult[a * n + b])
                     cid = "g1-n%d-g%d-m%s-c%d" % (n, gi, "".join(map(str, mult)), distinct)
-                    for prune in (False, True):
+                    for prune in POLICIES:
                         self.accept(graph_args(n, gens, colours, arcs, cid), prune, stats)
         print("checker G1 digraphs:", stats)
 
@@ -308,12 +313,12 @@ class Acceptance(CheckerTestCase):
             for k in range(3 if FAST else 10):
                 gens = [list(rng.sample(range(n), n)) for _ in range(rng.choice((1, 2)))]
                 atoms = [a for a in range(n) if rng.random() < 0.5]
-                for prune in (False, True):
+                for prune in POLICIES:
                     self.accept(subset_args(n, gens, atoms, f"r-n{n}-{k}"), prune, stats)
                 arcs = tuple((a, b, rng.choice((b"", b"a")), rng.choice((1, 2)))
                              for a in range(n) for b in range(n) if rng.random() < 0.3)
                 colours = tuple(rng.choice((b"", b"c")) for _ in range(n))
-                for prune in (False, True):
+                for prune in POLICIES:
                     self.accept(graph_args(n, gens, colours, arcs, f"rg-n{n}-{k}"), prune, stats)
         print("checker random sample:", stats)
 
@@ -327,8 +332,9 @@ class Mutation(CheckerTestCase):
 
     def pruned_case(self):
         # the empty subset under Sym(3): two pruned children at the root, automorphisms listed
+        # (the explicit policy; the implicit one is covered by implicit_case)
         gens = [(1, 2, 0), (1, 0, 2)]
-        _, data = certificate(subset_args(3, gens, [], "mut"), True)
+        _, data = certificate(subset_args(3, gens, [], "mut"), "explicit")
         parsed = Parsed(data)
         self.assertGreater(parsed.pruned, 0)
         self.assertGreater(parsed.m, 0)
@@ -348,9 +354,34 @@ class Mutation(CheckerTestCase):
         if reasons:
             self.assertIn(line[len("REJECT "):], reasons, label)
 
+    def implicit_case(self):
+        # {0} under Sym(4): no explicit automorphism; (2 3) and (1 3) are found at leaves and
+        # prune one child of the root (S7b, tests/c/test_prune.c)
+        gens = [(1, 2, 3, 0), (1, 0, 2, 3)]
+        _, data = certificate(subset_args(4, gens, [0], "imp"), "on")
+        p = Parsed(data)
+        self.assertEqual((p.work_policy, p.node_records, p.pruned, p.m), (3, 7, 1, 3))  # two implicit, one transporter
+        return p
+
     def test_accepts_before_mutation(self):
-        for parsed in (self.pruned_case(), self.graph_case(), self.branch_case()):
+        for parsed in (self.pruned_case(), self.graph_case(), self.branch_case(),
+                       self.implicit_case()):
             self.assertEqual(run_check(parsed.data)[0], 0)
+
+    def test_implicit_automorphism(self):
+        # S7b: the pruned child's automorphism is an implicit one; corrupting it is caught by
+        # the same rules as an explicit one
+        p = self.implicit_case()
+        index = struct.unpack_from(">I", p.data, p.first["pruned_aut_index"])[0]
+        at = p.auts_at + 4 * p.n * index
+        self.reject(put_u32(p.data, at, 9), {"AUTOMORPHISM_NOT_MEMBER"}, "implicit range")
+        ident = b"".join(struct.pack(">I", v) for v in range(p.n))
+        data = p.data[:at] + ident + p.data[at + 4 * p.n:]
+        self.reject(data, {"PRUNED_AUTOMORPHISM_IMAGE"}, "implicit identity")
+        # the header may not claim the explicit policy for a tree pruned with implicit ones:
+        # not checkable by the checker (both policies prune), stated in checker/README.md
+        data = p.data[:p.ids_at + 4] + struct.pack(">H", 2) + p.data[p.ids_at + 6:]
+        self.assertEqual(run_check(data)[0], 0)
 
     def test_generator(self):
         p = self.pruned_case()
@@ -466,7 +497,7 @@ class Mutation(CheckerTestCase):
         p = self.pruned_case()
         data = p.data[:p.ids_at + 4] + struct.pack(">H", 1) + p.data[p.ids_at + 6:]
         self.reject(data, {"PRUNED_UNDER_UNPRUNED_POLICY"}, "policy")
-        data = p.data[:p.ids_at + 4] + struct.pack(">H", 3) + p.data[p.ids_at + 6:]
+        data = p.data[:p.ids_at + 4] + struct.pack(">H", 4) + p.data[p.ids_at + 6:]
         self.reject(data, {"HEADER"}, "unknown policy")
         self.reject(b"CNC1" + p.data[4:], {"HEADER"}, "magic")
 

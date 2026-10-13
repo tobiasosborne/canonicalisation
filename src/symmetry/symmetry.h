@@ -14,7 +14,11 @@
  * generators, keeping the Schreier tree so that for every point b of an orbit with
  * representative r an explicit element a of A_S with r^a = b can be reconstructed as a product
  * of those generators (the automorphism the certificate names for a pruned child, S7 brief
- * 3.3).
+ * 3.3).  Slice S7b (docs/slices/S7b.md) adds the second source of A_known, implicit
+ * automorphisms t_L t_best^-1 from equal leaf keys (spec 7.3 "Verify implicit automorphisms by
+ * exact membership and object equality before publication"; the membership test is the
+ * caller's, the action check is here), and the epoch counter the search uses to notice that
+ * A_known grew.
  *
  * Convention (spec 3): p[v] = v^p; (pq)[v] = q[p[v]].
  */
@@ -54,6 +58,7 @@ typedef struct canon_symmetry {
     uint32_t *parent_gen;    /* cap: generator id (into the stabiliser chain's table) of the edge */
     uint32_t *rep;           /* cap: orbit representative of every marked point */
     uint32_t *queue;         /* cap: BFS queue, then the edge path of a transporter */
+    uint64_t epoch;          /* number of insertions so far (S7b: a change means A_known grew) */
     canon_symmetry_stats stats;
 } canon_symmetry;
 
@@ -90,16 +95,20 @@ bool canon_symmetry_trivial(const canon_symmetry *s);
  * canon_bsgs_rebase. */
 canon_status canon_symmetry_stabiliser(canon_symmetry *s, const uint32_t *prefix, uint32_t d);
 
-/* The orbits of A_S (the last canon_symmetry_stabiliser) on the `len` points of `cell`, in
- * cell order: a point is a representative iff no earlier point of the cell lies in its orbit;
- * afterwards canon_symmetry_rep(v) is the representative of every cell point v (itself for a
- * representative).  A_S preserves the target cell as a set (S7 brief 3.1 lemma), so every orbit
- * met lies inside the cell; the BFS from each representative over the level generators records
- * the Schreier tree for canon_symmetry_transporter.  Requires a ready state and distinct cell
- * points. */
-void canon_symmetry_cell_orbits(canon_symmetry *s, const uint32_t *cell, uint32_t len);
+/* The orbits of A_S (the last canon_symmetry_stabiliser) on the `len` points of `cell`.
+ * Without `root` (NULL), in cell order: a point is a representative iff no earlier point of the
+ * cell lies in its orbit.  With `root` (len flags, by cell position), the representatives are
+ * exactly the flagged points (S7b: the children already explored and the one about to be), and
+ * only points reached from a representative are assigned to it.  Afterwards
+ * canon_symmetry_rep(v) is the representative of every cell point v: itself for a
+ * representative, and itself also for a point no representative reaches (with `root` only).
+ * A_S preserves the target cell as a set (S7 brief 3.1 lemma), so every orbit met lies inside
+ * the cell; the BFS from each representative over the level generators records the Schreier
+ * tree for canon_symmetry_transporter.  Requires a ready state and distinct cell points. */
+void canon_symmetry_cell_orbits(canon_symmetry *s, const uint32_t *cell, uint32_t len,
+                                const uint8_t *root);
 
-/* After canon_symmetry_cell_orbits: the representative of the cell point v. */
+/* After canon_symmetry_cell_orbits: the representative of the cell point v (see above). */
 uint32_t canon_symmetry_rep(const canon_symmetry *s, uint32_t v);
 
 /* After canon_symmetry_cell_orbits: out (n entries) receives an element a of A_S with

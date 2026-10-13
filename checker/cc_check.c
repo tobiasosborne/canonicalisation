@@ -489,7 +489,8 @@ static cc_reason run(checker *c)
         }
     }
     if (memcmp(magic, "CNC0", 4) != 0 || ids[0] != 0x0001 /* spec 3: CANONICAL_IMAGE */ ||
-        ids[1] != 0x0001 /* spec 7.1: P1 */ || (ids[2] != 0x0001 && ids[2] != 0x0002) ||
+        ids[1] != 0x0001 /* spec 7.1: P1 */ ||
+        (ids[2] != 0x0001 && ids[2] != 0x0002 && ids[2] != 0x0003) /* spec 11.1 policies */ ||
         ids[3] != 0x0002 /* spec 4.1: CDAG-2 */ || ids[4] != 0x0001 /* spec 4.3: CDAG-BYTE-1 */) {
         return CC_HEADER;
     }

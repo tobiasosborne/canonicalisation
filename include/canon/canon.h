@@ -5,8 +5,8 @@
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
- * Status of this header: slices S1 to S7 (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
- * S6.md, S7.md).
+ * Status of this header: slices S1 to S7b (docs/slices/S1.md, S2.md, S3.md, S4.md, S5.md,
+ * S6.md, S7.md, S7b.md).
  * Implemented: the version functions, the context and capacity descriptor, retain/release for
  * every handle below, groups (S3: a verified stabiliser chain by default; the S1 explicit
  * enumeration backend stays selectable through canon_context_options), canon_group_order,
@@ -139,23 +139,27 @@ typedef struct canon_capacity {
     uint64_t max_nodes;
     uint64_t max_refs;
     uint64_t max_literal_bytes;
-    /* S7, spec 11.1: the work-policy ID naming the traversal the quota counts (zero: the
-     * context default, CANON_WORK_POLICY_PRUNE_1).  CANON_WORK_POLICY_UNPRUNED (0x0001) runs
+    /* S7, S7b, spec 11.1: the work-policy ID naming the traversal the quota counts (zero: the
+     * context default, CANON_WORK_POLICY_PRUNE_2).  CANON_WORK_POLICY_UNPRUNED (0x0001) runs
      * the unpruned reference traversal of spec 7.1 and counts every NODE token;
      * CANON_WORK_POLICY_PRUNE_1 (0x0002) runs the S7 sequential prune policy
      * (docs/pruning-rules.md: orbit pruning of the target cell by the input generators that fix
      * x, for CANONICAL_IMAGE only; every other objective's traversal is the reference one) and
-     * counts the nodes explored.  Both reproduce P1's trace and bytes, so the profile ID stays
-     * CANON_PROFILE_P1; the count is a function of the input, the objective and the descriptor.
-     * Any other value is CANON_UNSUPPORTED_ACTION at problem creation. */
+     * counts the nodes explored; CANON_WORK_POLICY_PRUNE_2 (0x0003, S7b) additionally inserts
+     * the implicit automorphisms found at leaves whose key equals the incumbent's, each
+     * verified by membership and exact action, and uses them at every later decision.  All
+     * three reproduce P1's trace and bytes, so the profile ID stays CANON_PROFILE_P1; the
+     * count is a function of the input, the objective and the descriptor.  Any other value is
+     * CANON_UNSUPPORTED_ACTION at problem creation. */
     uint16_t work_policy;
 } canon_capacity;
 
-/* S7, spec 11.1 work-policy IDs (see canon_capacity.work_policy). */
+/* S7, S7b, spec 11.1 work-policy IDs (see canon_capacity.work_policy). */
 typedef uint16_t canon_work_policy;
 enum {
     CANON_WORK_POLICY_UNPRUNED = 0x0001,
-    CANON_WORK_POLICY_PRUNE_1 = 0x0002
+    CANON_WORK_POLICY_PRUNE_1 = 0x0002,
+    CANON_WORK_POLICY_PRUNE_2 = 0x0003
 };
 
 /* spec 17: create an immutable context holding the capacity defaults and the default options
@@ -163,7 +167,7 @@ enum {
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
  * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5), work_policy =
- * CANON_WORK_POLICY_PRUNE_1 (S7).
+ * CANON_WORK_POLICY_PRUNE_2 (S7b).
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -424,7 +428,7 @@ typedef enum canon_evidence {
  * witness mode; CANON_UNSUPPORTED_ACTION for a combination not listed above (including a
  * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
  * SIGNED_CANONICAL_IMAGE), SIGNED_CANONICAL_IMAGE on an unsigned group, a work policy other
- * than CANON_WORK_POLICY_UNPRUNED or CANON_WORK_POLICY_PRUNE_1 (S7), or a certificate request
+ * than CANON_WORK_POLICY_UNPRUNED, PRUNE_1 or PRUNE_2 (S7, S7b), or a certificate request
  * for an objective other than CANONICAL_IMAGE or an object that is neither a subset nor a
  * graph (S7); CANON_INVALID_INPUT
  * for a degree mismatch, a missing, superfluous or mismatched target, or a missing, superfluous
@@ -488,10 +492,10 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * CANON_WITNESS_DETERMINISTIC (S4) it is the spec 3 deterministic witness, the least element
  * of Aut_G(x) t, computed from the complete stabiliser.  For the UNPRUNED tree (work policy
  * CANON_WORK_POLICY_UNPRUNED) the two coincide (tree equivariance, spec 7.2: the attaining
- * leaves carry exactly Aut_G(x) t); S4's tests check this.  Under the S7 prune
- * (CANON_WORK_POLICY_PRUNE_1, the default) CANON_WITNESS_ANY returns the least t among the
- * EXPLORED leaves attaining the key, a valid witness that may differ from the unpruned one
- * (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
+ * leaves carry exactly Aut_G(x) t); S4's tests check this.  Under the prunes
+ * (CANON_WORK_POLICY_PRUNE_1, and PRUNE_2 the default) CANON_WITNESS_ANY returns the least t
+ * among the EXPLORED leaves attaining the key, a valid witness that may differ from the
+ * unpruned one (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
  * for the coset in deterministic mode the least element r0 of A g).
