@@ -399,7 +399,10 @@ canon_status canon_problem_create(canon_context *ctx, const canon_group *group,
  * the least element r0 of A g (the transporter completes the stabiliser for it, under the one
  * quota); for CANONICAL_LABELING_COSET the least labeling lambda0 of A lambda with
  * t = rho^-1 lambda0; for a nonzero SIGNED_CANONICAL_IMAGE the least element of A t (same
- * sign); vacuous for STABILISER and for a certified zero.  Accepted for every objective. */
+ * sign); for a certified zero (spec v2.2 3, maintainer decision of 19 October 2026) the least
+ * odd element of A (the stabiliser enumeration is then exhausted under the one quota; on the
+ * spec 7.3 fast path A = G and nothing is enumerated); vacuous for STABILISER.  Accepted for
+ * every objective. */
 typedef enum canon_witness_mode {
     CANON_WITNESS_ANY = 0,
     CANON_WITNESS_DETERMINISTIC = 1
@@ -533,7 +536,8 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * SIGNED_CANONICAL_IMAGE (S6): for a nonzero result the P1 witness t, x^t = c, with
  * [x] = chi(t) [c] (in deterministic mode the least element of A t; M0a); for a certified zero
  * the verified odd automorphism a (a in G, x^a = x, chi(a) = -1), the one-sided zero
- * certificate of spec 8.4, in either mode. */
+ * certificate of spec 8.4: the first one found in "any" mode, the least one in deterministic
+ * mode (spec v2.2 3). */
 const uint32_t *canon_result_witness(const canon_result *result, uint32_t *degree);
 /* spec 4.3: the canonical CDAG-2 bytes, only when encoding_complete and either image_canonical
  * (CANONICAL_IMAGE, CANONICAL_LABELING_COSET: c = x^lambda, and a nonzero

@@ -80,6 +80,8 @@ typedef struct obj_ctx {
     canon_bsgs *a;           /* stabiliser: verified chain of A_known */
     canon_perm_table *agens; /* stabiliser: the generators inserted into A_known */
     const canon_group *group; /* S6 signed stabiliser: the signed group (chi); else NULL */
+    bool exhaust;            /* signed stabiliser, deterministic witness (spec v2.2 3): keep
+                                the first odd hit and run on to exhaustion */
 } obj_ctx;
 
 /* spec 8.2 Minimum: "Compare the exact selected order key of x^r; retain the least.  Exhaust
@@ -185,7 +187,14 @@ static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop
      * exact test above), so chi(r) = -1 makes it a complete one-sided zero certificate ("If a
      * in A and chi(a) = -1, then [x] = -[x], hence [x] = 0 over Q"); it is not inserted, so it
      * costs no verified rebuild.  On exhaustion every generator of A was checked here, which is
-     * spec 8.4's "check chi=+1 on its generators". */
+     * spec 8.4's "check chi=+1 on its generators".
+     *
+     * With c->exhaust (spec v2.2 3: the deterministic witness of a certified zero is the least
+     * odd element of A, which needs the complete A; spec v2.2 8.4: "in the deterministic witness
+     * mode the enumeration is exhausted instead") the first odd hit is kept and the enumeration
+     * runs on.  Odd hits are still never inserted, so on exhaustion A_known is A+ = A cap
+     * ker chi exactly: every even element of A is a hit (each element of G is consumed once)
+     * and is inserted or already a member, and nothing odd is ever added. */
     if (canon_bsgs_contains_scratch(c->a, r, s->work)) {
         return CANON_COMPLETE; /* already in A_known, hence even */
     }
@@ -199,11 +208,11 @@ static canon_status consume_stabiliser(void *user, const uint32_t *r, bool *stop
         return st;
     }
     if (sign < 0) {
-        if (c->x->n > 0) {
+        if (!c->have && c->x->n > 0) {
             memcpy(s->best, r, (size_t)c->x->n * sizeof *s->best);
         }
-        c->have = true; /* A_known (even, without r) is discarded with the run */
-        *stop = true;
+        c->have = true; /* A_known (even, without r) is discarded with the run, or is A+ */
+        *stop = !c->exhaust;
         return CANON_COMPLETE;
     }
     /* spec 8.2 "insert every hit into a verified subgroup": an even non-member, so the sift
@@ -236,9 +245,11 @@ static canon_status enumerate(const canon_group *g, canon_coset_visitor *v,
  * it on every status).  With `odd` (S6, signed: g is a signed group) chi is evaluated on every
  * hit that enlarges A_known and the enumeration stops at the first odd one, with *odd = true
  * and the hit in s->best (A is then incomplete); otherwise *odd = false and every generator of
- * the complete A was found even (consume_stabiliser). */
+ * the complete A was found even (consume_stabiliser).  With `exhaust` as well (spec v2.2 3,
+ * deterministic zero witness) the enumeration is not stopped: *odd and s->best are as before
+ * (the first odd hit) and *a is the complete A+ = A cap ker chi. */
 static canon_status stabiliser_run(canon_obj_search *s, const canon_group *g, const canon_root *x,
-                                   canon_coset_visitor *v, canon_bsgs *a, bool *odd)
+                                   canon_coset_visitor *v, canon_bsgs *a, bool *odd, bool exhaust)
 {
     canon_status st = canon_bsgs_build_verified(a, x->n, NULL, 0); /* A_known = 1 */
     if (st != CANON_COMPLETE) {
@@ -246,8 +257,9 @@ static canon_status stabiliser_run(canon_obj_search *s, const canon_group *g, co
     }
     canon_perm_table agens; /* grow-only, freed with the run */
     canon_perm_table_init(&agens, x->n);
-    obj_ctx c = {s, x, x, CANON_ORDER_CDAG_BYTE_1, false, false, a, &agens, NULL};
+    obj_ctx c = {s, x, x, CANON_ORDER_CDAG_BYTE_1, false, false, a, &agens, NULL, false};
     c.group = odd != NULL ? g : NULL;
+    c.exhaust = odd != NULL && exhaust;
     st = enumerate(g, v, consume_stabiliser, &c);
     if (odd != NULL) {
         *odd = st == CANON_COMPLETE && c.have;
@@ -259,7 +271,7 @@ static canon_status stabiliser_run(canon_obj_search *s, const canon_group *g, co
 static canon_status stabiliser(canon_obj_search *s, const canon_group *g, const canon_root *x,
                                canon_coset_visitor *v, canon_bsgs *a)
 {
-    return stabiliser_run(s, g, x, v, a, NULL);
+    return stabiliser_run(s, g, x, v, a, NULL, false);
 }
 
 static canon_status run(canon_obj_search *s, const canon_group *g, const canon_root *x,
@@ -268,7 +280,7 @@ static canon_status run(canon_obj_search *s, const canon_group *g, const canon_r
 {
     const uint32_t n = x->n;
     canon_status st = CANON_COMPLETE;
-    obj_ctx c = {s, x, y, order, deterministic, false, NULL, NULL, NULL};
+    obj_ctx c = {s, x, y, order, deterministic, false, NULL, NULL, NULL, false};
     switch (objective) {
     case CANON_OBJECTIVE_LEX_MIN_IMAGE:
         st = enumerate(g, v, consume_min, &c);
@@ -580,9 +592,76 @@ static canon_status signed_nonzero(canon_obj_search *s, canon_p1_search *p1, con
     return st;
 }
 
+/* spec v2.2 3: the deterministic witness of a certified zero is "the least image-array element
+ * a0 of A with chi(a0) = -1, equivalently the least element of the coset A+ a, where
+ * A+ = A cap ker chi has index two in A and a is any odd element of A".  *aplus is the
+ * complete A+ and s->best holds an odd element a of A on entry; on CANON_COMPLETE s->best holds
+ * a0, found by the coset descent (spec 9.4 "successive point constraints", the one used for r0
+ * of A g), counted in stats.coset (spec 8.3 "must appear in metrics"). */
+static canon_status least_odd(canon_obj_search *s, const canon_bsgs *aplus, uint32_t n)
+{
+    if (n == 0) {
+        return CANON_COMPLETE; /* the empty permutation; no character value is odd on it */
+    }
+    memcpy(s->g, s->best, (size_t)n * sizeof *s->g); /* canon_coset_least: out must not alias r */
+    bool found = false;
+    canon_status st = canon_coset_least(aplus, 0, s->g, NULL, 0, s->best, &found,
+                                        &s->stats.coset, &s->scratch);
+    return st == CANON_COMPLETE && !found ? CANON_INTERNAL_ERROR : st;
+}
+
+/* spec v2.2 3 on the spec 7.3 singleton-orbit route, where A = G = <S> and gens[odd_at] is odd:
+ * A+ = ker chi as a verified chain (spec 9.1), by Schreier's lemma for the right transversal
+ * {1, a} of A+ in G, a = gens[odd_at]: the Schreier generator of (t, s) is t s rep(t s)^-1 with
+ * rep(h) = 1 if chi(h) = +1 else a, so for each input generator s: chi(s) = +1 gives s (t = 1)
+ * and a s a^-1 (t = a, a s odd); chi(s) = -1 gives s a^-1 (t = 1) and a s (t = a, a s even).
+ * Products act left to right, (pq)[v] = q[p[v]] (spec 3; canon_perm_compose).  Then a0 is the
+ * least element of A+ a (least_odd).  The table and the chain go through src/arena/mem.h and are
+ * freed on every path. */
+static canon_status least_odd_of_group(canon_obj_search *s, const canon_group_signs *sg,
+                                       uint32_t odd_at, uint32_t n)
+{
+    const size_t k = sg->gens.count;
+    size_t rows = 0, words = 0;
+    if (!canon_size_mul(k, 2u, &rows) || !canon_size_add(rows, 2u, &words) ||
+        !canon_size_mul(words, (size_t)n, &words)) {
+        return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+    }
+    canon_status st = CANON_COMPLETE;
+    uint32_t *table = canon_alloc_array(words, sizeof *table, &st);
+    if (table == NULL) {
+        return st;
+    }
+    uint32_t *inv = table + rows * (size_t)n, *tmp = inv + n; /* a^-1 and a product */
+    const uint32_t *a = canon_perm_table_row(&sg->gens, odd_at);
+    canon_perm_inverse(a, inv, n);
+    for (size_t i = 0; i < k; ++i) {
+        const uint32_t *gi = canon_perm_table_row(&sg->gens, (uint32_t)i);
+        uint32_t *first = table + 2u * i * (size_t)n, *second = first + n;
+        if (sg->signs[i] > 0) {
+            memcpy(first, gi, (size_t)n * sizeof *first); /* s */
+            canon_perm_compose(a, gi, tmp, n);            /* a s */
+            canon_perm_compose(tmp, inv, second, n);      /* a s a^-1 */
+        } else {
+            canon_perm_compose(gi, inv, first, n); /* s a^-1 */
+            canon_perm_compose(a, gi, second, n);  /* a s */
+        }
+    }
+    canon_bsgs aplus;
+    st = canon_bsgs_build_verified(&aplus, n, table, rows);
+    if (st == CANON_COMPLETE) {
+        s->stats.stab_builds += 1;
+        memcpy(s->best, a, (size_t)n * sizeof *s->best);
+        st = least_odd(s, &aplus, n);
+        canon_bsgs_free(&aplus);
+    }
+    canon_mem_free(table);
+    return st;
+}
+
 /* A certified zero (spec 8.4 "one-sided zero certificate"; spec 3.2 "A zero certificate can
  * complete signed search early without a canonical monomial"): s->best holds the verified odd
- * automorphism. */
+ * automorphism (in the deterministic mode the least one, spec v2.2 3). */
 static void signed_zero(canon_obj_outcome *out)
 {
     out->flags.zero_certified = true;
@@ -616,7 +695,15 @@ static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const
         s->stats.fast_path = 1;
         for (uint32_t i = 0; i < sg->gens.count; ++i) {
             if (sg->signs[i] < 0) {
-                if (n > 0) {
+                if (deterministic && n > 0) {
+                    /* spec v2.2 3: the least odd element of A = G, not the first odd
+                     * generator; A is known without traversal, so nothing is enumerated */
+                    st = least_odd_of_group(s, sg, i, n);
+                    if (st != CANON_COMPLETE) {
+                        return st;
+                    }
+                } else if (n > 0) {
+                    /* any mode: the first odd generator in input order */
                     memcpy(s->best, canon_perm_table_row(&sg->gens, i),
                            (size_t)n * sizeof *s->best);
                 }
@@ -643,12 +730,18 @@ static canon_status signed_image(canon_obj_search *s, canon_p1_search *p1, const
     /* spec 8.4 reference algorithm: "enumerate the stabiliser as in §8.2, stopping immediately
      * if an odd witness is verified.  Otherwise exhaustion gives complete A; check chi=+1 on
      * its generators, run/finish P1".  SIGN-COVER is open: the nonzero route always completes
-     * the stabiliser. */
+     * the stabiliser.  In the deterministic mode the enumeration is exhausted instead of
+     * stopping at the first odd witness, and the zero reports the least odd element of A (spec
+     * v2.2 3, 8.4); the enumeration is part of the solve and counts against its quota (spec
+     * v2.2 3, 11.1). */
     canon_coset_visitor v;
     canon_coset_visitor_init(&v, NULL, NULL, NULL, quota);
     v.scratch = &s->scratch;
     bool odd = false;
-    st = stabiliser_run(s, g, x, &v, &a, &odd);
+    st = stabiliser_run(s, g, x, &v, &a, &odd, deterministic);
+    if (st == CANON_COMPLETE && odd && deterministic) {
+        st = least_odd(s, &a, n); /* a is the complete A+, s->best the first odd hit */
+    }
     if (st == CANON_COMPLETE && odd) {
         signed_zero(out);
     } else if (st == CANON_COMPLETE) {

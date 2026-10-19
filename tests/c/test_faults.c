@@ -145,6 +145,11 @@ static bool flow(void)
         {CANON_OBJECTIVE_CANONICAL_LABELING_COSET, CANON_PROFILE_P1, 0, false, true, false, false, false},
         {CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false, false, false, false, true},
         {CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, 1, false, false, false, false, true},
+        /* spec v2.2 3: the deterministic zero witness, by the exhausted enumeration (x = {0,2}
+         * is fixed by the odd (0 2)) and on the spec 7.3 fast path (every generator fixes the
+         * tuple, A = G, the Schreier generators of A+) */
+        {CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, 0, false, false, true, false, true},
+        {CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, 2, false, false, true, false, true},
     };
     for (size_t i = 0; i < sizeof specs / sizeof *specs && ws != NULL && g != NULL && sg != NULL &&
                        x != NULL && gr != NULL && d != NULL && y != NULL;

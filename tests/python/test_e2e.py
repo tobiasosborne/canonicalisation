@@ -1622,14 +1622,18 @@ class LabelingAndSigned(CliTestCase):
         if data is not None:
             self.check_stream(data)
         # M0a (docs/slices/M0a.md 2.4): deterministic mode: a nonzero witness is the least
-        # element of A t (same sign, bytes and group); a zero certificate is unchanged
+        # element of A t (same sign, bytes and group); spec v2.2 3 (maintainer decision of
+        # 19 October 2026): a zero reports the least odd element of A, whatever the route
         fd = self.run_ok("signed", n, gens, kind, x,
                          ("--signs", signs_arg(signs), "--witness", "deterministic"), cid + "-d")
+        stab = stabiliser_of(n, group, kind, x)
         if s != 0:
             t = parse_witness(n, f[5].split(";")[0])
-            stab = stabiliser_of(n, group, kind, x)
             least = min(rc.mul(a, t) for a in stab)
             expect = expect[:2] + [witness_field(n, least) + ";sign=%+d" % s] + expect[3:]
+        else:
+            least = min(a for a in stab if chi[a] < 0)
+            expect = expect[:2] + [witness_field(n, least) + ";sign=0"] + expect[3:]
         self.assertEqual(fd[1:3] + fd[3:], ["0007", "COMPLETE"] + expect)
         # covariance (spec 8.4): s(x^h) = chi(h) s(x), c unchanged
         for h in hs_:

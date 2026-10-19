@@ -12,6 +12,10 @@
  *    a nonzero result has c and t of the unsigned canonical image, s = chi(t), Group(A) of the
  *    stabiliser objective; covariance s(x^h) = chi(h) s(x) with c unchanged for every h in G;
  *    the cross-feed s(C(x)) = +1 (spec 20); verify_witness accepts every result;
+ *  - spec v2.2 3: in the deterministic mode a certified zero reports the least odd element of A
+ *    (brute force on every T1 zero and on random groups of degree 5 and 6), independent of the
+ *    generator list (reversed, redundant and repeated generators) and of the route (the 7.3
+ *    fast path and the 8.1 enumeration); the "any" mode keeps the first odd automorphism;
  *  - tampered certificates (not a member, not fixing x, even, not a bijection) and a tampered
  *    nonzero witness are rejected;
  *  - graphs, validation, quota, output bound, encode and the sign accessor;
@@ -336,6 +340,29 @@ static canon_object *image_of(const t1_sym *s, uint32_t mask, uint32_t e, uint32
     return subset_of(s->n, atoms, k);
 }
 
+/* spec v2.2 3: the deterministic witness of a certified zero, "the least image-array element
+ * a0 of A with chi(a0) = -1", by brute force over the T1 element table (subset `mask`).
+ * Returns 0 if A has no odd element. */
+static int least_odd_brute(const t1_sym *s, const t1_group *grp, uint32_t mask, const int *chi,
+                           uint32_t *out)
+{
+    int have = 0;
+    for (uint32_t e = 0; e < s->count; ++e) {
+        uint32_t m = 0;
+        if (!(grp->mask >> e & 1u) || chi[e] >= 0) {
+            continue;
+        }
+        for (uint32_t a = 0; a < s->n; ++a) {
+            m |= (mask >> a & 1u) << s->elem[e][a];
+        }
+        if (m == mask && (!have || canon_perm_lex_compare(s->elem[e], out, s->n) < 0)) {
+            memcpy(out, s->elem[e], s->n * sizeof *out);
+            have = 1;
+        }
+    }
+    return have;
+}
+
 /* The zero certificate the reference procedure must return, computed independently of the
  * consumer: on the spec 7.3 fast path (every generator fixes x) the first odd generator in
  * input order; otherwise the first leaf of the group's spec 8.1 enumeration (its own
@@ -402,7 +429,8 @@ static int expected_certificate(const t1_sym *s, const t1_group *grp, const cano
 
 static void t1_tier(void)
 {
-    uint32_t cases = 0, zeros = 0, covariances = 0, certificates = 0;
+    uint32_t cases = 0, zeros = 0, covariances = 0, certificates = 0, det_zeros = 0;
+    uint32_t det_covariances = 0;
     canon_workspace *ws = NULL;
     CHECK(canon_workspace_create(ctx_of[0], &ws) == CANON_COMPLETE);
     for (uint32_t n = 0; n <= 4; ++n) {
@@ -459,8 +487,8 @@ static void t1_tier(void)
                         const uint32_t *w = canon_result_witness(r, &deg);
                         canon_status st;
                         /* M0a (docs/slices/M0a.md 2.4): deterministic mode: same sign, bytes
-                         * and group; a nonzero witness is the least a t over A (brute force),
-                         * a zero certificate is the same odd automorphism */
+                         * and group; a nonzero witness is the least a t over A (brute force);
+                         * spec v2.2 3: a zero reports the least odd element of A */
                         {
                             canon_result *rd = solve_signed_det(ws, g, x);
                             uint32_t dd = 0;
@@ -470,7 +498,10 @@ static void t1_tier(void)
                                   (sx == 0 && canon_result_bytes(rd, &(size_t){0}) == NULL));
                             CHECK(same(canon_result_group_bytes, rd, r) || sx == 0);
                             if (sx == 0) {
-                                CHECK(n == 0 || memcmp(wd, w, n * 4u) == 0);
+                                uint32_t least[4] = {0, 0, 0, 0};
+                                CHECK(least_odd_brute(&s, grp, mask, chi, least));
+                                CHECK(n == 0 || memcmp(wd, least, n * 4u) == 0);
+                                det_zeros += 1;
                             } else {
                                 uint32_t least[4] = {0, 0, 0, 0};
                                 int have = 0;
@@ -550,6 +581,18 @@ static void t1_tier(void)
                             CHECK(sign_of(rh) == chi[h] * sx);
                             if (sx != 0) {
                                 CHECK(same(canon_result_bytes, rh, r));
+                            } else {
+                                /* spec v2.2 3: x^h is a zero too, and its deterministic witness
+                                 * is the least odd element of its own stabiliser h^-1 A h */
+                                canon_result *rdh = solve_signed_det(ws, g, xh);
+                                uint32_t dd = 0, least[4] = {0, 0, 0, 0};
+                                const uint32_t *wdh = canon_result_witness(rdh, &dd);
+                                CHECK(sign_of(rdh) == 0 && wdh != NULL && dd == n);
+                                CHECK(least_odd_brute(&s, grp, m, chi, least));
+                                CHECK(n == 0 || memcmp(wdh, least, n * 4u) == 0);
+                                verify(rdh, true);
+                                canon_result_release(rdh);
+                                det_covariances += 1;
                             }
                             canon_result_release(rh);
                             canon_object_release(xh);
@@ -566,10 +609,215 @@ static void t1_tier(void)
         }
     }
     canon_workspace_release(ws);
-    printf("T1 signed: %u cases (%u zero, %u certificates pinned), %u covariance solves (both "
-           "backends)\n",
-           cases, zeros, certificates, covariances);
-    CHECK(zeros > 0 && zeros < cases && certificates == zeros);
+    printf("T1 signed: %u cases (%u zero, %u certificates pinned, %u deterministic zero "
+           "witnesses, %u on transported zeros), %u covariance solves (both backends)\n",
+           cases, zeros, certificates, det_zeros, det_covariances, covariances);
+    CHECK(zeros > 0 && zeros < cases && certificates == zeros && det_zeros == zeros);
+}
+
+/* ---- spec v2.2 3: the deterministic zero witness beyond T1 ---- */
+
+/* The deterministic witness of the signed image of x under g (NULL when it is not a zero). */
+static void det_zero_witness(canon_workspace *ws, const canon_group *g, const canon_object *x,
+                             uint32_t n, uint32_t *out, int *zero)
+{
+    canon_result *r = solve_signed_det(ws, g, x);
+    uint32_t deg = 0;
+    const uint32_t *w = canon_result_witness(r, &deg);
+    *zero = sign_of(r) == 0;
+    CHECK(w != NULL && deg == n);
+    if (w != NULL && n > 0) {
+        memcpy(out, w, n * sizeof *out);
+    }
+    verify(r, true);
+    canon_result_release(r);
+}
+
+/* parity of a permutation of {0..n-1}: +1 even, -1 odd */
+static int parity(const uint32_t *p, uint32_t n)
+{
+    uint32_t seen = 0, cycles = 0;
+    for (uint32_t v = 0; v < n; ++v) {
+        if (seen >> v & 1u) {
+            continue;
+        }
+        cycles += 1;
+        for (uint32_t w = v; !(seen >> w & 1u); w = p[w]) {
+            seen |= 1u << w;
+        }
+    }
+    return (n - cycles) % 2u == 0 ? 1 : -1;
+}
+
+/* brute force over the elements of G (its own spec 8.1 enumerate op): the least odd element,
+ * under the parity character, of the stabiliser of the subset `mask` */
+typedef struct least_odd_scan {
+    uint32_t n, mask;
+    uint32_t least[8];
+    int have;
+    uint64_t elements;
+} least_odd_scan;
+
+static canon_status consume_least_odd(void *user, const uint32_t *r, bool *stop)
+{
+    least_odd_scan *f = user;
+    uint32_t m = 0;
+    (void)stop;
+    f->elements += 1;
+    for (uint32_t a = 0; a < f->n; ++a) {
+        m |= (f->mask >> a & 1u) << r[a];
+    }
+    if (m == f->mask && parity(r, f->n) < 0 &&
+        (!f->have || canon_perm_lex_compare(r, f->least, f->n) < 0)) {
+        memcpy(f->least, r, f->n * sizeof *r);
+        f->have = 1;
+    }
+    return CANON_COMPLETE;
+}
+
+static uint32_t lcg(uint64_t *state)
+{
+    *state = *state * 6364136223846793005u + 1442695040888963407u;
+    return (uint32_t)(*state >> 33);
+}
+
+static void random_perm(uint64_t *state, uint32_t n, uint32_t *p)
+{
+    for (uint32_t v = 0; v < n; ++v) {
+        p[v] = v;
+    }
+    for (uint32_t v = n; v > 1; --v) {
+        const uint32_t j = lcg(state) % v, t = p[v - 1];
+        p[v - 1] = p[j];
+        p[j] = t;
+    }
+}
+
+static void zero_witness(void)
+{
+    canon_workspace *ws = NULL;
+    CHECK(canon_workspace_create(ctx_of[0], &ws) == CANON_COMPLETE);
+    /* M0a review finding 3: n = 3, generators [2,1,0], [1,0,2], chi = (-1, -1), x = {}: the
+     * "any" mode reports the first odd generator [2,1,0] (spec 7.3 fast path), the
+     * deterministic mode the least odd element of A = G = Sym(3), [0,2,1] */
+    {
+        const uint32_t gens[6] = {2, 1, 0, 1, 0, 2}, least[3] = {0, 2, 1};
+        const int8_t signs[2] = {-1, -1};
+        canon_object *x = subset_of(3, NULL, 0);
+        for (int b = 0; b < 2; ++b) {
+            canon_group *g = signed_group(b, 3, gens, 2, signs);
+            canon_result *r = solve_signed(ws, g, x);
+            uint32_t deg = 0, w[3];
+            const uint32_t *a = canon_result_witness(r, &deg);
+            CHECK(sign_of(r) == 0 && a != NULL && deg == 3 && a[0] == 2 && a[1] == 1 && a[2] == 0);
+            canon_result_release(r);
+            int zero = 0;
+            det_zero_witness(ws, g, x, 3, w, &zero);
+            CHECK(zero && memcmp(w, least, sizeof w) == 0);
+            canon_group_release(g);
+        }
+        canon_object_release(x);
+    }
+    /* random groups on 5 and 6 points under the parity character, every subset: the
+     * deterministic zero witness is the brute-force least odd automorphism, for the generator
+     * list as given, reversed, and with redundant generators (a product, an inverse, a repeat,
+     * the identity) appended, under both backends */
+    uint64_t state = 0x5eed2026u;
+    uint32_t zeros = 0, fast = 0, enumerated = 0, differ = 0;
+    for (uint32_t trial = 0; trial < 24; ++trial) {
+        const uint32_t n = 5u + trial % 2u, k = 1u + trial % 3u;
+        uint32_t gens[3 * 6], rev[3 * 6], red[7 * 6];
+        int8_t signs[3], rsigns[3], dsigns[7];
+        for (uint32_t i = 0; i < k; ++i) {
+            random_perm(&state, n, gens + i * n);
+            if (trial % 4u == 0 && i == 0) {
+                /* a small group too: one transposition-rich generator */
+                for (uint32_t v = 0; v < n; ++v) {
+                    gens[v] = v;
+                }
+                gens[0] = 1;
+                gens[1] = 0;
+            }
+            signs[i] = (int8_t)parity(gens + i * n, n);
+        }
+        for (uint32_t i = 0; i < k; ++i) {
+            memcpy(rev + i * n, gens + (k - 1u - i) * n, n * sizeof *rev);
+            rsigns[i] = signs[k - 1u - i];
+        }
+        /* redundant: gens, g0 g_last, g0^-1, g_last again, identity */
+        memcpy(red, gens, k * n * sizeof *red);
+        memcpy(dsigns, signs, k);
+        canon_perm_compose(gens, gens + (k - 1u) * n, red + k * n, n);
+        canon_perm_inverse(gens, red + (k + 1u) * n, n);
+        memcpy(red + (k + 2u) * n, gens + (k - 1u) * n, n * sizeof *red);
+        for (uint32_t v = 0; v < n; ++v) {
+            red[(k + 3u) * n + v] = v;
+        }
+        dsigns[k] = (int8_t)(signs[0] * signs[k - 1u]);
+        dsigns[k + 1u] = signs[0];
+        dsigns[k + 2u] = signs[k - 1u];
+        dsigns[k + 3u] = 1;
+        for (int b = 0; b < 2; ++b) {
+            canon_group *g = signed_group(b, n, gens, k, signs);
+            canon_group *gr = signed_group(b, n, rev, k, rsigns);
+            canon_group *gd = signed_group(b, n, red, k + 4u, dsigns);
+            for (uint32_t mask = 0; mask < (1u << n); mask += 1u + (trial % 3u)) {
+                uint32_t atoms[6], c = 0;
+                for (uint32_t a = 0; a < n; ++a) {
+                    if (mask >> a & 1u) {
+                        atoms[c++] = a;
+                    }
+                }
+                least_odd_scan f;
+                memset(&f, 0, sizeof f);
+                f.n = n;
+                f.mask = mask;
+                canon_coset_visitor v;
+                canon_coset_visitor_init(&v, consume_least_odd, NULL, &f, 1u << 20);
+                CHECK(g->ops->enumerate(g, &v) == CANON_COMPLETE);
+                canon_object *x = subset_of(n, atoms, c);
+                uint32_t w[6], wr[6], wd[6];
+                int zero = 0, zr = 0, zd = 0;
+                det_zero_witness(ws, g, x, n, w, &zero);
+                det_zero_witness(ws, gr, x, n, wr, &zr);
+                det_zero_witness(ws, gd, x, n, wd, &zd);
+                CHECK(zero == f.have && zr == f.have && zd == f.have);
+                if (f.have) {
+                    CHECK(memcmp(w, f.least, n * sizeof *w) == 0);
+                    CHECK(memcmp(wr, w, n * sizeof *w) == 0 && memcmp(wd, w, n * sizeof *w) == 0);
+                    /* the "any" mode's witness is an odd automorphism, possibly another one */
+                    canon_result *r = solve_signed(ws, g, x);
+                    uint32_t deg = 0;
+                    const uint32_t *a = canon_result_witness(r, &deg);
+                    CHECK(sign_of(r) == 0 && a != NULL && parity(a, n) < 0);
+                    differ += a != NULL && memcmp(a, w, n * sizeof *w) != 0;
+                    verify(r, true);
+                    canon_result_release(r);
+                    /* which route: every generator fixes x (spec 7.3) or not (spec 8.1) */
+                    int fixes = 1;
+                    for (uint32_t i = 0; i < k; ++i) {
+                        uint32_t m = 0;
+                        for (uint32_t a2 = 0; a2 < n; ++a2) {
+                            m |= (mask >> a2 & 1u) << gens[i * n + a2];
+                        }
+                        fixes &= m == mask;
+                    }
+                    fast += (uint32_t)fixes;
+                    enumerated += (uint32_t)!fixes;
+                    zeros += 1;
+                }
+                canon_object_release(x);
+            }
+            canon_group_release(g);
+            canon_group_release(gr);
+            canon_group_release(gd);
+        }
+    }
+    canon_workspace_release(ws);
+    printf("deterministic zero witness: %u zeros on random groups (fast path %u, enumeration %u; "
+           "the any-mode witness differs on %u)\n",
+           zeros, fast, enumerated, differ);
+    CHECK(zeros > 0 && fast > 0 && enumerated > 0);
 }
 
 /* ---- tampered certificates ---- */
@@ -805,6 +1053,7 @@ int main(void)
     golden();
     paths();
     t1_tier();
+    zero_witness();
     tampered();
     graphs_and_errors();
     counters();
