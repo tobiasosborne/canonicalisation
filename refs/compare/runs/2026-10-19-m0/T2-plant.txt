@@ -1,0 +1,4 @@
+PLANTED nibble 55 of bytes_hex, case t2-s20261013-010143-canonical_labeling_coset, file T2-b.tsv
+DISAGREE t2-s20261013-010143-canonical_labeling_coset: fields differ: bytes_hex
+11330 agree, 1 disagree/missing
+PLANT DETECTED

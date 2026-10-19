@@ -1,0 +1,4 @@
+PLANTED nibble 2 of group_hex, case t1-s20261013-027205-signed_canonical_image, file T1-b.tsv
+DISAGREE t1-s20261013-027205-signed_canonical_image: fields differ: group_hex
+34090 agree, 1 disagree/missing
+PLANT DETECTED
