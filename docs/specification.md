@@ -1,8 +1,15 @@
 # A native C engine for canonicalisation under permutation groups
 
-**Architecture and implementation specification · 2 October 2026 · version 2.1**
+**Architecture and implementation specification · 19 October 2026 · version 2.2**
 
-Prepared for Tobias J. Osborne. Reviewed baseline: **v1.0**, 29 September 2026, commit **`7ad98cb`**, SHA-256 **`924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`**. Revision of v2.0 (30 September 2026, commit **`cb76c0d`**). The [referee report](../reviews/referee-report.md) remains a historical record. The [response](../reviews/review-response.md) maps its 18 findings and TensorGR T1–T14 to this revision; the [implementation plan](implementation-plan.md) defines future gates.
+Prepared for Tobias J. Osborne. Reviewed baseline: **v1.0**, 29 September 2026, commit **`7ad98cb`**, SHA-256 **`924699142d622de142e63f1145c91b436612aa88653e77311da8ecb2d2cfb431`**. Revision of v2.1 (2 October 2026, commit **`a2eef66`**), which revised v2.0 (30 September 2026, commit **`cb76c0d`**). The [referee report](../reviews/referee-report.md) remains a historical record. The [response](../reviews/review-response.md) maps its 18 findings and TensorGR T1–T14 to this revision; the [implementation plan](implementation-plan.md) defines future gates.
+
+**Revision v2.2** (19 October 2026; editorial, no golden value changes):
+
+- §3: the deterministic witness of every objective is stated: r₀=min A g for `TRANSPORTER_ONE`, none for `STABILISER`, λ₀=min Aλ with t₀=ρ⁻¹λ₀ for the labeling, min A t for a nonzero signed image, and for a certified signed zero the least odd element of A (min A⁺a); the mode needs the complete A, whose enumeration counts against the quota (§8.4 likewise).
+- §3, §8.2: a transporter target of another shape than x on the same degree is an ordinary input with the complete empty result.
+- §3.2: evidence mode `CHECKED_CERTIFICATE` means that a certificate for the independent checker is attached; only the checker's acceptance makes the claim checked.
+- §7.4: the DAG case states its trace and witness explicitly.
 
 **Revision v2.1** (2 October 2026):
 
@@ -70,6 +77,10 @@ Objective tags are uint16:
 
 A deterministic witness is optional metadata: minimise the image array among all solutions sending x to the selected c, either by complete enumeration or by minimising A g after A is proved complete. Canonical bytes alone do not require this cost. Witness choice is not equivariant under input automorphisms; the complete coset is the natural equivariant output.
 
+Per objective, the deterministic witness is: for `CANONICAL_IMAGE` the least g∈G with x^g=c; for `LEX_MIN_IMAGE` the least g attaining the minimum; for `TRANSPORTER_ONE` the least element r₀ of A g, g any solution (every solution lies in A g, §8.2); for `TRANSPORTER_COSET` the same r₀, which the payload encodes (§9.4); for `STABILISER` none, since the objective reports no witness and the mode is vacuous; for `CANONICAL_LABELING_COSET` the least labeling λ₀=min Aλ of the complete coset (§3.1), reported with t₀=ρ⁻¹λ₀, so that λ₀=ρt₀; for a nonzero `SIGNED_CANONICAL_IMAGE` the least element of A t, t any P1 witness, which has the same sign χ(t) because A is even (§8.4); for a certified signed zero the least image-array element a₀ of A with χ(a₀)=−1, equivalently the least element of the coset A⁺a, where A⁺=A∩ker χ has index two in A and a is any odd element of A. The deterministic mode thus needs the complete stabiliser A, and the §8.2 stabiliser enumeration of x that provides it is part of the solve and counts against its one quota (§11.1): for `CANONICAL_IMAGE` it runs after P1, for `TRANSPORTER_ONE` after the hit, and on a signed zero the §8.4 enumeration is exhausted instead of stopping at the first odd witness. On the signed §7.3 singleton-orbit route A=G is known without traversal and nothing is enumerated. Without the deterministic mode any verified witness may be returned, e.g. the first odd automorphism found for a zero.
+
+The transporter objectives take a target y on the domain of x. A y of another shape than x (another root kind, e.g. a tuple against a set of atoms or a graph against a nested object) with the same degree n is an ordinary input, not `INVALID_INPUT`: no g∈G sends x to it, so exhaustion gives the complete empty result.
+
 ### 3.1 Typed labeling-coset contract
 
 Let Ω be the source, D_n={0,…,n−1} the ordered target, ρ:Ω→D_n a bijection, and Λ=Gρ. Compute x′=x^ρ and G′=ρ⁻¹Gρ ≤ Sym(D_n). Solve on D_n for t∈G′; return **λ=ρt:Ω→D_n**, c=(x^ρ)^t=x^λ. Since t=ρ⁻¹gρ, λ=gρ∈Λ. λ is not generally an element of G. The complete set of labelings taking x to c is **Aλ**: if κ∈Λ and x^κ=c, κλ⁻¹∈A, and conversely every aλ works.
@@ -86,7 +97,7 @@ Status is a separate enum: `COMPLETE`, `CANCELLED`, `CAPACITY_LIMIT`, `RESOURCE_
 
 Interrupted results may contain a valid candidate or verified subgroup. `COMPLETE` is relative to the requested objective: a positive transporter witness needs no negative-search coverage; an empty transporter, minimum, canonical image, nonzero sign or complete stabiliser needs its applicable coverage evidence. A zero certificate can complete signed search early without a canonical monomial. Incomplete bytes cannot be used as a canonical database key.
 
-Evidence mode is explicit: `TRUSTED_ENGINE` records exhaustion asserted by the implementation; `CHECKED_CERTIFICATE` requires an independent checker of the objective's coverage and rules (§20). A valid witness alone never upgrades one to the other. Bounds carry an objective/order ID and region: a byte bound is not a trace-plus-byte bound.
+Evidence mode is explicit: `TRUSTED_ENGINE` records exhaustion asserted by the implementation; `CHECKED_CERTIFICATE` on a result means that a certificate for an independent checker of the objective's coverage and rules (§20) is attached. Only the checker's acceptance of that certificate makes the claim checked; the mode alone is not that acceptance. A valid witness alone never upgrades one to the other. Bounds carry an objective/order ID and region: a byte bound is not a trace-plus-byte bound.
 
 ## 4. Frozen encoding, orders and keys
 
@@ -241,7 +252,7 @@ The following abbreviations expand **exactly** via §§4.1 and 7.2: `H(n)=43 4e 
 | n=2, x={0}, G=1 | Initial cells [{1},{0}] remain in place although G-orbit signatures differ. L=(1,0), t=id, c={0}. Same trace as above; stream `H(2) 00000002 01 00000000 04 00000001 00000000 00000001`. |
 | n=2, empty subset, G=Sym(2) | Root stages both [2]; two children both stages [1,1]. Least-witness leaf selects 0 first, t=id. Trace `10 00000000 20 00000001 00000002 21 00000001 00000002 10 00000001 20 00000002 00000001 00000001 21 00000002 00000001 00000001 00`. Stream `H(2) 00000001 04 00000000 00000000`. |
 | n=2, one unit arc 0→1, all labels empty, G=Sym(2) | O signatures are (1,0) at 0 and (0,1) at 1, so cells become [{1},{0}]. G does not split; one further stable sweep is required. Trace `10 00000000 20 00000002 00000001 00000001 21 00000002 00000001 00000001 20 00000002 00000001 00000001 21 00000002 00000001 00000001 00`. Witness [1,0], output arc 1→0. Stream `H(2) 00000001 09 00000000 00000000 00000001 00000001 00000000 00000000 00000001 01 00000000`. |
-| n=0, x=(b,b), b=empty literal | One height-0 literal, one height-1 tuple. Stream `H(0) 00000002 02 00000000 03 00000002 00000000 00000000 00000001`. Shared and duplicate b storage give these same bytes. Trace equals n=0 case above. |
+| n=0, x=(b,b), b=empty literal | One height-0 literal, one height-1 tuple. Stream `H(0) 00000002 02 00000000 03 00000002 00000000 00000000 00000001`. Shared and duplicate b storage give these same bytes. The root is neither a subset nor a graph, so its initial keys and O signatures are empty; n=0 gives the empty partition, both stages record zero cells, the sweep splits nothing and the root is a leaf: trace `10 00000000 20 00000000 21 00000000 00`, as in the n=0 subset case. Witness empty (the identity of D_0). |
 
 For the second case CDAG-BYTE-1 minimum is {0}, with identity witness, whereas P1 returns {1}; the objectives differ deliberately. For n=2 empty subset with transposition character −1, [1,0] fixes x and certifies signed zero. For x={0} in the same signed group, A=1, P1 returns {1} with sign −1; {1} returns itself with sign +1. These sign cases are hand checked by listing the two group elements.
 
@@ -274,7 +285,7 @@ Any transporter t_b suffices for coverage; the least choice freezes reference tr
 | Objective | `consume(r)` and termination rule |
 |---|---|
 | Minimum | Compare the exact selected order key of x^r; retain the least. Exhaust all leaves for completion. |
-| Transporter one | Test exact x^r=y; stop successfully on one hit. Declare empty only after exhaustion. |
+| Transporter one | Test exact x^r=y; stop successfully on one hit. Declare empty only after exhaustion. A y of another shape than x on the same degree is never hit and gives the complete empty result (§3). |
 | Stabiliser | Test x^r=x; insert every hit into a verified subgroup. Exhaustion proves every member of A was inserted and no other one was. |
 | Transporter coset | Find one g, then run complete stabiliser consumer for x; return A g. All solutions r satisfy r g⁻¹∈A. If no g, return exhausted empty. |
 | Canonical labeling coset | Run §7 on target coordinates, then complete stabiliser; reconstruct §3.1 and return Aλ. A is computed and reported on the source domain Ω (A=Aut_G(x)≤Sym(Ω)); its conjugate A′=ρ⁻¹Aρ on D_n is not the reported group. |
@@ -296,7 +307,7 @@ Input may supply signed generators. Validate χ by constructing the lifted gener
 
 If a∈A and χ(a)=−1, then [x]=−[x], hence [x]=0 over Q. One checked membership/action/sign witness is a complete **one-sided zero certificate**. If every a∈A is even, define a functional on the orbit by f(x^g)=χ(g). It is well-defined: equal images imply g h⁻¹∈A, hence χ(g)=χ(h). It respects the relations and takes f(x)=1, proving nonzero. Thus zero iff A contains an odd element.
 
-Reference algorithm: enumerate the stabiliser as in §8.2, stopping immediately if an odd witness is verified. Otherwise exhaustion gives complete A; check χ=+1 on its generators, run/finish P1 for c=x^t, and return s=χ(t), so [x]=s[c]. If p and q reach c, p q⁻¹∈A makes their signs equal. Under x→x^h the nonzero sign changes to χ(h)s while c stays fixed; this covariance is the signed equivalence law, not invariance of the bare coefficient. Unsigned callers do not pay for this completeness search.
+Reference algorithm: enumerate the stabiliser as in §8.2, stopping immediately if an odd witness is verified (in the deterministic witness mode the enumeration is exhausted instead, and the zero reports the least odd element of A, §3). Otherwise exhaustion gives complete A; check χ=+1 on its generators, run/finish P1 for c=x^t, and return s=χ(t), so [x]=s[c]. If p and q reach c, p q⁻¹∈A makes their signs equal. Under x→x^h the nonzero sign changes to χ(h)s while c stays fixed; this covariance is the signed equivalence law, not invariance of the bare coefficient. Unsigned callers do not pay for this completeness search.
 
 The lift g↦g̃ preserves products because swaps compose by sign multiplication, is injective, and projects back to g. Its action on (x,marker) therefore exactly models unsigned transport plus sign. This is the mathematical comparison with xperm-style signed permutations; an xperm wrapper's argument conventions and double-coset reduction still require independent proofs/tests. Ordinary canonisation of the lifted pair does **not** alone report algebraic zero: zero requires that (x,+) transports to (x,−), or equivalent odd-stabiliser evidence. A lifted profile can choose a different base canonical representative, so P1 equivalence must be proved before replacing the explicit-character path.
 
