@@ -31,10 +31,18 @@ enumeration of the group:
                        least of A t; across the file, s(x^h) = chi(h) s(x) with c unchanged.
   A signed labeling problem must be UNSUPPORTED_ACTION.  A transporter target of another shape
   (a tuple against a set, a graph against a nested object) is an ordinary empty case.
-  CAPACITY_LIMIT records are skipped (not checkable here); any other non-COMPLETE status is a
-  failure.
+  SIMPLE-UPPER-1 on an object outside the spec 4.4 class must be UNSUPPORTED_ACTION.
+  CAPACITY_LIMIT is a failure when the case's quota is at least work_bound (every reference
+  traversal fits); otherwise the record is skipped (the exact count is P1's).  Any other
+  non-COMPLETE status is a failure.
 
-Traces are not checked beyond invariance: they are defined by P1, not by the orbit.  The
+Not checked (independent review, 19 October 2026): the trace beyond being non-empty and
+invariant across the file (it is defined by P1, not by the orbit; only the two references check
+each other's traces), which element of the orbit a canonical or signed image is (the same reason),
+which odd automorphism a certified zero reports (the spec fixes no deterministic zero witness,
+docs/slices/M0a-notes.md), and the hex fields of a skipped CAPACITY_LIMIT record.  The
+invariance rules compare only cases present in the file: the generator appends transported
+copies and representative changes for them (tools/gen_cases.py).  The
 encoder, normaliser and Group(H) writer below are written from the spec text; this file reuses
 only closure, mul and inverse of checks/review_checks.py (WP0.3), never its p1, dag_bytes,
 graph_bytes or group_bytes.  Standard library only.  Exit 0 when every checked case passes,
@@ -166,8 +174,8 @@ def parse(obj, n):
         elif tag == 7:
             v = ("group", closure(tuple(tuple(g) for g in rec["group_generators"]), n))
         elif tag == 8:
-            v = ("coset", (closure(tuple(tuple(g) for g in rec["group_generators"]), n),
-                           tuple(rec["r"])))
+            v = coset_node(closure(tuple(tuple(g) for g in rec["group_generators"]), n),
+                           tuple(rec["r"]))
         elif tag == 9:
             v = ("graph", parse_graph(rec, n))
         else:
@@ -176,6 +184,13 @@ def parse(obj, n):
         return v
 
     return ("dag", node(obj["root"]))
+
+
+def coset_node(h, r):
+    """A labeling coset H r as a value: (H, its least element), so that equal cosets given by
+    different representatives are one node (spec 4.2 sets and record numbering; spec 4.1 tag 08
+    "r its least element")."""
+    return ("coset", (h, min(mul(a, r) for a in h)))
 
 
 def parse_graph(obj, n):
@@ -230,7 +245,7 @@ def act_node(node, g):
         return (kind, frozenset(mul(mul(gi, h), g) for h in v))
     if kind == "coset":
         h, r = v
-        return (kind, (frozenset(mul(mul(gi, x), g) for x in h), mul(mul(gi, r), g)))
+        return coset_node(frozenset(mul(mul(gi, x), g) for x in h), mul(mul(gi, r), g))
     if kind == "graph":
         return act(node, g)
     raise ValueError(kind)
@@ -315,9 +330,14 @@ def record_bytes(node, index, n):
 
 def simple_upper_key(value, n):
     """spec 4.4: U32(n) and the upper-triangle bits in the order (0,1),(0,2),(1,2),(0,3),...,
-    MSB first, zero padding; None when the graph is not in the class."""
-    kind, (colours, arcs) = value
-    if kind != "graph" or any(c != b"" for c in colours):
+    MSB first, zero padding; None when the value is not a graph in the class (a nested
+    object whose root is a graph record is that graph)."""
+    if value[0] == "dag" and value[1][0] == "graph":
+        value = value[1]
+    if value[0] != "graph":
+        return None
+    colours, arcs = value[1]
+    if any(c != b"" for c in colours):
         return None
     edges = set()
     for (s, t, lab), m in arcs:
@@ -363,6 +383,20 @@ def character_table(gens, signs, n, group):
 
 
 # ---- the checks ----
+
+def work_bound(n, order):
+    """spec 11.1: an upper bound on the logical work of any M0 solve.  The unpruned P1 tree
+    individualises at most one atom per level, so it has at most sum_d n!/(n-d)! NODE tokens
+    (spec 7.1, 7.2); one 8.1 enumeration of G visits at most 2|G| - 1 regions (|G| singleton
+    leaves, every inner region with at least two children); no objective runs more than two
+    enumerations (TRANSPORTER_COSET and the deterministic TRANSPORTER_ONE: the hit, then the
+    complete stabiliser) besides its P1 run."""
+    p1, term = 0, 1
+    for d in range(n + 1):
+        p1 += term
+        term *= n - d
+    return p1 + 2 * (2 * order - 1)
+
 
 def parse_witness(text, n):
     if text == "-":
@@ -448,16 +482,35 @@ class Oracle:
                     self.fail(cid, "inconsistent character must be INVALID_INPUT (spec 8.4)")
                 self.checked += 1
                 return
+        try:
+            x = parse(case["object"], n)
+        except ValueError as e:
+            self.checked += 1
+            return self.fail(cid, f"object not parseable: {e}")
+        if (objective == "LEX_MIN_IMAGE" and case.get("order") == "SIMPLE-UPPER-1"
+                and simple_upper_key(x, n) is None):
+            # spec 4.4: "available only for uncoloured simple undirected graphs"; the class is
+            # invariant under G, so the case has no answer: UNSUPPORTED_ACTION (spec 2.1 "a
+            # recognised but unavailable type returns UNSUPPORTED_ACTION"; the spec names no
+            # status for this order, docs/slices/M0a-notes.md, independent review)
+            if status != "UNSUPPORTED_ACTION":
+                self.fail(cid, "SIMPLE-UPPER-1 on an object outside the spec 4.4 class must be "
+                               "UNSUPPORTED_ACTION")
+            self.checked += 1
+            return
         if status == "CAPACITY_LIMIT":
+            quota = case.get("capacity", {}).get("max_search_nodes", 1 << 20)
+            if quota >= work_bound(n, len(group)):
+                # spec 11.1: the quota counts P1 NODE tokens and 8.1 enumerator visits; a quota
+                # at least the bound on both admits the complete reference work
+                self.checked += 1
+                return self.fail(cid, f"CAPACITY_LIMIT, but the quota {quota} covers every "
+                                      f"reference traversal (bound {work_bound(n, len(group))})")
             self.skipped += 1
             return
         if status != "COMPLETE":
             return self.fail(cid, f"status {status} on a checkable case")
         self.checked += 1
-        try:
-            x = parse(case["object"], n)
-        except ValueError as e:
-            return self.fail(cid, f"object not parseable: {e}")
         elements = sorted(group)
         ckey = (n, group, x)
         if ckey not in self.orbit_cache:
@@ -505,10 +558,7 @@ class Oracle:
                 if ghex != "-":
                     self.fail(cid, "group_hex must be - under CDAG-BYTE-1")
             else:
-                keys = {g: simple_upper_key(images[g], n) for g in elements}
-                if any(k is None for k in keys.values()):
-                    return self.fail(cid, "SIMPLE-UPPER-1 on a graph outside the spec 4.4 class "
-                                          "must be UNSUPPORTED_ACTION")
+                keys = {g: simple_upper_key(images[g], n) for g in elements}  # class checked
                 least_key = min(keys.values())
                 attaining = [g for g in elements if keys[g] == least_key]
                 if bytes.fromhex(ghex) != least_key:

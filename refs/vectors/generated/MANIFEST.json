@@ -1,7 +1,7 @@
 {
  "schema": "corpus-manifest-1",
  "generator": "tools/gen_cases.py",
- "generator_sha256": "4428c389a4df6c5ffa8b41b6e1a23dea93204333dca1586aae0b8c881454d11f",
+ "generator_sha256": "22f5219a19e02a214d5c40e3a4c1e4d81c841ab16f4ebbc3a57f36c55485e9bc",
  "regenerate": "make corpus",
  "files": [
   {
@@ -9,27 +9,27 @@
    "arguments": "--tier T1 --seed 20261013",
    "tier": "T1",
    "seed": 20261013,
-   "cases": 31121,
-   "bytes": 12278194,
-   "sha256": "b2d55e603524ef98baf7bcb26cd6e95765c44c410352a927f774113984ced157"
+   "cases": 34091,
+   "bytes": 13481214,
+   "sha256": "b2e142f9fd7a464befeb194c2716bcf9d9729dddd5a96bc6e7dc533539682f39"
   },
   {
    "file": "T2-seed20261013-count200.json",
    "arguments": "--tier T2 --seed 20261013 --count 200",
    "tier": "T2",
    "seed": 20261013,
-   "cases": 8395,
-   "bytes": 4596802,
-   "sha256": "8c7d3612c066ff1ab21edf3064c6477983f360b5ce9219de85696f9db7556fbb"
+   "cases": 11331,
+   "bytes": 6063660,
+   "sha256": "573d1911d9e399af756eb6bdcd617f98d5d4e0fe8a5a4837e822b4982c10ed36"
   },
   {
    "file": "T3-seed20261013-count50.json",
    "arguments": "--tier T3 --seed 20261013 --count 50",
    "tier": "T3",
    "seed": 20261013,
-   "cases": 1724,
-   "bytes": 2141528,
-   "sha256": "1ee49da144b131269dcf6af9f2177a3ddb48b76a665ca032646cd9bcdde9f7d5"
+   "cases": 1900,
+   "bytes": 2318420,
+   "sha256": "9c04c95820c4ea2ef749b69864349fb204ef6a2992b157071e335b30b30392cc"
   }
  ]
 }
