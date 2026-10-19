@@ -78,6 +78,115 @@ class Generator(unittest.TestCase):
                                        .stdout)["cases"][0]["group_generators"])
 
 
+    def test_manifest_reproduced(self):
+        """refs/vectors/generated/MANIFEST.json retains the corpus (spec 20 "seeds must be
+        retained"): the generator is the recorded one and the T1 and T3 files regenerate to the
+        recorded hashes (T2, about 4 s, is checked by make corpus).  Independent review of
+        M0a: the hashes recorded at the M0a landing did not match the generator's files."""
+        import hashlib
+        manifest = json.loads((ROOT / "refs/vectors/generated/MANIFEST.json")
+                              .read_text(encoding="utf-8"))
+        self.assertEqual(manifest["generator_sha256"],
+                         hashlib.sha256(GEN.read_bytes()).hexdigest())
+        for entry in manifest["files"]:
+            if entry["tier"] == "T2":
+                continue
+            proc = run(GEN, *entry["arguments"].split())
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            data = proc.stdout.encode("utf-8")
+            self.assertEqual((len(data), hashlib.sha256(data).hexdigest()),
+                             (entry["bytes"], entry["sha256"]), entry["file"])
+            self.assertEqual(json.loads(data)["count"], entry["cases"])
+
+    def test_invariance_cases_appended(self):
+        """The transported copies and representative changes follow the tier's cases: on T2
+        every object has its CANONICAL_IMAGE twice (x and x^h, same group, same object kind)
+        and two labelings whose rho differ by an element of G (spec 3, 3.1)."""
+        sys.path.insert(0, str(ROOT / "checks"))
+        from review_checks import closure, inverse, mul
+        proc = run(GEN, "--tier", "T2", "--seed", "5", "--count", "4")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        cases = json.loads(proc.stdout)["cases"]
+        images = [c for c in cases if c["objective"] == "CANONICAL_IMAGE"]
+        labelings = [c for c in cases if c["objective"] == "CANONICAL_LABELING_COSET"]
+        half = len(images) // 2
+        self.assertEqual(len(images), 2 * half)
+        self.assertEqual(len(labelings), 2 * half)
+        self.assertGreater(cases.index(images[half]), cases.index(labelings[half - 1]))
+        for a, b in zip(images[:half], images[half:]):
+            self.assertEqual((a["n"], a["group_generators"], a["object"]["kind"]),
+                             (b["n"], b["group_generators"], b["object"]["kind"]))
+        for a, b in zip(labelings[:half], labelings[half:]):
+            self.assertEqual((a["object"], a["group_generators"]), (b["object"], b["group_generators"]))
+            g = closure(tuple(tuple(x) for x in a["group_generators"]), a["n"])
+            k = mul(tuple(b["labeling"]["rho"]), inverse(tuple(a["labeling"]["rho"])))
+            self.assertIn(k, g)  # rho_b = k rho_a with k in G
+
+
+class OracleRules(unittest.TestCase):
+    """Rules of the oracle on hand-made records (independent review of M0a); no CLI needed."""
+
+    def check(self, cases, lines):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath, rpath = pathlib.Path(tmp, "c.json"), pathlib.Path(tmp, "r.tsv")
+            cpath.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+            rpath.write_text("".join("\t".join(f) + "\n" for f in lines), encoding="utf-8")
+            return run(ORACLE, cpath, rpath)
+
+    @staticmethod
+    def case(cid, objective, tag, profile, atoms, **extra):
+        c = {"id": cid, "n": 2, "group_generators": [[1, 0]],
+             "object": {"kind": "subset", "atoms": atoms}, "objective": objective,
+             "objective_tag": tag, "profile": profile, "encoding": 2}
+        c.update(extra)
+        return c
+
+    def test_invariance_across_cases(self):
+        """Each record alone is valid (c in the orbit, x^w = c, w the least such g); together
+        they break C_G(x^h) = C_G(x) (spec 3) or the representative change of spec 3.1."""
+        sys.path.insert(0, str(ROOT / "refs" / "oracle"))
+        import oracle
+        s0 = oracle.encode(("subset", frozenset([0])), 2).hex()
+        s1 = oracle.encode(("subset", frozenset([1])), 2).hex()
+        trivial = oracle.group_bytes(frozenset([(0, 1)]), 2).hex()
+        cases = [self.case("x0", "CANONICAL_IMAGE", 1, 1, [0]),
+                 self.case("x1", "CANONICAL_IMAGE", 1, 1, [1])]
+        ok = [["x0", "0001", "COMPLETE", "10", s0, "0,1", "-"],
+              ["x1", "0001", "COMPLETE", "10", s0, "1,0", "-"]]
+        self.assertEqual(self.check(cases, ok).returncode, 0)
+        bad = [ok[0], ["x1", "0001", "COMPLETE", "10", s1, "0,1", "-"]]
+        o = self.check(cases, bad)
+        self.assertEqual(o.returncode, 1, o.stdout)
+        self.assertIn("FAIL     x1: C_G(x^h) differs", o.stdout)
+        cases = [self.case("l0", "CANONICAL_LABELING_COSET", 5, 1, [0], labeling={"rho": [0, 1]}),
+                 self.case("l1", "CANONICAL_LABELING_COSET", 5, 1, [0], labeling={"rho": [1, 0]})]
+        bad = [["l0", "0005", "COMPLETE", "10", s0, "0,1", trivial + oracle.perm_bytes((0, 1)).hex()],
+               ["l1", "0005", "COMPLETE", "10", s1, "1,0", trivial + oracle.perm_bytes((1, 0)).hex()]]
+        o = self.check(cases, bad)
+        self.assertEqual(o.returncode, 1, o.stdout)
+        self.assertIn("FAIL     l1: representative change", o.stdout)
+
+    def test_statuses(self):
+        """SIMPLE-UPPER-1 outside the spec 4.4 class must be UNSUPPORTED_ACTION (the oracle
+        demanded COMPLETE first, so no record passed); CAPACITY_LIMIT is refused when the
+        quota covers every reference traversal (spec 11.1) and skipped otherwise."""
+        cases = [self.case("su", "LEX_MIN_IMAGE", 2, 0, [0], order="SIMPLE-UPPER-1"),
+                 self.case("cap", "LEX_MIN_IMAGE", 2, 0, [0], order="CDAG-BYTE-1"),
+                 self.case("cap1", "LEX_MIN_IMAGE", 2, 0, [0], order="CDAG-BYTE-1",
+                           capacity={"max_search_nodes": 1})]
+        good = [["su", "0002", "UNSUPPORTED_ACTION", "", "", "-", "-"],
+                ["cap1", "0002", "CAPACITY_LIMIT", "", "", "-", "-"]]
+        o = self.check(cases[:1] + cases[2:], good)
+        self.assertEqual(o.returncode, 0, o.stdout)
+        self.assertIn("1 checked, 1 skipped", o.stdout)
+        bad = [["su", "0002", "COMPLETE", "", "", "0,1", "-"],
+               ["cap", "0002", "CAPACITY_LIMIT", "", "", "-", "-"]]
+        o = self.check(cases[:2], bad)
+        self.assertEqual(o.returncode, 1, o.stdout)
+        self.assertIn("FAIL     su: SIMPLE-UPPER-1 on an object outside", o.stdout)
+        self.assertIn("FAIL     cap: CAPACITY_LIMIT, but the quota", o.stdout)
+
+
 class CliCase(unittest.TestCase):
     def setUp(self):
         if not CLI.is_file():
@@ -139,6 +248,46 @@ class OracleOnRefA(CliCase):
             rec = pathlib.Path(tmp, "r.tsv")
             rec.write_text(records_text, encoding="utf-8")
             return run(ORACLE, cases_path, rec, *extra)
+
+    def test_coset_leaf_and_out_of_class_statuses(self):
+        """Independent review of M0a: two coset leaves H r and H r' with r' in H r are one
+        value (spec 4.2; tag 08 carries the least element), so the set holding them has one
+        child (the oracle kept both and rejected ref-a's correct stream); SIMPLE-UPPER-1 on a
+        subset is UNSUPPORTED_ACTION in ref-a and accepted by the oracle, and on a nested object
+        whose root is a simple graph it is that graph's minimum (the oracle refused both); a
+        quota too small for the reference traversal gives CAPACITY_LIMIT, which the oracle
+        skips."""
+        cases = {"cases": [
+            {"id": "cs", "n": 3, "group_generators": [[1, 2, 0]],
+             "object": {"kind": "dag", "root": 2, "records": [
+                 {"tag": 8, "group_generators": [[1, 0, 2]], "r": [0, 1, 2]},
+                 {"tag": 8, "group_generators": [[1, 0, 2]], "r": [1, 0, 2]},
+                 {"tag": 4, "children": [0, 1]}]},
+             "objective": "CANONICAL_IMAGE", "objective_tag": 1, "profile": 1, "encoding": 2},
+            {"id": "su", "n": 2, "group_generators": [[1, 0]],
+             "object": {"kind": "subset", "atoms": [0]}, "order": "SIMPLE-UPPER-1",
+             "objective": "LEX_MIN_IMAGE", "objective_tag": 2, "profile": 0, "encoding": 2},
+            {"id": "q1", "n": 3, "group_generators": [[1, 2, 0], [1, 0, 2]],
+             "object": {"kind": "subset", "atoms": [0]}, "capacity": {"max_search_nodes": 1},
+             "objective": "STABILISER", "objective_tag": 4, "profile": 0, "encoding": 2},
+            {"id": "sd", "n": 3, "group_generators": [[1, 2, 0], [1, 0, 2]],
+             "object": {"kind": "dag", "root": 0, "records": [
+                 {"tag": 9, "vertex_colours_hex": ["", "", ""], "arcs": [
+                     {"source": 0, "target": 1, "label_hex": "", "multiplicity": 1},
+                     {"source": 1, "target": 0, "label_hex": "", "multiplicity": 1}]}]},
+             "order": "SIMPLE-UPPER-1",
+             "objective": "LEX_MIN_IMAGE", "objective_tag": 2, "profile": 0, "encoding": 2}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp, "c.json")
+            path.write_text(json.dumps(cases), encoding="utf-8")
+            proc = run(RUNNER, "--cli", CLI, path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            recs = records(proc.stdout)
+            self.assertEqual([recs[c][2] for c in ("cs", "su", "q1", "sd")],
+                             ["COMPLETE", "UNSUPPORTED_ACTION", "CAPACITY_LIMIT", "COMPLETE"])
+            o = self.oracle(path, proc.stdout)
+        self.assertEqual(o.returncode, 0, o.stdout + o.stderr)
+        self.assertIn("3 checked, 1 skipped", o.stdout)
 
     def test_golden_and_t2_sample_accepted_and_corruption_rejected(self):
         proc = run(RUNNER, "--cli", CLI, GOLDEN)

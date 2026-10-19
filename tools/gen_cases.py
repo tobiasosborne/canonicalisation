@@ -20,11 +20,14 @@ Usage: gen_cases.py --tier T1|T2|T3 [--seed S] [--count N] [--out FILE]
       grids C_a x C_b and intransitive sums, --count groups (default 50; WP0.6 target 500 cases
       per objective), objects as T2 plus identical-factor tensor skeletons as labelled digraphs
       (slots of f identical factors with s slots each, chained by arcs labelled 66 ("f") and
-      contracted in pairs by arcs labelled 63 ("c"), under Sym(s) wr Sym(f)); characters: the
+      contracted in pairs by arcs labelled 63 ("c"), under Sym(s) wr C_f); characters: the
       trivial one and the sign (no closure beyond oracle range); capacity 10^6 nodes.  WP0.6's
       COMPLETE filter is applied by the runner's records, not here.
 
-Every case requests the deterministic witness (refs/BRIEF.md answer 3) and names work policy 1.
+Every tier then appends its invariance cases (invariance_cases: transported copies x^h and
+representative changes k rho, with their own random generator, so the tier's cases above are a
+byte-identical prefix).  Every case requests the deterministic witness (refs/BRIEF.md answer 3)
+and names work policy 1.
 The output is {"schema": "cases-1", "tier": ..., "seed": ..., "generator": ..., "cases": [...]};
 the same arguments always give the same file.  Inputs only: no expected answer is written.
 Standard library plus checks/review_checks.py (closure, mul, inverse, subgroups).
@@ -224,6 +227,7 @@ class Builder:
         self.tier, self.seed, self.rng, self.quota = tier, seed, rng, quota
         self.cases = []
         self.counter = 0
+        self.recorded = []  # (n, gens, obj, consistent characters, rho) for invariance_cases
 
     def case(self, n, gens, obj, objective, **extra):
         tag, profile = OBJECTIVES[objective]
@@ -237,10 +241,11 @@ class Builder:
         c.update(extra)
         self.cases.append(c)
 
-    def all_objectives(self, n, gens, obj, characters, other_target=None):
+    def all_objectives(self, n, gens, obj, characters, other_target=None, consistent=None):
         """Every objective on (G, x): both orders where the graph is simple undirected, two
         transporter targets (one in the orbit by a random word, one other object or the same
-        object when none is given), one random labeling, one signed case per character."""
+        object when none is given), one random labeling, one signed case per character.
+        `consistent` lists the characters known to be characters (default: all of them)."""
         rng = self.rng
         self.case(n, gens, obj, "CANONICAL_IMAGE")
         self.case(n, gens, obj, "LEX_MIN_IMAGE", order="CDAG-BYTE-1")
@@ -256,6 +261,33 @@ class Builder:
         self.case(n, gens, obj, "CANONICAL_LABELING_COSET", labeling={"rho": rho})
         for chi in characters:
             self.case(n, gens, obj, "SIGNED_CANONICAL_IMAGE", character=list(chi))
+        self.recorded.append((n, gens, obj, characters if consistent is None else consistent,
+                              rho))
+
+
+def invariance_cases(b):
+    """Transported copies and representative changes (independent review of M0a, 19 October
+    2026), appended after the tier's cases with a separate generator so that those stay a
+    byte-identical prefix.  WP0.3 checks C(x^h) = C(x) "by calling the reference on transported
+    inputs", and the oracle's invariance rules compare cases of one file: without these pairs
+    they fire on T2 and T3 only where random objects happen to share an orbit, and the spec 3.1
+    representative change (rho -> k rho, k in G) fired once on the 31 121 T1 cases.  For every recorded (G, x, rho), with h and k random words in G: T2 and T3
+    gain CANONICAL_IMAGE of x^h (spec 3: C_G(x^h) = C_G(x)); T2 gains SIGNED_CANONICAL_IMAGE of
+    x^h for every consistent character (spec 8.4: s(x^h) = chi(h) s(x), c unchanged); T1 and T2
+    gain CANONICAL_LABELING_COSET of x under k rho (spec 3.1: c unchanged).  T1 already holds
+    every orbit member of its objects, and T3 adds no enumeration-heavy case."""
+    rng = random.Random("%s-%d-invariance" % (b.tier, b.seed))
+    for n, gens, obj, chars, rho in list(b.recorded):
+        moved = act(obj, random_word(gens, n, rng))
+        if b.tier != "T1":
+            b.case(n, gens, moved, "CANONICAL_IMAGE")
+        if b.tier == "T2":
+            for chi in chars:
+                b.case(n, gens, moved, "SIGNED_CANONICAL_IMAGE", character=list(chi))
+        if b.tier != "T3":
+            k = random_word(gens, n, rng)
+            b.case(n, gens, obj, "CANONICAL_LABELING_COSET",
+                   labeling={"rho": list(rc.mul(k, rho))})  # (k rho)[v] = rho[k[v]], spec 3
 
 
 def characters_t1(group, gens, n):
@@ -308,11 +340,14 @@ def random_group(rng):
 
 
 def characters_random(gens, n, group, rng):
+    """The trivial character, the sign, one random consistent vector and one random
+    inconsistent vector where found; returns (all vectors, the consistent ones)."""
     chars = [tuple(1 for _ in gens), tuple(sign_of(g) for g in gens)]
     if chars[1] == chars[0]:
         chars.pop()
     cap = 4 * len(group) + 4
     found_good = found_bad = False
+    good = list(chars)
     for _ in range(8):
         bits = tuple(rng.choice((1, -1)) for _ in gens)
         if bits in chars:
@@ -320,26 +355,27 @@ def characters_random(gens, n, group, rng):
         ok = lifted_consistent(gens, bits, n, cap)
         if ok and not found_good:
             chars.append(bits)
+            good.append(bits)
             found_good = True
         elif ok is False and not found_bad:
             chars.append(bits)
             found_bad = True
         if found_good and found_bad:
             break
-    return chars
+    return chars, good
 
 
 def tier2(b, count):
     rng = b.rng
     for _ in range(count):
         n, gens, group = random_group(rng)
-        chars = characters_random(gens, n, group, rng)
+        chars, good = characters_random(gens, n, group, rng)
         objects = [random_subset(n, rng), random_tuple(n, rng), random_graph(n, rng),
                    random_dag(n, rng)]
         for obj in objects:
             other = {"subset": random_subset, "tuple": random_tuple, "graph": random_graph,
                      "dag": random_dag}[obj["kind"]](n, rng)
-            b.all_objectives(n, gens, obj, chars, other_target=other)
+            b.all_objectives(n, gens, obj, chars, other_target=other, consistent=good)
 
 
 # ---- T3 families ----
@@ -416,7 +452,9 @@ def pick_small(rng):
 
 def tensor_skeleton(rng):
     """f identical factors with s slots each: chain arcs within a factor labelled "f", random
-    slot pairs contracted by arcs labelled "c" (both directions); group Sym(s) wr Sym(f)."""
+    slot pairs contracted by arcs labelled "c" (both directions); group Sym(s) wr C_f (Sym(s)
+    on the first factor's slots and the cyclic shift of the factors; Sym(s) wr Sym(f) for
+    f = 2 only)."""
     f, s = rng.randrange(2, 5), rng.randrange(2, 5)
     n = f * s
     arcs = []
@@ -475,6 +513,7 @@ def generate(tier, seed, count):
         tier2(b, count if count is not None else 200)
     else:
         tier3(b, count if count is not None else 50)
+    invariance_cases(b)
     me = hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()
     return {"schema": "cases-1", "tier": tier, "seed": seed, "count": len(b.cases),
             "generator": "tools/gen_cases.py sha256 " + me,
