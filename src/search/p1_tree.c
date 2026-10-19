@@ -266,11 +266,14 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
 /* Child decisions of a node (docs/pruning-rules.md rule P1-ORBIT-1; S7b incremental form).
  * The depth's slot of s->reps holds 2 words per cell position: the state (DECIDE_UNDECIDED,
  * DECIDE_EXPLORED, or the representative of a pruned child) and the automorphism index the
- * certificate names.  Children are decided in cell order as they are reached: before member j
- * is explored, the pointwise stabiliser A_S of the prefix in A_known is (re)computed if A_known
- * grew since the node's last computation (S7b), the orbits of every explored child and of j
- * are marked, and every undecided member reached is pruned with that child as representative
- * and, for the certificate, an explicit automorphism a of A_S with representative^a = b.  The
+ * certificate names.  Children are decided in cell order as they are reached: when the
+ * undecided member j is reached, the pointwise stabiliser A_S of the prefix in A_known is
+ * (re)computed if A_known grew since the node's last computation (S7b) or a child visit replaced
+ * it, the orbits of every explored child are marked and every undecided member reached (j
+ * included) is pruned with that child as representative; if j is still undecided, its orbit is
+ * marked and the undecided members reached are pruned with j as representative; each pruned
+ * member gets, for the certificate, an explicit automorphism a of A_S with representative^a = b.
+ * The
  * transporter is read off the Schreier tree at once, before any child is visited (the child
  * visits reuse the symmetry scratch).  Without the prune every child is explored. */
 #define DECIDE_UNDECIDED (UINT32_MAX - 1u)
@@ -285,8 +288,9 @@ static canon_status decide_slot(canon_p1_search *s, uint32_t depth, uint32_t **s
     return stack_slot(&s->reps, &s->reps_alloc, words, depth, slot_out);
 }
 
-/* Member j of the cell is about to be explored: prune the undecided members that A_S maps an
- * explored child, or j, onto.  `roots` is scratch of `size` flags. */
+/* The undecided member j of the cell is reached: prune the undecided members, j included, that
+ * A_S maps an explored child onto, then, if j survives, those it maps j onto (j is then
+ * explored by the caller).  `roots` is scratch of `size` flags. */
 static canon_status decide_before(canon_p1_search *s, uint32_t depth, const uint32_t *cell,
                                   uint32_t size, uint32_t j, uint8_t *roots, uint64_t *epoch_seen)
 {
@@ -294,7 +298,13 @@ static canon_status decide_before(canon_p1_search *s, uint32_t depth, const uint
         return CANON_COMPLETE;
     }
     uint32_t *slot = s->reps + (size_t)depth * 2u * (size_t)s->n;
-    if (*epoch_seen != s->sym.epoch) {
+    /* The transient stabiliser is shared by every depth: a child visit since this node's last
+     * computation rebases it to a longer prefix (canon_symmetry_stabiliser records the prefix
+     * length in stab_depth; d = 0 is A_known itself), whose pointwise stabiliser is a proper
+     * subgroup of A_S in general.  Using it would be sound but would explore more children
+     * than rule P1-ORBIT-1 names, changing the policy's count (spec 11.1), so A_S is also
+     * recomputed when the stabiliser in place is not this node's. */
+    if (*epoch_seen != s->sym.epoch || s->sym.stab_depth != depth) {
         /* spec 7.3 "At each node intersect with the stabiliser of its constraints before
          * sibling pruning": A_S from the current A_known and the prefix (a_1..a_d) */
         canon_status st = canon_symmetry_stabiliser(&s->sym, s->prefix, depth);
@@ -303,24 +313,39 @@ static canon_status decide_before(canon_p1_search *s, uint32_t depth, const uint
         }
         *epoch_seen = s->sym.epoch;
     }
-    for (uint32_t i = 0; i < size; ++i) {
-        roots[i] = slot[2u * i] == DECIDE_EXPLORED || i == j;
-    }
-    canon_symmetry_cell_orbits(&s->sym, cell, size, roots);
-    for (uint32_t i = 0; i < size; ++i) {
-        const uint32_t b = cell[i];
-        if (slot[2u * i] != DECIDE_UNDECIDED || canon_symmetry_rep(&s->sym, b) == b) {
-            continue;
+    /* Two passes.  First the orbits of the explored children alone: every undecided member
+     * they reach is pruned, j included (A_S may have grown since the last decision, so j can
+     * now lie in an explored child's orbit; the lemma then covers it and exploring it would
+     * duplicate that subtree).  Then, if j is still undecided, j's own orbit: the members it
+     * reaches are pruned with j, about to be explored, as representative. */
+    for (int pass = 0; pass < 2; ++pass) {
+        bool any = false;
+        for (uint32_t i = 0; i < size; ++i) {
+            roots[i] = pass == 0 ? slot[2u * i] == DECIDE_EXPLORED : i == j;
+            any = any || roots[i];
         }
-        slot[2u * i] = canon_symmetry_rep(&s->sym, b);
-        if (s->cert != NULL && s->cert->active) {
-            /* the certificate names one automorphism per pruned child (S7 brief 3.3): the
-             * Schreier-tree product with rep^a = b, which fixes the prefix pointwise */
-            canon_symmetry_transporter(&s->sym, b, s->aut);
-            canon_status st = canon_cert_automorphism(s->cert, s->aut, &slot[2u * i + 1u]);
-            if (st != CANON_COMPLETE) {
-                return st;
+        if (!any) {
+            continue; /* no explored child yet */
+        }
+        canon_symmetry_cell_orbits(&s->sym, cell, size, roots);
+        for (uint32_t i = 0; i < size; ++i) {
+            const uint32_t b = cell[i];
+            if (slot[2u * i] != DECIDE_UNDECIDED || canon_symmetry_rep(&s->sym, b) == b) {
+                continue;
             }
+            slot[2u * i] = canon_symmetry_rep(&s->sym, b);
+            if (s->cert != NULL && s->cert->active) {
+                /* the certificate names one automorphism per pruned child (S7 brief 3.3): the
+                 * Schreier-tree product with rep^a = b, which fixes the prefix pointwise */
+                canon_symmetry_transporter(&s->sym, b, s->aut);
+                canon_status st = canon_cert_automorphism(s->cert, s->aut, &slot[2u * i + 1u]);
+                if (st != CANON_COMPLETE) {
+                    return st;
+                }
+            }
+        }
+        if (slot[2u * j] != DECIDE_UNDECIDED) {
+            break; /* j itself was pruned in the first pass */
         }
     }
     return CANON_COMPLETE;

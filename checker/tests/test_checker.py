@@ -93,10 +93,12 @@ class Parsed:
         self.auts_at = r.at
         self.auts = [r.u32s(self.n) for _ in range(self.m)]
         self.first = {}
+        self.sweeps = []   # every sweep: F, offsets of u, M and the rebased chain
+        self.entries = []  # every child entry: depth, the node's prefix, kind, b, offsets
         self.node_records = 0
         self.pruned = 0
         self.nodes_at = r.at
-        self.node(r, 0)
+        self.node(r, 0, ())
         self.final_at = r.at
         self.trace = r.b()
         self.bytes_at = r.at
@@ -130,10 +132,11 @@ class Parsed:
         prov = [(r.u32(), r.u32(), r.u32()) for _ in range(p)]
         i = r.u32()
         inputs = [r.u32s(n) for _ in range(i)]
-        info.update(n=n, depth=depth, levels=levels, gens=gens, prov=prov, inputs=inputs)
+        info.update(n=n, depth=depth, levels=levels, gens=gens, prov=prov, inputs=inputs,
+                    end=r.at)
         return info
 
-    def node(self, r, depth):
+    def node(self, r, depth, prefix):
         at = r.at
         self.node_records += 1
         d, atom, sweeps = r.u32(), r.u32(), r.u32()
@@ -143,13 +146,17 @@ class Parsed:
             k_o = r.u32()
             r.u32s(k_o)
             f = r.u32()
-            r.u32s(f)
+            fixed = r.u32s(f)
             self.first.setdefault("u", r.at)
+            u_at = r.at
             r.u32s(self.n)
             if f:
                 self.first.setdefault("m", r.at)
+            m_at = r.at
             r.u32s(f)
             chain = self.chain(r)
+            self.sweeps.append(dict(fixed=fixed, u_at=u_at, m_at=m_at, chain_at=chain["at"],
+                                    chain_end=chain["end"]))
             if chain["levels"] and "rebased_orbit" not in self.first:
                 self.first["rebased_orbit"] = chain["levels"][0][2]
             k_g = r.u32()
@@ -165,15 +172,16 @@ class Parsed:
                 entry_at = r.at
                 ck = r.u8()
                 b = r.u32()
+                entry = dict(depth=depth, prefix=prefix, kind=ck, b=b, at=entry_at)
+                self.entries.append(entry)
                 if ck == 1:
-                    child_at = r.at
-                    self.node(r, depth + 1)
+                    self.node(r, depth + 1, prefix + (b,))
                     self.first.setdefault("explored_child", (entry_at, r.at))
                 else:
                     assert ck == 0
-                    rep = r.u32()
+                    entry["rep"] = r.u32()
                     self.first.setdefault("pruned_aut_index", r.at)
-                    r.u32()
+                    entry["aut"] = r.u32()
                     self.pruned += 1
         return at
 
@@ -355,12 +363,12 @@ class Mutation(CheckerTestCase):
             self.assertIn(line[len("REJECT "):], reasons, label)
 
     def implicit_case(self):
-        # {0} under Sym(4): no explicit automorphism; (2 3) and (1 3) are found at leaves and
-        # prune one child of the root (S7b, tests/c/test_prune.c)
+        # {0} under Sym(4): no explicit automorphism; (2 3) and (1 2) are found at leaves and
+        # prune one child of the root and one of its second child (S7b, tests/c/test_prune.c)
         gens = [(1, 2, 3, 0), (1, 0, 2, 3)]
         _, data = certificate(subset_args(4, gens, [0], "imp"), "on")
         p = Parsed(data)
-        self.assertEqual((p.work_policy, p.node_records, p.pruned, p.m), (3, 7, 1, 3))  # two implicit, one transporter
+        self.assertEqual((p.work_policy, p.node_records, p.pruned, p.m), (3, 6, 2, 4))  # two implicit, two transporters
         return p
 
     def test_accepts_before_mutation(self):
@@ -506,6 +514,71 @@ class Mutation(CheckerTestCase):
         self.reject(p.data + b"\x00", {"TRAILING_BYTES"}, "trailing")
         self.reject(p.data[:-3], {"TRUNCATED"}, "truncated")
         self.reject(p.data[:p.nodes_at + 5], {"TRUNCATED"}, "truncated in a node")
+
+    # Review of 19 October 2026 (docs/slices/S7-notes.md): the rules that carry the pruning
+    # lemma and the G-stage minimality had no mutation; each forged certificate below is
+    # rejected with its named reason.
+
+    def test_pruned_rep_not_explored(self):
+        # a pruned child whose representative is another pruned child, with a listed
+        # automorphism that maps one onto the other and fixes the (empty) prefix
+        p = self.pruned_case()
+        root = [e for e in p.entries if e["depth"] == 0]
+        pruned = [e for e in root if e["kind"] == 0]
+        self.assertGreaterEqual(len(pruned), 2)
+        target, other = pruned[1], pruned[0]
+        index = next(i for i, a in enumerate(p.auts) if a[other["b"]] == target["b"])
+        data = put_u32(put_u32(p.data, target["at"] + 5, other["b"]), target["at"] + 9, index)
+        self.reject(data, {"PRUNED_REP_NOT_EXPLORED"}, "representative pruned")
+
+    def test_pruned_automorphism_moves_prefix(self):
+        # below the root: a listed automorphism with rep^a = b that moves the node's prefix
+        p = self.pruned_case()
+        entry = next(e for e in p.entries if e["kind"] == 0 and e["depth"] >= 1)
+        index = next(i for i, a in enumerate(p.auts)
+                     if a[entry["rep"]] == entry["b"] and any(a[v] != v for v in entry["prefix"]))
+        data = put_u32(p.data, entry["at"] + 9, index)
+        self.reject(data, {"PRUNED_AUTOMORPHISM_MOVES_PREFIX"}, "automorphism moves prefix")
+
+    def test_child_repeated_and_not_in_cell(self):
+        p = self.branch_case()
+        root = [e for e in p.entries if e["depth"] == 0]
+        self.assertGreaterEqual(len(root), 2)
+        data = put_u32(p.data, root[1]["at"] + 1, root[0]["b"])
+        self.reject(data, {"CHILD_REPEATED"}, "child repeated")
+        below = next(e for e in p.entries if e["depth"] == 1)
+        data = put_u32(p.data, below["at"] + 1, below["prefix"][0])
+        self.reject(data, {"CHILD_NOT_IN_CELL"}, "child outside the cell")
+
+    def test_rebased_not_same_group(self):
+        # a verified chain of the trivial group in place of G rebased
+        p = self.graph_case()
+        sw = p.sweeps[0]
+        trivial = struct.pack(">IIIII", p.n, 0, 0, 0, 0)
+        data = p.data[:sw["chain_at"]] + trivial + p.data[sw["chain_end"]:]
+        self.reject(data, {"REBASED_NOT_SAME_GROUP"}, "rebased chain of another group")
+
+    def test_m_not_minimal(self):
+        # the empty subset under <(1 2)> on 3 points, unpruned: below the root's child 2 the
+        # sweep has F = (0, 2, 1), M = (0, 1, 2) and u = (1 2).  Forge u = id, M = F = (0, 2, 1)
+        # and a valid chain of <(1 2)> with base (0, 2, 1): every rule up to the minimality of
+        # M holds (u in G, M = F^u, the chain verifies, generates G and has base prefix M), but
+        # M[1] = 2 is not the least point of its level orbit {2, 1}.
+        _, data = certificate(subset_args(3, [(0, 2, 1)], [], "mm"), "off")
+        p = Parsed(data)
+        sw = next(s for s in p.sweeps if s["fixed"] == [0, 2, 1])
+        none = NONE
+        chain = struct.pack(">II", 3, 3)
+        chain += struct.pack(">II" + "I" * 3 + "I" + "I", 0, 1, 0, none, none, 1, 0)
+        chain += struct.pack(">II" + "I" * 6 + "I" + "I", 2, 2, 2, 1, none, 2, none, 0, 1, 0)
+        chain += struct.pack(">II" + "I" * 3 + "I", 1, 1, 1, none, none, 0)
+        chain += struct.pack(">I" + "I" * 4, 1, 0, 0, 2, 1)  # g = 1: node 0, (1 2)
+        chain += struct.pack(">I" + "I" * 3, 1, 1, 0, 0)    # p = 1: INPUT 0
+        chain += struct.pack(">I" + "I" * 3, 1, 0, 2, 1)    # i = 1: (1 2)
+        ident = struct.pack(">III", 0, 1, 2)
+        forged = (p.data[:sw["u_at"]] + ident + struct.pack(">III", 0, 2, 1) + chain
+                  + p.data[sw["chain_end"]:])
+        self.reject(forged, {"M_NOT_MINIMAL"}, "M not minimal")
 
     def test_usage(self):
         proc = subprocess.run([str(CHECK)], capture_output=True, text=True, check=False)
