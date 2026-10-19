@@ -45,6 +45,16 @@ static int collect(void *user, const uint8_t *chunk, size_t length, size_t *acce
     return 0;
 }
 
+/* S8 independent review: accept up to 5 bytes and fail in the same call. */
+static int take_then_fail(void *user, const uint8_t *chunk, size_t length, size_t *accepted)
+{
+    (void)chunk;
+    size_t *calls = user;
+    *calls += 1;
+    *accepted = length < 5 ? length : 5;
+    return 2;
+}
+
 static canon_result *solve_graph(canon_context *ctx, canon_workspace *ws)
 {
     /* a graph on 6 vertices with labelled arcs: a stream of a few hundred bytes */
@@ -105,6 +115,12 @@ int main(void)
     size_t offset = 0;
     CHECK(canon_result_encode_resume(r, &offset, collect, &f) == CANON_OUTPUT_ERROR);
     CHECK(offset == 20 && f.len == 20); /* the offset tells how far the sink got */
+    /* bytes accepted by the failing call itself count too (canon.h: *offset is the total the
+     * sink accepted; the S8 code dropped them) */
+    size_t calls = 0;
+    offset = 7;
+    CHECK(canon_result_encode_resume(r, &offset, take_then_fail, &calls) == CANON_OUTPUT_ERROR);
+    CHECK(offset == 12 && calls == 1);
     /* an offset beyond the stream is INVALID_INPUT; at the end nothing is sent */
     offset = total + 1;
     CHECK(canon_result_encode_resume(r, &offset, collect, &f) == CANON_INVALID_INPUT);

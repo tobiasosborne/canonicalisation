@@ -10,7 +10,6 @@
 
 #include "arena/alloc.h"
 #include "arena/mem.h"
-#include "arena/mem.h"
 #include "arena/checked.h"
 #include "arena/refcount.h"
 #include "bsgs/chain.h"
@@ -41,7 +40,7 @@
 /* docs/slices/S7.md 6.2 (D14), S7b: the default work policy is the strongest sound prune */
 #define DEFAULT_WORK_POLICY CANON_WORK_POLICY_PRUNE_2
 /* docs/slices/S8.md 1.4: the live-memory budget of one solve (spec 11.1 admission) */
-#define DEFAULT_MAX_LIVE_BYTES ((uint64_t)1 << 32)
+#define DEFAULT_MAX_LIVE_BYTES ((uint64_t)1 << 32) /* S8-notes.md reading 4 */
 
 /* Largest chunk handed to a sink in one call (spec 17: ordered borrowed chunks). */
 #define SINK_CHUNK ((size_t)1 << 16)
@@ -611,12 +610,62 @@ static uint64_t group_bytes(const canon_group *g, bool *ok)
  *                    chain per G stage, the node's stream-sized leaf data and dense rows, so
  *                    it is charged as 8 (group bytes + stream size + 64 n W) per sweep, with
  *                    at most n sweeps per node on a depth-n path: 8 n^2 (group bytes + stream
- *                    + 256 n).  The quota, not n, bounds the number of nodes, so a certificate
- *                    larger than this plan is caught by the ledger (RESOURCE_LIMIT), not here.
+ *                    + 256 n), which also covers the records written past the limit below
+ *                    before a size check stops the writer; the quota, not n, bounds the
+ *                    number of nodes, so the certificate as a whole is bounded by the
+ *                    descriptor's output limit, enforced while it is written
+ *                    (src/search/certificate.h; S8 independent review, 19 October 2026), and
+ *                    that limit is charged 4 times (the working buffers grow by doubling, the
+ *                    assembled copy, the result's copy);
+ *   nested roots     dag_bytes below (S8 independent review).
  * Returns false (CAPACITY_LIMIT) when a term does not fit uint64. */
+
+/* spec 11.2 (S8 independent review, 19 October 2026): the storage the solve allocates for
+ * images of a nested (EXT-DAG-1) root x of r records and f child references.  An image of x
+ * has x's record and reference counts (the action renames atoms and conjugates leaves) and
+ * at most `image` stream bytes (canon_dag_image_bound), so each arena (src/object/dag.h:
+ * records, chain pointers, children, multiplicities, payload pool) holds at most
+ * r (sizeof(canon_rec) + sizeof(canon_bsgs *)) + f (4 + 8) + image bytes, and the
+ * normaliser's scratch r (17 + 4 x 4 hash slots) + f (2 sizeof(canon_dag_pair) + 12) + 2
+ * leaf buffers of `image` bytes; every array grows by doubling (factor 2).  A
+ * canon_root_image holds three arenas (the image, the interned nodes, the raw image) and
+ * one scratch, and a workspace holds at most four root images (the P1 leaf image, the
+ * enumeration's x^r, the labeling's x' = x^rho and the deterministic witness's local one).
+ * A subgroup or coset leaf adds, per scratch, the transient chain of the acted-on leaf
+ * (conjugated from x's stored chain, or rebuilt from generators for an image without stored
+ * chains: charged 4 times the largest stored chain) and the spec 9.4 descent scratch
+ * 52 n (n + 1).  Zero for a subset or graph root. */
+static uint64_t dag_bytes(const canon_root *x, uint64_t image, bool *ok)
+{
+    if (x->kind != CANON_ROOT_DAG) {
+        return 0;
+    }
+    const canon_dag *d = &x->u.dag;
+    const uint64_t r = d->count, f = d->refs, n = x->n;
+    uint64_t arena = mul_ok(r, sizeof(canon_rec) + sizeof(canon_bsgs *), ok);
+    arena = add_ok(arena, mul_ok(f, sizeof(uint32_t) + sizeof(uint64_t), ok), ok);
+    arena = add_ok(add_ok(arena, image, ok), 1024u, ok); /* the minimum capacities */
+    uint64_t scratch = mul_ok(r, 17u + 16u, ok);
+    scratch = add_ok(scratch, mul_ok(f, 2u * sizeof(canon_dag_pair) + 12u, ok), ok);
+    scratch = add_ok(add_ok(scratch, mul_ok(2u, image, ok), ok), 1024u, ok);
+    uint64_t per_image = mul_ok(2u, add_ok(mul_ok(3u, arena, ok), scratch, ok), ok);
+    if (d->group_leaves) {
+        uint64_t chain = 0;
+        for (uint32_t i = 0; i < d->chains_cap && i < d->count; ++i) {
+            const canon_bsgs *c = canon_dag_chain(d, i);
+            const uint64_t b = c != NULL ? canon_bsgs_bytes(c) : 0u;
+            chain = b > chain ? b : chain;
+        }
+        per_image = add_ok(per_image, mul_ok(4u, chain, ok), ok);
+        per_image = add_ok(per_image, mul_ok(52u, mul_ok(n, add_ok(n, 1u, ok), ok), ok), ok);
+    }
+    return mul_ok(4u, per_image, ok);
+}
+
 static bool plan_bytes(const canon_group *group, const canon_object *object,
                        const canon_object *target, canon_objective objective, bool certificate,
-                       uint64_t out_bytes, uint64_t *planned)
+                       bool deterministic, uint64_t out_bytes, uint64_t cert_bytes,
+                       uint64_t *planned)
 {
     bool ok = true;
     const uint64_t n = object->root.n, W = sizeof(uint32_t);
@@ -653,14 +702,19 @@ static bool plan_bytes(const canon_group *group, const canon_object *object,
     }
     total = add_ok(total, mul_ok(4u, gbytes, &ok), &ok);
     total = add_ok(total, mul_ok(mul_ok(64u, add_ok(log2g, 1u, &ok), &ok), mul_ok(n, W, &ok), &ok), &ok);
-    if (objective != CANON_OBJECTIVE_CANONICAL_IMAGE || certificate) {
+    /* the enumeration runs for every objective but the canonical image, and for the canonical
+     * image too when a certificate or the deterministic witness (spec 3: the least element of
+     * A t, by the spec 8.2 consumer) is requested (S8 independent review) */
+    if (objective != CANON_OBJECTIVE_CANONICAL_IMAGE || certificate || deterministic) {
         total = add_ok(total, mul_ok(52u, mul_ok(n, n1, &ok), &ok), &ok); /* enumeration */
     }
     total = add_ok(total, mul_ok(2u, out_bytes, &ok), &ok);
     if (certificate) {
         const uint64_t per_stage = add_ok(add_ok(gbytes, stream, &ok), mul_ok(256u, n, &ok), &ok);
-        total = add_ok(total, mul_ok(mul_ok(8u, n2, &ok), per_stage, &ok), &ok);
+        const uint64_t records = mul_ok(mul_ok(8u, n2, &ok), per_stage, &ok);
+        total = add_ok(total, add_ok(mul_ok(4u, cert_bytes, &ok), records, &ok), &ok);
     }
+    total = add_ok(total, dag_bytes(&object->root, stream, &ok), &ok); /* nested roots */
     *planned = total;
     return ok;
 }
@@ -826,7 +880,9 @@ canon_status canon_problem_create_with_options(canon_context *ctx, const canon_g
      * output/verification buffers ... if that one-task requirement exceeds the descriptor,
      * return CAPACITY_LIMIT before search": the plan is a function of the input alone */
     uint64_t planned = 0;
-    if (!plan_bytes(group, object, target, objective, certificate, out_bytes, &planned)) {
+    if (!plan_bytes(group, object, target, objective, certificate,
+                    mode == CANON_WITNESS_DETERMINISTIC, out_bytes, cap.max_output_bytes,
+                    &planned)) {
         return CANON_CAPACITY_LIMIT;
     }
     if (planned > cap.max_live_bytes) {
@@ -901,6 +957,8 @@ static canon_result *new_result(canon_status status)
     }
     return r;
 }
+
+static const uint8_t *encode_bytes(const canon_result *result, size_t *total);
 
 static uint8_t *copy_bytes(const uint8_t *src, size_t len)
 {
@@ -986,15 +1044,26 @@ static canon_status finish_result(const canon_problem *problem, canon_status st,
     if (!ok) {
         canon_result_release(r);
         *out = new_result(CANON_RESOURCE_LIMIT);
+        if (*out != NULL) {
+            (*out)->metrics = a->metrics; /* S8: a status-only result keeps the counters */
+            (*out)->objective = problem->objective;
+        }
         return CANON_RESOURCE_LIMIT;
     }
     r->degree = n;
     r->flags = a->flags;
     r->sign = a->sign;
-    r->metrics = a->metrics;
-    r->metrics.output_bytes = (uint64_t)r->bytes_len + r->group_len + r->key_len;
-    r->metrics.certificate_bytes = r->certificate_len;
     r->objective = problem->objective;
+    r->metrics = a->metrics;
+    /* spec 19 (S8 independent review): the bytes of the answers the result hands out, i.e.
+     * what canon_result_encode streams (the 00 payload of a certified signed zero, spec 17),
+     * the Group payload and the order key; not stored bytes that no accessor returns */
+    size_t encoded = 0, group_len = 0, key_len = 0;
+    (void)encode_bytes(r, &encoded);
+    (void)canon_result_group_bytes(r, &group_len);
+    (void)canon_result_order_key(r, &key_len);
+    r->metrics.output_bytes = (uint64_t)encoded + group_len + key_len;
+    r->metrics.certificate_bytes = r->certificate_len;
     /* spec 17 verify_witness needs G, x and the target after the problem may be released:
      * the result retains them (owned references to immutable handles). */
     r->group = problem->group;
@@ -1027,7 +1096,20 @@ static void metrics_p1(canon_metrics *m, const canon_p1_search *s, const canon_g
     m->implicit_inserted = s->implicit_inserted;
     m->stabiliser_rebases = s->sym.stats.rebases;
     m->root_discrete = s->nodes == 1u;   /* spec 7.3: the root was a leaf */
-    m->singleton_orbit = s->fixing == g->gens.count; /* spec 7.3: every generator fixes x */
+    /* spec 7.3: every generator fixes x (decided before the root is visited, so only for a
+     * run that reached the root) */
+    m->singleton_orbit = s->nodes > 0u && s->fixing == g->gens.count;
+}
+
+/* S8 independent review: forget the previous solve's P1 counters, so that a solve that fails
+ * before (or without) a P1 run reports none of them (canon_p1_search_run resets them only
+ * once its storage is prepared). */
+static void p1_counters_clear(canon_p1_search *s)
+{
+    s->nodes = s->leaves = s->images = s->explored = s->pruned = 0;
+    s->implicit_candidates = s->implicit_inserted = 0;
+    s->fixing = 0;
+    memset(&s->sym.stats, 0, sizeof s->sym.stats);
 }
 
 static void metrics_enumeration(canon_metrics *m, const canon_obj_stats *st)
@@ -1044,9 +1126,10 @@ static void metrics_enumeration(canon_metrics *m, const canon_obj_stats *st)
 
 /* S8, spec 11.2: the ledger bracket of a solve (the plan and the live count before, the peak
  * after; exact when one solve runs at a time, decision D17). */
-static void metrics_begin(canon_metrics *m, const canon_problem *problem)
+static void metrics_begin(canon_metrics *m, const canon_problem *problem, canon_workspace *ws)
 {
     memset(m, 0, sizeof *m);
+    p1_counters_clear(&ws->search);
     m->planned_bytes = problem->planned_bytes;
     m->live_bytes_before = canon_mem_peak_reset();
 }
@@ -1065,7 +1148,7 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
     const uint64_t quota = problem->capacity.max_search_nodes;
     answer a;
     memset(&a, 0, sizeof a);
-    metrics_begin(&a.metrics, problem);
+    metrics_begin(&a.metrics, problem, ws);
     memset(&ws->obj.stats, 0, sizeof ws->obj.stats);
     const uint16_t policy = problem->capacity.work_policy;
     canon_p1_run_options opt = {policy != CANON_WORK_POLICY_UNPRUNED,
@@ -1075,7 +1158,7 @@ static canon_status solve_canonical(canon_workspace *ws, const canon_problem *pr
         /* spec 20: the producer's certificate names coverage, group verification, the
          * symmetry rules and the final claim (src/search/certificate.h) */
         st = canon_cert_begin(&ws->cert, problem->group, &problem->object->root,
-                              problem->capacity.work_policy);
+                              problem->capacity.work_policy, problem->capacity.max_output_bytes);
         opt.cert = &ws->cert;
     } else {
         canon_cert_reset(&ws->cert); /* no stale certificate survives in the workspace */
@@ -1122,7 +1205,7 @@ static canon_status solve_p1_objective(canon_workspace *ws, const canon_problem 
     const uint64_t quota = problem->capacity.max_search_nodes;
     answer a;
     memset(&a, 0, sizeof a);
-    metrics_begin(&a.metrics, problem);
+    metrics_begin(&a.metrics, problem, ws);
     const bool det = problem->witness_mode == CANON_WITNESS_DETERMINISTIC; /* M0a */
     canon_status st =
         problem->objective == CANON_OBJECTIVE_CANONICAL_LABELING_COSET
@@ -1154,7 +1237,7 @@ static canon_status solve_enumeration(canon_workspace *ws, const canon_problem *
     const canon_root *y = problem->target != NULL ? &problem->target->root : NULL;
     answer a;
     memset(&a, 0, sizeof a);
-    metrics_begin(&a.metrics, problem);
+    metrics_begin(&a.metrics, problem, ws);
     canon_status st = canon_obj_run(s, problem->group, &problem->object->root, y,
                                     problem->objective, problem->order,
                                     problem->witness_mode == CANON_WITNESS_DETERMINISTIC,
@@ -1481,8 +1564,10 @@ canon_status canon_result_encode_resume(const canon_result *result, size_t *offs
             return CANON_CANCELLED;
         }
         /* FAIL (any other nonzero return), or no progress on CONTINUE, which would loop: no
-         * byte is skipped or duplicated either way */
+         * byte is skipped or duplicated either way.  Bytes the failing call accepted count
+         * (canon.h: *offset is the total the sink accepted, the point of failure). */
         if (rc != 0 || accepted == 0) {
+            *offset += accepted;
             return CANON_OUTPUT_ERROR;
         }
         *offset += accepted;

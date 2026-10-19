@@ -82,6 +82,7 @@ typedef struct canon_cert {
     size_t sweeps_at;   /* offset in nodes of the current node's sweep count */
     uint32_t sweeps;    /* sweeps recorded for the current node */
     uint64_t chains;    /* rebased chains written (counter for the notes) */
+    uint64_t limit;     /* the largest certificate length admitted (canon_cert_begin) */
 } canon_cert;
 
 /* Zero state, no allocation. */
@@ -95,9 +96,14 @@ void canon_cert_reset(canon_cert *c);
  * `work_policy`, the stream of x, the generators kept by the handle (canon_group_set_generators)
  * and a verified chain of G built here from them (spec 9.1 "exact verification is mandatory").
  * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure, CANON_INTERNAL_ERROR if
- * the verifier rejects the chain. */
+ * the verifier rejects the chain.  `limit` bounds the length of the finished certificate
+ * (spec 11.1: a data-dependent output uses "a conservative input-derived bound" or a
+ * count-only traversal; the certificate's length is a function of the input, the objective
+ * and the work policy, like the quota's count, so the bound is checked while it is written):
+ * once the parts written so far exceed it, every writer call returns CANON_CAPACITY_LIMIT
+ * (S8 independent review, 19 October 2026; the admission plan charges the limit). */
 canon_status canon_cert_begin(canon_cert *c, const canon_group *g, const canon_root *x,
-                              uint16_t work_policy);
+                              uint16_t work_policy, uint64_t limit);
 
 /* Append the automorphism a (n images) to the table; *index receives its index. */
 canon_status canon_cert_automorphism(canon_cert *c, const uint32_t *a, uint32_t *index);

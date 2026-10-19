@@ -156,7 +156,7 @@ typedef struct canon_capacity {
      * CANON_UNSUPPORTED_ACTION at problem creation. */
     uint16_t work_policy;
     /* S8, spec 11.1-11.2: the live-memory budget of one solve in bytes (zero: the context
-     * default, 1 << 30).  At problem creation a deterministic plan of the solve's own
+     * default, 1 << 32).  At problem creation a deterministic plan of the solve's own
      * allocations is computed from the input (docs/slices/S8.md 1.4) and the problem is refused
      * with CANON_CAPACITY_LIMIT when the plan exceeds the budget; the plan is the policy, the
      * measured peak (canon_metrics) never changes a status. */
@@ -188,7 +188,7 @@ enum {
  * descriptor or a zero field selects the built-in default for that field: max_n = 4096,
  * max_group_order = 1 << 16, max_search_nodes = 1 << 20, max_output_bytes = 1 << 26,
  * max_nodes = 1 << 20, max_refs = 1 << 22, max_literal_bytes = 1 << 26 (S5), work_policy =
- * CANON_WORK_POLICY_PRUNE_2 (S7b), max_live_bytes = 1 << 30 (S8).
+ * CANON_WORK_POLICY_PRUNE_2 (S7b), max_live_bytes = 1 << 32 (S8).
  * Handles created from a context copy what they need and do not keep it alive. */
 canon_status canon_context_create(const canon_capacity *defaults, canon_context **out);
 /* spec 17: release the context; NULL is a no-op. */
@@ -415,7 +415,10 @@ typedef struct canon_problem_options {
     /* S7, spec 3.2, 20: request a certificate (format CERT-0, checker/README.md) with the
      * result, for the independent checker canon-check.  Available for CANONICAL_IMAGE on a
      * subset or graph object (CANON_UNSUPPORTED_ACTION otherwise at problem creation: nested
-     * roots and the other objectives are certificate v1). */
+     * roots and the other objectives are certificate v1).  S8 (spec 11.1): the certificate's
+     * length is bounded by the descriptor's max_output_bytes; a longer one makes the solve
+     * CANON_CAPACITY_LIMIT (a function of the input, the objective and the descriptor, whose
+     * work policy fixes the traversal the certificate records). */
     bool certificate;
 } canon_problem_options;
 
@@ -601,7 +604,9 @@ typedef struct canon_metrics {
     bool signed_fast_path;          /* spec 7.3 generator fast path taken */
     bool root_discrete;             /* spec 7.3: the P1 root was a leaf */
     bool singleton_orbit;           /* spec 7.3: every generator fixes x */
-    uint64_t output_bytes;          /* canonical stream (or payload) bytes */
+    uint64_t output_bytes;          /* bytes canon_result_encode streams (the 00 payload of a
+                                     * certified signed zero) plus the Group payload and the
+                                     * order key a COMPLETE result hands out */
     uint64_t certificate_bytes;
     uint64_t planned_bytes;         /* the admission plan of the problem (spec 11.1) */
     uint64_t live_bytes_before;     /* process-wide live bytes when the solve started */

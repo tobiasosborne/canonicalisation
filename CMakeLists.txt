@@ -108,7 +108,12 @@ add_executable(fuzz_checker fuzz/fuzz_checker.c checker/cc_check.c checker/cc_ch
   checker/cc_object.c checker/cc_reader.c checker/cc_refine.c)
 target_compile_definitions(fuzz_checker PRIVATE CANON_FUZZ_MAIN)
 target_link_libraries(fuzz_checker PRIVATE canon_options)
-add_test(NAME fuzz_replay COMMAND sh ${CMAKE_SOURCE_DIR}/fuzz/run.sh ${CMAKE_BINARY_DIR} 500)
+# fuzz/run.sh extracts its seeds with python3; the binaries are found in the targets' own
+# directory (S8 independent review: multi-config generators place them below the build dir).
+if(Python3_Interpreter_FOUND)
+  add_test(NAME fuzz_replay
+    COMMAND sh ${CMAKE_SOURCE_DIR}/fuzz/run.sh $<TARGET_FILE_DIR:fuzz_cdag_decode> 500)
+endif()
 
 # Slice S7: the checker harness (acceptance tiers and mutation rejection) and the usage exit.
 if(Python3_Interpreter_FOUND)
