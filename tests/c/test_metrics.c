@@ -180,6 +180,21 @@ static void tiers(void)
         for (uint32_t gi = 0; gi < ng; ++gi) {
             canon_group *g = NULL;
             CHECK(canon_group_create(ctx, n, groups[gi].gens, groups[gi].gen_count, &g) == CANON_COMPLETE);
+            /* the same group with the parity character (always a homomorphism) */
+            int8_t parity[8];
+            for (uint32_t k = 0; k < groups[gi].gen_count; ++k) {
+                const uint32_t *p = groups[gi].gens + k * n;
+                uint32_t seen = 0, cycles = 0;
+                for (uint32_t v = 0; v < n; ++v) {
+                    for (uint32_t w = v, first = 1; !(seen >> w & 1u); w = p[w], first = 0) {
+                        seen |= 1u << w;
+                        cycles += first;
+                    }
+                }
+                parity[k] = (n - cycles) % 2u == 0 ? 1 : -1;
+            }
+            canon_group *sg = NULL;
+            CHECK(canon_group_create_signed(ctx, n, groups[gi].gens, groups[gi].gen_count, parity, &sg) == CANON_COMPLETE);
             for (uint32_t mask = 0; mask < (1u << n); mask += (n == 4 ? 3u : 1u)) {
                 uint32_t atoms[4], k = 0;
                 for (uint32_t a = 0; a < n; ++a) {
@@ -202,6 +217,11 @@ static void tiers(void)
                 }
                 canon_problem_options lab = {CANON_WITNESS_ANY, rho, false};
                 CHECK(run(ws, g, x, NULL, CANON_OBJECTIVE_CANONICAL_LABELING_COSET, CANON_PROFILE_P1, &lab, NULL, &m) == CANON_COMPLETE);
+                /* spec v2.2 3: the signed image under the parity character in the deterministic
+                 * mode (a zero reports the least odd element of A: the exhausted enumeration, or
+                 * on the fast path the Schreier generators of A+) */
+                canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false};
+                CHECK(run(ws, sg, x, NULL, CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, &det, NULL, &m) == CANON_COMPLETE);
                 canon_object_release(x);
                 canon_object_release(y);
             }
@@ -226,6 +246,7 @@ static void tiers(void)
             CHECK(run(ws, g, gx, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &cert, NULL, &m) == CANON_COMPLETE);
             CHECK(run(ws, g, gx, NULL, CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, NULL, NULL, &m) == CANON_COMPLETE);
             canon_object_release(gx);
+            canon_group_release(sg);
             canon_group_release(g);
         }
     }
@@ -399,6 +420,42 @@ static void review(void)
     CHECK(fresh(s6, empty, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &det, NULL, &m) ==
           CANON_COMPLETE);
     CHECK(m.enumeration_visits > 0);
+    /* spec v2.2 3: the deterministic zero witness on the spec 7.3 route builds A+ from 2 k
+     * Schreier generators; Sym(6) given by 40 generators (transpositions and powers of a
+     * 6-cycle) under the parity character, the empty set, a fresh workspace: peak <= plan */
+    {
+        uint32_t many[40 * 6];
+        int8_t odd[40];
+        for (uint32_t i = 0; i < 40; ++i) {
+            uint32_t *q = many + i * 6u;
+            for (uint32_t v = 0; v < 6; ++v) {
+                /* even i: the transposition (a b); odd i: a power of the 6-cycle */
+                q[v] = i % 2u == 0 ? v : (v + 1u + i / 2u % 5u) % 6u;
+            }
+            if (i % 2u == 0) {
+                const uint32_t a = i / 2u % 6u, b = (a + 1u + i / 12u) % 6u;
+                q[a] = b;
+                q[b] = a;
+            }
+            uint32_t seen = 0, cycles = 0; /* parity: (6 - cycles) mod 2 */
+            for (uint32_t v = 0; v < 6; ++v) {
+                for (uint32_t w = v, first = 1; !(seen >> w & 1u); w = q[w], first = 0) {
+                    seen |= 1u << w;
+                    cycles += first;
+                }
+            }
+            odd[i] = (6u - cycles) % 2u == 0 ? 1 : -1;
+        }
+        canon_group *many_g = NULL;
+        CHECK(canon_group_create_signed(ctx, 6, many, 40, odd, &many_g) == CANON_COMPLETE);
+        canon_object *none = NULL;
+        CHECK(canon_object_create_subset(ctx, 6, NULL, 0, &none) == CANON_COMPLETE);
+        CHECK(fresh(many_g, none, CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, &det,
+                    NULL, &m) == CANON_COMPLETE);
+        CHECK(m.signed_fast_path && m.enumeration_visits == 0);
+        canon_object_release(none);
+        canon_group_release(many_g);
+    }
     canon_object_release(pairs);
     canon_object_release(leaves);
     canon_object_release(empty);

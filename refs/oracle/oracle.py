@@ -26,7 +26,8 @@ enumeration of the group:
                        and trace (spec 3.1: representative change).
   SIGNED_CANONICAL_IMAGE  the character is validated by the lift (spec 8.4); an inconsistent one
                        must be INVALID_INPUT; zero iff an odd element fixes x, with the witness
-                       an odd automorphism; nonzero: bytes in the orbit, witness t in G with
+                       an odd automorphism (deterministic mode, spec v2.2 3: the least odd
+                       element of A, by explicit enumeration); nonzero: bytes in the orbit, witness t in G with
                        x^t = c and sign chi(t), group_hex = Group(A); deterministic mode: the
                        least of A t; across the file, s(x^h) = chi(h) s(x) with c unchanged.
   A signed labeling problem must be UNSUPPORTED_ACTION.  A transporter target of another shape
@@ -39,8 +40,8 @@ enumeration of the group:
 Not checked (independent review, 19 October 2026): the trace beyond being non-empty and
 invariant across the file (it is defined by P1, not by the orbit; only the two references check
 each other's traces), which element of the orbit a canonical or signed image is (the same reason),
-which odd automorphism a certified zero reports (the spec fixes no deterministic zero witness,
-docs/slices/M0a-notes.md), and the hex fields of a skipped CAPACITY_LIMIT record.  The
+which odd automorphism a certified zero reports in "any" mode (spec v2.2 3 fixes only the
+deterministic one), and the hex fields of a skipped CAPACITY_LIMIT record.  The
 invariance rules compare only cases present in the file: the generator appends transported
 copies and representative changes for them (tools/gen_cases.py).  The
 encoder, normaliser and Group(H) writer below are written from the spec text; this file reuses
@@ -632,8 +633,14 @@ class Oracle:
                 if sign != 0 or data != "00" or ghex != "-" or trace:
                     return self.fail(cid, "an odd automorphism exists: expected a zero "
                                           "certificate (00, sign 0, no group, no trace)")
-                if member(witness, "zero witness") and (witness not in stab or chi[witness] >= 0):
-                    self.fail(cid, "the zero witness is not an odd automorphism of x")
+                if member(witness, "zero witness"):
+                    if witness not in stab or chi[witness] >= 0:
+                        self.fail(cid, "the zero witness is not an odd automorphism of x")
+                    elif det and witness != odd[0]:
+                        # spec v2.2 3: "the least image-array element a0 of A with
+                        # chi(a0) = -1"; `odd` is sorted, tuples compare as image arrays
+                        self.fail(cid, "deterministic zero witness is not the least odd "
+                                       "element of A")
                 return
             if sign == 0:
                 return self.fail(cid, "no odd automorphism, but a zero was certified")

@@ -617,7 +617,12 @@ static uint64_t group_bytes(const canon_group *g, bool *ok)
  *                    (src/search/certificate.h; S8 independent review, 19 October 2026), and
  *                    that limit is charged 4 times (the working buffers grow by doubling, the
  *                    assembled copy, the result's copy);
- *   nested roots     dag_bytes below (S8 independent review).
+ *   nested roots     dag_bytes below (S8 independent review);
+ *   signed zero      with the deterministic witness on a signed group of k input generators
+ *                    (spec v2.2 3, the least odd element of A = G on the spec 7.3 route): the
+ *                    Schreier generator table of A+ (2 k + 2 rows of n words) and the A+
+ *                    chain's copy of its 2 k inputs, charged twice; its levels and descent
+ *                    chain fall under the chains term (A+ <= G).
  * Returns false (CAPACITY_LIMIT) when a term does not fit uint64. */
 
 /* spec 11.2 (S8 independent review, 19 October 2026): the storage the solve allocates for
@@ -715,6 +720,12 @@ static bool plan_bytes(const canon_group *group, const canon_object *object,
         total = add_ok(total, add_ok(mul_ok(4u, cert_bytes, &ok), records, &ok), &ok);
     }
     total = add_ok(total, dag_bytes(&object->root, stream, &ok), &ok); /* nested roots */
+    if (objective == CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE && deterministic &&
+        group->signs != NULL) {
+        /* spec v2.2 3: the deterministic zero witness's A+ (Schreier generators, fast path) */
+        const uint64_t rows = add_ok(mul_ok(4u, group->signs->gens.count, &ok), 2u, &ok);
+        total = add_ok(total, mul_ok(2u, mul_ok(rows, mul_ok(n, W, &ok), &ok), &ok), &ok);
+    }
     *planned = total;
     return ok;
 }
