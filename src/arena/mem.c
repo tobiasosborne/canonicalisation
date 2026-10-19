@@ -47,7 +47,8 @@ static bool fault_fires(void)
 static void *allocate(size_t bytes, bool zero)
 {
     atomic_fetch_add_explicit(&mem_requests, 1u, memory_order_relaxed);
-    if (bytes > SIZE_MAX - sizeof(canon_mem_header) || fault_fires()) {
+    /* every request counts down a pending fault, whether or not it could succeed */
+    if (fault_fires() || bytes > SIZE_MAX - sizeof(canon_mem_header)) {
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
         return NULL;
     }
@@ -70,9 +71,12 @@ void *canon_mem_malloc(size_t bytes)
 void *canon_mem_calloc(size_t count, size_t size)
 {
     if (size != 0 && count > SIZE_MAX / size) {
+        /* spec 11.1: no wraparound has meaning.  Still a request, so it advances the fault
+         * countdown like every request canon_mem_requests counts (S8 independent review). */
         atomic_fetch_add_explicit(&mem_requests, 1u, memory_order_relaxed);
+        (void)fault_fires();
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
-        return NULL; /* spec 11.1: no wraparound has meaning */
+        return NULL;
     }
     return allocate(count * size, true);
 }
@@ -85,7 +89,8 @@ void *canon_mem_realloc(void *p, size_t bytes)
     canon_mem_header *h = (canon_mem_header *)p - 1;
     const size_t old = h->size;
     atomic_fetch_add_explicit(&mem_requests, 1u, memory_order_relaxed);
-    if (bytes > SIZE_MAX - sizeof(canon_mem_header) || fault_fires()) {
+    /* every request counts down a pending fault, whether or not it could succeed */
+    if (fault_fires() || bytes > SIZE_MAX - sizeof(canon_mem_header)) {
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
         return NULL;
     }

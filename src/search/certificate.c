@@ -127,8 +127,15 @@ canon_status canon_cert_write_chain(canon_buf *out, const canon_bsgs *chain)
 }
 
 /* Any failure ends the certificate: the search goes on, the result carries no certificate. */
+/* Settle a writer call: a failure deactivates the writer; so does a certificate whose parts
+ * written so far exceed the limit (spec 11.1 CAPACITY_LIMIT: the length of the finished
+ * certificate is at least that sum, so the verdict does not depend on when it is checked). */
 static canon_status fail(canon_cert *c, canon_status st)
 {
+    if (st == CANON_COMPLETE &&
+        (uint64_t)c->head.len + c->auts.len + c->nodes.len > c->limit) {
+        st = CANON_CAPACITY_LIMIT;
+    }
     if (st != CANON_COMPLETE) {
         c->active = false;
     }
@@ -136,9 +143,10 @@ static canon_status fail(canon_cert *c, canon_status st)
 }
 
 canon_status canon_cert_begin(canon_cert *c, const canon_group *g, const canon_root *x,
-                              uint16_t work_policy)
+                              uint16_t work_policy, uint64_t limit)
 {
     canon_cert_reset(c);
+    c->limit = limit;
     const uint32_t n = x->n;
     if (c->m == NULL || n > c->m_cap) {
         canon_status as = CANON_COMPLETE;
@@ -188,6 +196,9 @@ canon_status canon_cert_begin(canon_cert *c, const canon_group *g, const canon_r
     if (st == CANON_COMPLETE) {
         st = canon_cert_write_chain(h, &c->root);
     }
+    if (st == CANON_COMPLETE && h->len > limit) {
+        st = CANON_CAPACITY_LIMIT; /* spec 11.1: the header alone exceeds the bound */
+    }
     if (st != CANON_COMPLETE) {
         return st;
     }
@@ -203,9 +214,9 @@ canon_status canon_cert_automorphism(canon_cert *c, const uint32_t *a, uint32_t 
     if (c->aut_count == UINT32_MAX) {
         return fail(c, CANON_CAPACITY_LIMIT); /* spec 11.1: the index is U32 */
     }
-    canon_status st = put_dense(&c->auts, a, c->n);
+    canon_status st = fail(c, put_dense(&c->auts, a, c->n));
     if (st != CANON_COMPLETE) {
-        return fail(c, st);
+        return st;
     }
     *index = c->aut_count++;
     return CANON_COMPLETE;
@@ -377,8 +388,8 @@ canon_status canon_cert_finish(canon_cert *c, const uint8_t *trace, size_t trace
     if (!canon_size_add(c->head.len, c->auts.len, &total) ||
         !canon_size_add(total, c->nodes.len, &total) ||
         !canon_size_add(total, trace_len, &total) || !canon_size_add(total, bytes_len, &total) ||
-        !canon_size_add(total, 20u + 4u * (size_t)c->n, &total)) {
-        return fail(c, CANON_CAPACITY_LIMIT);
+        !canon_size_add(total, 20u + 4u * (size_t)c->n, &total) || total > c->limit) {
+        return fail(c, CANON_CAPACITY_LIMIT); /* spec 11.1 */
     }
     canon_status st = canon_buf_reserve(o, total);
     if (st == CANON_COMPLETE) {

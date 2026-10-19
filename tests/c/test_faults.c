@@ -16,6 +16,56 @@
 
 static int bad_statuses, completes, resource_limits;
 
+/* S8 independent review: every COMPLETE solve of a faulted flow must give exactly the
+ * fault-free answer (spec 17 "never a fabricated completion flag": a swallowed allocation
+ * failure that changed the answer or the traversal would show here), so the fault-free flow
+ * records a digest of each solve's answer and counters. */
+static uint64_t ref_digest[16];
+static bool have_ref;
+static uint64_t compared;
+
+static uint64_t mix(uint64_t h, const void *data, size_t len)
+{
+    const uint8_t *b = data;
+    h = (h ^ (uint64_t)len) * 0x100000001b3ULL;
+    for (size_t i = 0; b != NULL && i < len; ++i) {
+        h = (h ^ b[i]) * 0x100000001b3ULL;
+    }
+    return h;
+}
+
+static uint64_t answer_digest(const canon_result *r)
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+    size_t len = 0;
+    uint32_t deg = 0;
+    const canon_result_flags f = canon_result_get_flags(r);
+    h = mix(h, &f, sizeof f);
+    const uint8_t *b = canon_result_trace(r, &len);
+    h = mix(h, b, len);
+    b = canon_result_bytes(r, &len);
+    h = mix(h, b, len);
+    b = canon_result_group_bytes(r, &len);
+    h = mix(h, b, len);
+    b = canon_result_order_key(r, &len);
+    h = mix(h, b, len);
+    b = canon_result_certificate(r, &len);
+    h = mix(h, b, len);
+    const uint32_t *w = canon_result_witness(r, &deg);
+    h = mix(h, w, w != NULL ? (size_t)deg * sizeof *w : 0);
+    w = canon_result_labeling(r, &deg);
+    h = mix(h, w, w != NULL ? (size_t)deg * sizeof *w : 0);
+    int sign = 0;
+    (void)canon_result_sign(r, &sign);
+    h = mix(h, &sign, sizeof sign);
+    canon_metrics m;
+    CHECK(canon_result_metrics(r, &m) == CANON_COMPLETE);
+    const uint64_t counts[8] = {m.p1_nodes, m.p1_leaves, m.children_explored, m.children_pruned,
+                                m.automorphisms_inserted, m.enumeration_visits,
+                                m.enumeration_leaves, m.output_bytes};
+    return mix(h, counts, sizeof counts);
+}
+
 static void note(canon_status st)
 {
     if (st == CANON_COMPLETE) {
@@ -116,6 +166,13 @@ static bool flow(void)
             note(st);
             all = all && st == CANON_COMPLETE;
             if (r != NULL && canon_result_status(r) == CANON_COMPLETE) {
+                const uint64_t digest = answer_digest(r);
+                if (!have_ref) {
+                    ref_digest[i] = digest;
+                } else {
+                    CHECK(digest == ref_digest[i]); /* the fault-free answer, exactly */
+                    ++compared;
+                }
                 /* a COMPLETE result must carry its answer */
                 canon_result_flags f = canon_result_get_flags(r);
                 size_t len = 0;
@@ -168,6 +225,7 @@ int main(void)
     const uint64_t requests_before = canon_mem_requests();
     /* the fault-free flow completes everything */
     CHECK(flow());
+    have_ref = true;
     canon_memory_stats after;
     canon_memory_get(&after);
     CHECK(after.live_bytes == base.live_bytes);
@@ -190,9 +248,10 @@ int main(void)
     }
     CHECK(faulted_runs >= per_flow - 2u && faulted_runs <= per_flow + 1u);
     CHECK(bad_statuses == 0);
+    CHECK(compared > 0);
     printf("faults: %llu allocations per flow, %llu faulted runs, %d RESOURCE_LIMIT statuses, %d "
-           "COMPLETE statuses, %d other\n",
+           "COMPLETE statuses, %d other; %llu complete solves equal to the fault-free answer\n",
            (unsigned long long)per_flow, (unsigned long long)faulted_runs, resource_limits, completes,
-           bad_statuses);
+           bad_statuses, (unsigned long long)compared);
     return check_finish("test_faults");
 }

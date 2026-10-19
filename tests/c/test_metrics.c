@@ -104,7 +104,8 @@ static void golden_counters(void)
     CHECK(canon_group_create_signed(ctx, 2, swap, 1, minus, &sg) == CANON_COMPLETE);
     CHECK(run(ws, sg, empty, NULL, CANON_OBJECTIVE_SIGNED_CANONICAL_IMAGE, CANON_PROFILE_P1, NULL,
               NULL, &m) == CANON_COMPLETE);
-    CHECK(m.signed_fast_path && m.output_bytes == 0); /* a certified zero has no stream */
+    /* a certified zero has no stream; canon_result_encode writes its 00 payload (S8 review) */
+    CHECK(m.signed_fast_path && m.output_bytes == 1);
     /* a status-only result keeps its plan and memory fields */
     canon_capacity tight = {0, 0, 1, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
     CHECK(run(ws, g, empty, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, NULL, &tight,
@@ -231,12 +232,188 @@ static void tiers(void)
     canon_workspace_release(ws);
 }
 
+/* ---- S8 independent review (19 October 2026, docs/slices/S8-notes.md) ---- */
+
+/* run() on a workspace of its own, so that the peak includes the workspace's growth. */
+static canon_status fresh(const canon_group *g, const canon_object *x, canon_objective obj,
+                          canon_profile prof, const canon_problem_options *opts,
+                          const canon_capacity *cap, canon_metrics *m)
+{
+    canon_workspace *ws = NULL;
+    CHECK(canon_workspace_create(ctx, &ws) == CANON_COMPLETE);
+    const canon_status st = run(ws, g, x, NULL, obj, prof, opts,
+                                cap, m);
+    canon_workspace_release(ws);
+    return st;
+}
+
+static uint8_t dag_buf[1u << 16];
+static size_t dag_len;
+
+static void put8(unsigned v)
+{
+    dag_buf[dag_len++] = (uint8_t)v;
+}
+
+static void put32(uint32_t v)
+{
+    put8(v >> 24);
+    put8((v >> 16) & 255u);
+    put8((v >> 8) & 255u);
+    put8(v & 255u);
+}
+
+/* A CDAG-2 stream on degree n (spec 4.1): with `groups` false, the n atoms, the ordered pairs
+ * (a, b), a != b, as tuples, and the set of those tuples; with `groups`
+ * true, the subgroups <(a b c)> for a < b < c (rule 2 of spec 9.4: the 3-cycle a -> b -> c is
+ * the least non-identity element) and the set of them. */
+static canon_object *nested(uint32_t n, bool groups)
+{
+    dag_len = 0;
+    const uint8_t head[7] = {0x43, 0x4e, 0x02, 0x00, 0x01, 0x00, 0x01};
+    for (size_t i = 0; i < sizeof head; ++i) {
+        put8(head[i]);
+    }
+    put32(n);
+    const size_t q_at = dag_len;
+    put32(0);
+    uint32_t q = 0, first = 0;
+    if (!groups) {
+        for (uint32_t a = 0; a < n; ++a) {
+            put8(0x01);
+            put32(a);
+            ++q;
+        }
+        first = q;
+        for (uint32_t a = 0; a < n; ++a) {
+            for (uint32_t b = 0; b < n; ++b) {
+                if (a != b) {
+                    put8(0x03);
+                    put32(2);
+                    put32(a);
+                    put32(b);
+                    ++q;
+                }
+            }
+        }
+    } else {
+        for (uint32_t a = 0; a < n; ++a) {
+            for (uint32_t b = a + 1u; b < n; ++b) {
+                for (uint32_t c = b + 1u; c < n; ++c) {
+                    const uint32_t perm[7] = {3, a, b, b, c, c, a};
+                    put8(0x07);
+                    put8(0x00);
+                    put32(1);
+                    for (size_t i = 0; i < 7; ++i) {
+                        put32(perm[i]);
+                    }
+                    ++q;
+                }
+            }
+        }
+    }
+    put8(0x04);
+    put32(q - first);
+    for (uint32_t i = first; i < q; ++i) {
+        put32(i);
+    }
+    ++q;
+    put32(q - 1u);
+    for (int i = 0; i < 4; ++i) {
+        dag_buf[q_at + (size_t)i] = (uint8_t)(q >> (24 - 8 * i));
+    }
+    canon_object *x = NULL;
+    CHECK(canon_object_create(ctx, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n, dag_buf,
+                              dag_len, &x) == CANON_COMPLETE);
+    return x;
+}
+
+static void review(void)
+{
+    /* Finding 1: a certificate's length grows with the node count, which the plan did not
+     * bound (the unpruned certificate of the empty subset under Sym(6) used 4.2 MB against a
+     * plan of 1.1 MB).  It is now bounded by max_output_bytes and charged by the plan. */
+    uint32_t sym[2 * 6];
+    for (uint32_t v = 0; v < 6; ++v) {
+        sym[v] = v;
+        sym[6 + v] = (v + 1u) % 6u;
+    }
+    sym[0] = 1;
+    sym[1] = 0;
+    canon_group *s6 = NULL, *c13 = NULL, *c9 = NULL;
+    canon_object *empty = NULL;
+    CHECK(canon_group_create(ctx, 6, sym, 2, &s6) == CANON_COMPLETE);
+    CHECK(canon_object_create_subset(ctx, 6, NULL, 0, &empty) == CANON_COMPLETE);
+    canon_metrics m;
+    canon_problem_options cert = {CANON_WITNESS_ANY, NULL, true};
+    canon_capacity unpruned = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
+    CHECK(fresh(s6, empty, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &cert, &unpruned,
+                &m) == CANON_COMPLETE);
+    CHECK(m.certificate_bytes > 1000000u && m.p1_nodes > 1000u);
+    const uint64_t big = m.certificate_bytes;
+    /* a limit below the certificate's length: CAPACITY_LIMIT, still within the plan */
+    canon_capacity limited = unpruned;
+    limited.max_output_bytes = big - 1u;
+    CHECK(fresh(s6, empty, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &cert, &limited,
+                &m) == CANON_CAPACITY_LIMIT);
+    limited.max_output_bytes = big; /* exactly the length: admitted */
+    CHECK(fresh(s6, empty, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &cert, &limited,
+                &m) == CANON_COMPLETE && m.certificate_bytes == big);
+    /* Finding 3: a status-only result reports no counters of an earlier solve.  A limit
+     * below the certificate's header stops the solve before its P1 run. */
+    canon_workspace *ws = NULL;
+    CHECK(canon_workspace_create(ctx, &ws) == CANON_COMPLETE);
+    CHECK(run(ws, s6, empty, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, NULL,
+              &unpruned, &m) == CANON_COMPLETE && m.p1_nodes > 1000u);
+    limited.max_output_bytes = 64;
+    CHECK(run(ws, s6, empty, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &cert,
+              &limited, &m) == CANON_CAPACITY_LIMIT);
+    CHECK(m.p1_nodes == 0 && m.p1_leaves == 0 && m.children_explored == 0 &&
+          !m.singleton_orbit && !m.root_discrete);
+    canon_workspace_release(ws);
+    /* Finding 2: nested roots.  Their image arenas were charged as stream bytes only (the
+     * set of all 156 pairs on 13 points under C13 used 84 KB against a plan of 68 KB, 158 KB
+     * with the deterministic witness; the 84 subgroup leaves on 9 points under C9 with the
+     * deterministic witness 102 KB against 83 KB). */
+    uint32_t cyc[13];
+    for (uint32_t v = 0; v < 13; ++v) {
+        cyc[v] = (v + 1u) % 13u;
+    }
+    CHECK(canon_group_create(ctx, 13, cyc, 1, &c13) == CANON_COMPLETE);
+    for (uint32_t v = 0; v < 9; ++v) {
+        cyc[v] = (v + 1u) % 9u;
+    }
+    CHECK(canon_group_create(ctx, 9, cyc, 1, &c9) == CANON_COMPLETE);
+    canon_object *pairs = nested(13, false), *leaves = nested(9, true);
+    canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false};
+    CHECK(fresh(c13, pairs, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, NULL, NULL, &m) ==
+          CANON_COMPLETE);
+    CHECK(fresh(c13, pairs, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &det, NULL, &m) ==
+          CANON_COMPLETE);
+    CHECK(fresh(c9, leaves, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &det, NULL, &m) ==
+          CANON_COMPLETE);
+    CHECK(fresh(c9, leaves, CANON_OBJECTIVE_STABILISER, CANON_PROFILE_NO_TREE, NULL, NULL, &m) ==
+          CANON_COMPLETE);
+    /* Finding 4: the deterministic witness of a canonical image runs the enumeration, which
+     * the plan now charges like the other enumerating solves (Sym(6), fresh workspace) */
+    CHECK(fresh(s6, empty, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1, &det, NULL, &m) ==
+          CANON_COMPLETE);
+    CHECK(m.enumeration_visits > 0);
+    canon_object_release(pairs);
+    canon_object_release(leaves);
+    canon_object_release(empty);
+    canon_group_release(s6);
+    canon_group_release(c13);
+    canon_group_release(c9);
+}
+
 int main(void)
 {
     CHECK(canon_context_create(NULL, &ctx) == CANON_COMPLETE);
     golden_counters();
     ledger();
     tiers();
+    review();
     printf("metrics: %llu solves, peak <= plan on every one; the largest peak/plan ratio is "
            "%llu / %llu bytes\n",
            (unsigned long long)solves, (unsigned long long)worst_peak, (unsigned long long)worst_plan);
