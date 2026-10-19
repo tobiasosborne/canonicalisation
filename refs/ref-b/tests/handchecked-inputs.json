@@ -1,0 +1,16 @@
+{"note": "ref-b's own inputs for the remaining spec 7.4 hand-checked examples (inputs only)",
+ "cases": [
+ {"id":"hc-signed-empty-sym2-odd","n":2,"group_generators":[[1,0]],"character":[-1],"object":{"kind":"subset","atoms":[]},"objective":"SIGNED_CANONICAL_IMAGE","objective_tag":7,"profile":1,"encoding":2},
+ {"id":"hc-signed-x0","n":2,"group_generators":[[1,0]],"character":[-1],"object":{"kind":"subset","atoms":[0]},"objective":"SIGNED_CANONICAL_IMAGE","objective_tag":7,"profile":1,"encoding":2},
+ {"id":"hc-signed-x1","n":2,"group_generators":[[1,0]],"character":[-1],"object":{"kind":"subset","atoms":[1]},"objective":"SIGNED_CANONICAL_IMAGE","objective_tag":7,"profile":1,"encoding":2},
+ {"id":"hc-lexmin-x0","n":2,"group_generators":[[1,0]],"object":{"kind":"subset","atoms":[0]},"objective":"LEX_MIN_IMAGE","objective_tag":2,"profile":0,"encoding":2,"order":"CDAG-BYTE-1"},
+ {"id":"hc-stab-trivial-n3","n":3,"group_generators":[],"object":{"kind":"subset","atoms":[]},"objective":"STABILISER","objective_tag":4,"profile":0,"encoding":2},
+ {"id":"hc-stab-sym2","n":2,"group_generators":[[1,0]],"object":{"kind":"subset","atoms":[]},"objective":"STABILISER","objective_tag":4,"profile":0,"encoding":2},
+ {"id":"hc-stab-c3","n":3,"group_generators":[[1,2,0]],"object":{"kind":"subset","atoms":[]},"objective":"STABILISER","objective_tag":4,"profile":0,"encoding":2},
+ {"id":"hc-dag-coset-leaf","n":2,"group_generators":[],"object":{"kind":"dag","records":[{"tag":8,"group_generators":[],"r":[1,0]}],"root":0},"objective":"CANONICAL_IMAGE","objective_tag":1,"profile":1,"encoding":2},
+ {"id":"hc-labeling-rho","n":2,"group_generators":[],"object":{"kind":"subset","atoms":[0]},"labeling":{"rho":[1,0]},"objective":"CANONICAL_LABELING_COSET","objective_tag":5,"profile":1,"encoding":2},
+ {"id":"hc-labeling-mu","n":2,"group_generators":[],"object":{"kind":"subset","atoms":[1]},"labeling":{"rho":[0,1]},"objective":"CANONICAL_LABELING_COSET","objective_tag":5,"profile":1,"encoding":2},
+ {"id":"ex-transporter-one-c3","n":3,"group_generators":[[1,2,0]],"object":{"kind":"subset","atoms":[0]},"target":{"kind":"subset","atoms":[2]},"objective":"TRANSPORTER_ONE","objective_tag":3,"profile":0,"encoding":2},
+ {"id":"ex-tuple-sym3","n":3,"group_generators":[[1,2,0],[1,0,2]],"object":{"kind":"tuple","points":[2,0,2]},"objective":"CANONICAL_IMAGE","objective_tag":1,"profile":1,"encoding":2},
+ {"id":"hc-dag-perm-leaf","n":3,"group_generators":[[1,2,0]],"object":{"kind":"dag","records":[{"tag":6,"perm":[2,1,0]}],"root":0},"objective":"CANONICAL_IMAGE","objective_tag":1,"profile":1,"encoding":2}
+ ]}
