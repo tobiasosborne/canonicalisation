@@ -1877,11 +1877,12 @@ class Pruning(CliTestCase):
         # D14: the default policy is a prune
         proc = raw_cli(base + ["--max-nodes", "2"])
         self.assertEqual(proc.stdout.split("\t")[2], "COMPLETE")
-        # S7b: {0} under Sym(4): 10 nodes unpruned and explicit, 7 with implicit automorphisms
+        # S7b: {0} under Sym(4): 10 nodes unpruned and explicit, 6 with implicit automorphisms
+        # (7 before the review of 19 October 2026, docs/slices/S7b-notes.md)
         base = ["p1-subset", "--n", "4", "--gens", "1,2,3,0;1,0,2,3", "--atoms", "0", "--id", "q4"]
         for prune, quota, status in (("off", 9, "CAPACITY_LIMIT"), ("explicit", 9, "CAPACITY_LIMIT"),
-                                     ("explicit", 10, "COMPLETE"), ("on", 6, "CAPACITY_LIMIT"),
-                                     ("on", 7, "COMPLETE")):
+                                     ("explicit", 10, "COMPLETE"), ("on", 5, "CAPACITY_LIMIT"),
+                                     ("on", 6, "COMPLETE")):
             proc = cli(base + ["--prune", prune, "--max-nodes", str(quota)])
             self.assertEqual(proc.stdout.split("\t")[2], status, (prune, quota))
         # Sym(6): 1 + 6 + 30 + 120 + 360 + 720 = 1237 nodes unpruned, 6 pruned

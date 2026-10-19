@@ -178,23 +178,41 @@ static void digraphs(void)
  * no explicit automorphism (both generators move 0), so the explicit policy explores the whole
  * tree: the root cell {1, 2, 3}, each child with a cell of two, 1 + 3 (1 + 2) = 10 nodes.  Under
  * the implicit policy the second leaf below child 1 has the incumbent's key and yields (2 3);
- * at the root, child 3 is then in the orbit of child 2 and is pruned; below child 2 the second
- * leaf yields (1 3), so A_known = Sym({1, 2, 3}) of order 6 and 1 + 2 (1 + 2) = 7 nodes.  The
- * pruned count is the CAPACITY_LIMIT boundary of the pruned run. */
+ * at the root, child 3 is then in the orbit of child 2 and is pruned; below child 2 the first
+ * leaf (child 1) yields (1 2), so A_known = Sym({1, 2, 3}) of order 6, and child 3 of that node
+ * lies in the orbit of the explored child 1 under A_S = <(1 3)> and is pruned:
+ * 1 + (1 + 2) + (1 + 1) = 6 nodes (7 before the review of 19 October 2026, which explored that
+ * child although an explored sibling's orbit held it).  The pruned count is the CAPACITY_LIMIT
+ * boundary of the pruned run.  The subset {0, 1, 3, 4} under
+ * <(1 3 4), (0 3 4 2)> (Sym(5); A_known = <(1 3 4)> under the explicit policy) is the review
+ * regression of 19 October 2026 (docs/slices/S7b-notes.md): the root cell {0, 1, 3, 4} has the
+ * A_S-orbits {0} and {1, 3, 4}; child 0's subtree has 1 + 1 + 2 = 4 nodes (A_S = <(1 3 4)> prunes
+ * 3 and 4 below it), child 1's has 1 + 3 (1 + 2) = 10 (A_S trivial), and the orbit of 1 prunes 3
+ * and 4 at the root, so 1 + 4 + 10 = 15 nodes explicit (41 unpruned).  Deciding child 1 with the
+ * stabiliser left behind by child 0's subtree (that of the prefix (0, 1), trivial) explored 3 and
+ * 4 as well: 35 nodes.  Under the implicit policy: 8 nodes. */
 static void node_counts(void)
 {
-    const uint32_t zero[1] = {0};
+    const uint32_t zero[1] = {0}, four[4] = {0, 1, 3, 4};
+    const uint32_t c3c4[10] = {0, 3, 2, 4, 1, /* (1 3 4) */ 3, 1, 0, 4, 2 /* (0 3 4 2) */};
     const struct {
         uint32_t n, k;
         const uint32_t *atoms;
+        const uint32_t *gens; /* two generators; NULL: the n-cycle and (0 1) */
         uint64_t unpruned, explicit_count, implicit_count, a_order;
-    } want[] = {{2, 0, NULL, 3, 2, 2, 2}, {6, 0, NULL, 1237, 6, 6, 720}, {4, 1, zero, 10, 10, 7, 6}};
+    } want[] = {{2, 0, NULL, NULL, 3, 2, 2, 2},
+                {6, 0, NULL, NULL, 1237, 6, 6, 720},
+                {4, 1, zero, NULL, 10, 10, 6, 6},
+                {5, 4, four, c3c4, 41, 15, 8, 24}};
     for (size_t i = 0; i < sizeof want / sizeof *want; ++i) {
         const uint32_t n = want[i].n;
         uint32_t gens[12];
         for (uint32_t v = 0; v < n; ++v) {
             gens[v] = (v + 1u) % n; /* an n-cycle */
             gens[n + v] = v < 2 ? 1u - v : v; /* the transposition (0 1) */
+        }
+        if (want[i].gens != NULL) {
+            memcpy(gens, want[i].gens, 2u * n * sizeof *gens);
         }
         canon_group *g = NULL;
         CHECK(canon_group_create(ctx_of[0], n, gens, 2, &g) == CANON_COMPLETE);

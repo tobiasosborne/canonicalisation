@@ -133,7 +133,10 @@ cc_reason cc_signatures_compute(const cc_object *x, const cc_partition *p, cc_si
      * from v into C[j], incoming multiplicity from C[j] into v"; the dense vector has
      * 2 L k entries, index ((l k) + j) 2 + dir.  For a subset every signature is empty. */
     const size_t L = x->graph ? x->label_count : 0, k = p->cells;
-    if (L > 0 && k > 0 && (L > SIZE_MAX / k || L * k > SIZE_MAX / 2u)) {
+    /* the row is 2 L k counts of 8 bytes: every factor is checked before the product (a row
+     * size that wrapped would make cc_alloc return a block shorter than the writes below) */
+    if (L > 0 && k > 0 &&
+        (L > SIZE_MAX / k || L * k > SIZE_MAX / 2u / sizeof *s->counts)) {
         return CC_CAPACITY;
     }
     s->width = 2u * L * k;
