@@ -51,3 +51,25 @@ the diff in `src/bsgs/chain.c` is confined to the rebase function and one new he
 - Before the fix this test failed with exactly 12 failures (the six truncated cases
   × status + emptiness); after the fix `test_chain: ok`, with T1/T2/Sym(12)
   construction counters identical to the pre-fix run.
+
+## B-kernel-03 — verifier trusts unchecked capacities
+
+**Confirmed.** `structure_ok` (`src/bsgs/verify.c`) checked value ranges and non-NULL
+pointers but never any capacity field (`node_cap` was not read anywhere in verify.c);
+mutating any recorded capacity below its count still verified VALID (6 new test cases
+failed before the fix).
+
+**Change.** `structure_ok` now rejects, as `CANON_BSGS_BAD_STRUCTURE`, any count beyond
+its recorded capacity: `gens.cap`/`invs.cap`/`inputs.cap` vs their counts, `node_cap` vs
+`gens.count`, `prov.cap` vs `prov.count`, and per-level `gen_cap` vs `gen_count`.
+What no field records cannot be checked — the allocations behind the pointers and the
+per-level orbit blocks (one 5n block in the constructor, no stored capacity) — so
+`src/bsgs/verify.h` now states that precondition explicitly at `canon_bsgs_verify`,
+including the obligation of any future chain importer. This is the finding's
+"cap checks where possible + contract statement" option; a capacity field that
+*overstates* its allocation remains undetectable and is named in the contract.
+
+**Tests.** `tests/c/test_verify.c` `other_reasons()`: six mutations (node_cap, the three
+table caps, prov.cap, a level's gen_cap, each set one below its count) must each give
+BAD_STRUCTURE. `test_verify: ok`; `test_chain: ok` (hand-built chains there and in
+test_verify's nesting counterexample already record honest capacities).

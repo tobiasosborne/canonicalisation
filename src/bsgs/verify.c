@@ -94,6 +94,16 @@ static bool structure_ok(const canon_bsgs *c, vscratch *s)
         c->gens.count != c->invs.count || c->levels == NULL || c->depth >= c->level_cap) {
         return false;
     }
+    /* B-kernel-03: every count the later passes index by must fit its recorded capacity
+     * (spec 9.1: the verifier is the independent check, so it must not trust a count its
+     * own capacity field contradicts).  What no field records stays a precondition of
+     * canon_bsgs_verify (verify.h): the allocations behind the pointers and the per-level
+     * orbit blocks. */
+    if (c->gens.cap < c->gens.count || c->invs.cap < c->invs.count ||
+        c->inputs.cap < c->inputs.count || c->node_cap < c->gens.count ||
+        c->prov.cap < c->prov.count) {
+        return false;
+    }
     if (n > 0 && ((c->gens.count > 0 && (c->gens.data == NULL || c->invs.data == NULL)) ||
                   (c->inputs.count > 0 && c->inputs.data == NULL))) {
         return false;
@@ -117,7 +127,7 @@ static bool structure_ok(const canon_bsgs *c, vscratch *s)
         }
         s->mark[L->base_point] = st;
         if (L->orbit_len < 1 || L->orbit_len > n || L->orbit == NULL || L->orbit_pos == NULL ||
-            L->parent_point == NULL || L->parent_gen == NULL ||
+            L->parent_point == NULL || L->parent_gen == NULL || L->gen_cap < L->gen_count ||
             (L->gen_count > 0 && L->gen_ids == NULL)) {
             return false;
         }

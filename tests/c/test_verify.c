@@ -247,6 +247,37 @@ static void other_reasons(void)
     c.levels[1].base_point = c.levels[0].base_point;
     expect(&c, CANON_BSGS_BAD_STRUCTURE, "repeated base point");
 
+    /* B-kernel-03: structure checks the capacities it can read -- a count beyond its
+     * recorded capacity is rejected, not trusted (the destructors ignore cap fields, so
+     * mutating them here frees safely). */
+    build(&c);
+    CHECK(c.gens.count > 0);
+    c.node_cap = c.gens.count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "node_cap below gens.count");
+
+    build(&c);
+    c.gens.cap = c.gens.count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "gens.cap below gens.count");
+
+    build(&c);
+    c.invs.cap = c.invs.count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "invs.cap below invs.count");
+
+    build(&c);
+    CHECK(c.inputs.count > 0);
+    c.inputs.cap = c.inputs.count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "inputs.cap below inputs.count");
+
+    build(&c);
+    CHECK(c.prov.count > 0);
+    c.prov.cap = c.prov.count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "prov.cap below prov.count");
+
+    build(&c);
+    CHECK(c.levels[0].gen_count > 0);
+    c.levels[0].gen_cap = c.levels[0].gen_count - 1;
+    expect(&c, CANON_BSGS_BAD_STRUCTURE, "level gen_cap below gen_count");
+
     /* a provenance record that refers to a later node */
     build(&c);
     {
