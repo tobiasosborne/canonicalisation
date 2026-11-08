@@ -184,6 +184,70 @@ void canon_bsgs_orbit_ids(const canon_bsgs *c, uint32_t level, uint32_t *orbit_i
  * derived from it. */
 uint64_t canon_bsgs_bytes(const canon_bsgs *c);
 
+/* Caller-owned scratch for canon_bsgs_tuple_min_ws (K2; spec 12.3/17 hot path: no per-call
+ * allocation after admission): three arrays of n words, pairwise distinct and distinct from
+ * L, t_out and orbit_id_out.  Their contents are overwritten. */
+typedef struct canon_bsgs_tuple_scratch {
+    uint32_t *work;  /* transporter and dense products */
+    uint32_t *queue; /* orbit queue traversal; reused as the dense-product temporary of a step */
+    uint32_t *mark;  /* orbit queue traversal stamps */
+} canon_bsgs_tuple_scratch;
+
+/* Workspace-owned stabiliser cache for canon_bsgs_tuple_min_ws (K2).  Spec 16 licenses it:
+ * "Normalised group-refiner keys include G, ordered fixed tuple F (or M with its verified
+ * transport), ordered orbit convention and profile stage. A hit must produce exactly the same
+ * logical stage/trace as recomputation. Eviction changes time only."  Here an entry is keyed
+ * by (G, minimised prefix M prefix (b_1..b_k)): its chain is a chain for
+ * G_(b_1..b_{k-1}) whose first base point is b_k, exactly what the spec 7.2 step rebuilds;
+ * the orbit convention (canon_bsgs_orbit_ids) and the stage (tuple minimum) are fixed, and G
+ * is identified exactly by an owned copy of the root chain's generator and input tables (not
+ * by address alone, so a freed group's reused address cannot produce a false hit).  Retained
+ * bytes are capped at twice the root chain's canon_bsgs_bytes (within the admission plan's
+ * 4x chain allowance, spec 11.2); retention prefers shallow prefixes, whose rebuilds are
+ * the expensive ones and which every call revisits, so a deeper entry is evicted before a
+ * shallower one and a chain that would displace a shallower prefix stays transient.  One
+ * active owner: not shared between threads (spec 17 workspace rule). */
+typedef struct canon_bsgs_tuple_cache_entry {
+    uint32_t *prefix; /* minimised prefix (b_1..b_k), len entries */
+    uint32_t len;
+    canon_bsgs chain; /* G_(b_1..b_{k-1}) with first base point b_k */
+    uint64_t bytes;   /* canon_bsgs_bytes of chain plus the prefix words */
+} canon_bsgs_tuple_cache_entry;
+
+/* One memoised G-stage result (spec 16 keyed by ordered fixed tuple F): the least minimiser
+ * t of F and the orbit ids of G_M, exactly as a recomputation returns them. */
+typedef struct canon_bsgs_tuple_memo_entry {
+    uint32_t *key;   /* the ordered fixed tuple F, len entries */
+    uint32_t len;
+    uint32_t *block; /* one allocation: t (n words), then the orbit ids (n words) */
+    uint64_t bytes;
+} canon_bsgs_tuple_memo_entry;
+
+typedef struct canon_bsgs_tuple_cache {
+    canon_bsgs_tuple_cache_entry *entries; /* insertion order */
+    uint32_t count, entries_cap;
+    uint64_t bytes;     /* retained entry bytes plus the fingerprint/key bytes below */
+    uint64_t byte_cap;  /* spec 11.2: twice the root chain's byte count */
+    canon_bsgs_tuple_memo_entry *memo; /* least-recently-entered first */
+    uint32_t memo_count, memo_cap_entries;
+    uint64_t memo_bytes;
+    uint64_t memo_byte_cap; /* spec 11.2: the root chain's byte count (3x in all with above) */
+    uint64_t memo_hits;     /* diagnostics for tests; not semantic output */
+    const canon_bsgs *root; /* the chain the fingerprint was taken of (identity aid only) */
+    uint32_t *fingerprint;  /* owned exact copy: gens rows, then inputs rows */
+    size_t fingerprint_words;
+    uint32_t fp_n;               /* degree of the fingerprint's rows */
+    uint32_t fp_gens, fp_inputs; /* row counts in the fingerprint */
+    uint32_t *key;               /* n words: the running minimised prefix of a call */
+    uint64_t hits, misses;       /* diagnostics for tests; not semantic output */
+} canon_bsgs_tuple_cache;
+
+/* Zero state (no allocation); release with canon_bsgs_tuple_cache_free. */
+void canon_bsgs_tuple_cache_init(canon_bsgs_tuple_cache *cache);
+void canon_bsgs_tuple_cache_free(canon_bsgs_tuple_cache *cache);
+/* Drop every entry and the fingerprint (the next call re-fingerprints its root). */
+void canon_bsgs_tuple_cache_reset(canon_bsgs_tuple_cache *cache);
+
 /* spec 7.2 tuple minimum (and spec 7.1 G stage): see canon_group_ops.tuple_min in
  * src/bsgs/group.h for the contract; c must be a verified chain.  CANON_INVALID_INPUT for an
  * entry of L >= n, CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure.  The
@@ -191,5 +255,18 @@ uint64_t canon_bsgs_bytes(const canon_bsgs *c);
 canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32_t len,
                                   uint32_t *t_out, uint32_t *orbit_id_out,
                                   canon_bsgs_stats *stats);
+
+/* As canon_bsgs_tuple_min, with optional caller scratch and stabiliser cache (either may be
+ * NULL).  The result (least minimiser t and G_M orbit ids) is identical with or without
+ * them: spec 7.2's final list covers every point, so the minimiser is unique whatever
+ * intermediate transporters a cached chain supplies ("Intermediate transporter choices
+ * cannot change t"), and the orbit ids are those of the abstract group G_M.  With a
+ * scratch, t is accumulated in t_out directly, so on failure t_out may be partly written
+ * (the non-scratch form keeps the old copy-on-success behaviour). */
+canon_status canon_bsgs_tuple_min_ws(const canon_bsgs *c, const uint32_t *L, uint32_t len,
+                                     uint32_t *t_out, uint32_t *orbit_id_out,
+                                     canon_bsgs_stats *stats,
+                                     const canon_bsgs_tuple_scratch *scratch,
+                                     canon_bsgs_tuple_cache *cache);
 
 #endif /* CANON_SRC_BSGS_CHAIN_H */

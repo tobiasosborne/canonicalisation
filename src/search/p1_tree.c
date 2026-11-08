@@ -202,7 +202,7 @@ static canon_status evaluate_leaf(canon_p1_search *s, const canon_group *g, cons
     }
     /* spec 7.2: "At a leaf extract L from the partition's singleton order."  Every cell is a
      * singleton, so lab is L. */
-    canon_status st = g->ops->tuple_min(g, s->part.lab, n, s->leaf_t, NULL);
+    canon_status st = canon_p1_tuple_min(g, s->part.lab, n, s->leaf_t, NULL, &s->scratch); /* K2 */
     if (st != CANON_COMPLETE) {
         return st;
     }

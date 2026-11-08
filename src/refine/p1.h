@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bsgs/chain.h"
 #include "bsgs/group.h"
 #include "canon/canon.h"
 #include "encoding/wire.h"
@@ -50,6 +51,10 @@ typedef struct canon_p1_scratch {
      * two halves of one allocation owned through `entries`. */
     size_t cap_entries; /* entries in each half */
     canon_p1_sig_entry *entries, *entries_tmp;
+    /* K2 (spec 16): the stabiliser cache of canon_bsgs_tuple_min_ws, workspace-owned like
+     * the rest of this scratch; it re-fingerprints (and empties) itself when the group
+     * changes, so it may persist across solves. */
+    canon_bsgs_tuple_cache tuple_cache;
 } canon_p1_scratch;
 
 /* Zero state (no allocation). */
@@ -114,5 +119,15 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
 
 /* spec 7.2: append the LEAF token. */
 canon_status canon_p1_trace_leaf(canon_buf *trace);
+
+/* K2: the group tuple minimum of the G stage and the leaf map (spec 7.1/7.2), allocating
+ * nothing per call on the chain backend: the workspace scratch supplies the working arrays
+ * (pt.sig, pt.order and pt.order_tmp, dead at both call sites: the O stage refills the order
+ * arrays and the G stage refills sig after this call) and the spec 16 stabiliser cache.
+ * Other backends run their tuple_min op unchanged.  The result is the op's result exactly
+ * (canon_bsgs_tuple_min_ws).  Requires canon_p1_scratch_reserve for degree g's n; t_out and
+ * the scratch arrays must not alias L or each other. */
+canon_status canon_p1_tuple_min(const canon_group *g, const uint32_t *L, uint32_t len,
+                                uint32_t *t_out, uint32_t *orbit_id_out, canon_p1_scratch *s);
 
 #endif /* CANON_SRC_REFINE_P1_H */

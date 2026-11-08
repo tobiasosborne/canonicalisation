@@ -2,6 +2,7 @@
  * coloured directed multigraph (S2, O-stage arc-count signatures). */
 #include "refine/p1.h"
 #include "arena/mem.h"
+#include "bsgs/chain_backend.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -39,13 +40,29 @@ static canon_status append_stage(canon_buf *trace, uint8_t tag, const canon_part
 void canon_p1_scratch_init(canon_p1_scratch *s)
 {
     memset(s, 0, sizeof *s);
+    canon_bsgs_tuple_cache_init(&s->tuple_cache); /* K2 (spec 16) */
 }
 
 void canon_p1_scratch_free(canon_p1_scratch *s)
 {
     canon_mem_free(s->pt.block);
     canon_mem_free(s->entries); /* entries_tmp is the second half of this block */
+    canon_bsgs_tuple_cache_free(&s->tuple_cache); /* K2 (spec 16) */
     canon_p1_scratch_init(s);
+}
+
+canon_status canon_p1_tuple_min(const canon_group *g, const uint32_t *L, uint32_t len,
+                                uint32_t *t_out, uint32_t *orbit_id_out, canon_p1_scratch *s)
+{
+    const canon_bsgs *chain = canon_group_chain_of(g);
+    if (chain == NULL) {
+        return g->ops->tuple_min(g, L, len, t_out, orbit_id_out);
+    }
+    /* K2: workspace scratch instead of per-call allocation, and the spec 16 stabiliser
+     * cache; the arrays are dead at both call sites (p1.h). */
+    const canon_bsgs_tuple_scratch scratch = {s->pt.sig, s->pt.order, s->pt.order_tmp};
+    return canon_bsgs_tuple_min_ws(chain, L, len, t_out, orbit_id_out, NULL, &scratch,
+                                   &s->tuple_cache);
 }
 
 /* Allocate the per-point arrays for n points as one block.  The uint32 arrays are listed once,
@@ -341,7 +358,7 @@ canon_status canon_p1_refine_node(canon_partition *p, const canon_group *g, cons
         }
         /* spec 7.1: "M = lexicographically least F^G; choose any u in G with F^u=M; compute
          * G_M orbits; sort ...".  The backend returns orbit ids on target labels. */
-        st = g->ops->tuple_min(g, s->pt.fixed, f, s->pt.u, s->pt.orbit);
+        st = canon_p1_tuple_min(g, s->pt.fixed, f, s->pt.u, s->pt.orbit, s); /* K2 */
         if (st != CANON_COMPLETE) {
             return st;
         }
