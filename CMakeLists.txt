@@ -96,6 +96,17 @@ if(Python3_Interpreter_FOUND)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/test_e2e.py)
   set_tests_properties(test_e2e_explicit PROPERTIES
     ENVIRONMENT "${CANON_E2E_ENV};CANON_BACKEND=explicit")
+  # H-tests-03: `make check` (Makefile) also runs the finite checks and every other
+  # tests/python file; register them here so ctest is not a proper subset of that gate.
+  # They need only CANON_CLI/CANON_REQUIRE_CLI, already in CANON_E2E_ENV (the finite
+  # checks and the golden/hexdump files need no binary at all).
+  add_test(NAME review_checks
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/checks/review_checks.py)
+  foreach(py test_golden_vectors test_hexdump_stream test_compare test_refs)
+    add_test(NAME ${py}
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/python/${py}.py)
+    set_tests_properties(${py} PROPERTIES ENVIRONMENT "${CANON_E2E_ENV}")
+  endforeach()
 else()
   message(WARNING "python3 not found: test_e2e is not registered")
 endif()

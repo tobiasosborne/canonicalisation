@@ -34,14 +34,19 @@ jobs:
           python-version: "3.11"
       - name: Finite review checks
         run: python3 checks/review_checks.py
-      - name: Build canon-cli for tests/python/test_e2e.py
-        run: make build/make/canon-cli
+      # tests/python/test_e2e.py class Pruning also needs canon-check and fails (not
+      # skips) under CANON_REQUIRE_CLI=1 when it is absent (H-tests-03).
+      - name: Build canon-cli and canon-check for tests/python/test_e2e.py
+        run: make build/make/canon-cli build/make/canon-check
       - name: Python unit tests (unittest, no pip installs)
         env:
           CANON_REQUIRE_CLI: "1"
         run: python3 -m unittest discover -s tests/python -q
       - name: Comparison script smoke test
         run: python3 refs/compare/compare.py --help
+      # H-tests-03(c): the only guard that the M0 manifest still reproduces from its seeds.
+      - name: Corpus manifest reproduces
+        run: make corpus
 
   provenance:
     name: source provenance (offline, failure allowed)
