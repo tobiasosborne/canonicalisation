@@ -46,7 +46,18 @@ typedef enum canon_bsgs_reason {
  * of input_count image arrays of length c->n).  Sets c->verified = true only when every
  * condition holds (*reason = CANON_BSGS_VALID); clears it first.  Returns CANON_COMPLETE when
  * a verdict was reached (valid or not), or CANON_CAPACITY_LIMIT / CANON_RESOURCE_LIMIT when
- * its scratch could not be allocated (*reason = CANON_BSGS_UNCHECKED, c->verified false). */
+ * its scratch could not be allocated (*reason = CANON_BSGS_UNCHECKED, c->verified false).
+ *
+ * Precondition (B-kernel-03): every field value of c is untrusted and checked, including
+ * each recorded capacity against its count (table caps, node_cap, prov.cap, per-level
+ * gen_cap; a count beyond its capacity is CANON_BSGS_BAD_STRUCTURE).  What no field records
+ * the verifier cannot check and the caller must guarantee: the pointers and capacity fields
+ * honestly describe the allocations behind them -- `levels` holds level_cap entries, each
+ * table's data holds cap * n words, gen_node/inv_node hold node_cap entries, prov.nodes
+ * holds prov.cap nodes, each level's gen_ids holds gen_cap entries, and each level's
+ * orbit/parent_point/parent_gen hold at least orbit_len entries with orbit_pos holding at
+ * least n (the constructor's one 5n block per level, chain.c).  A future importer that
+ * builds a chain struct from untrusted bytes must establish this before calling here. */
 canon_status canon_bsgs_verify(canon_bsgs *c, const uint32_t *inputs, uint32_t input_count,
                                canon_bsgs_reason *reason);
 

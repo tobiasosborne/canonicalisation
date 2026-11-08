@@ -125,8 +125,9 @@ canon_status canon_group_set_generators(canon_group *group, const uint32_t *gens
 
 /* spec 8.4 (slice S6): give a handle that was just allocated (and not yet shared) its signed
  * generators: copies the `count` generators of degree `degree` (flat image arrays, not read for
- * degree 0) and their signs.  On failure the handle is unchanged (signs NULL).
- * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure. */
+ * degree 0) and their signs, freeing any signs block a previous call installed (B-kernel-05).
+ * On failure the handle is unchanged.  CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on
+ * allocation failure. */
 canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, size_t count,
                                    const int8_t *signs);
 

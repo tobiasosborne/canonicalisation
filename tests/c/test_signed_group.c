@@ -281,12 +281,43 @@ static void t1_characters(void)
     CHECK(characters > 0 && characters < vectors);
 }
 
+/* B-kernel-05: a second canon_group_set_signs replaces the first signs block and frees
+ * it (mirroring canon_group_set_generators), it does not leak it; the live-memory
+ * ledger (spec 11.2) is the witness. */
+static void set_signs_twice(void)
+{
+    const uint32_t gens[6] = {1, 0, 2, 1, 2, 0};
+    const int8_t a[2] = {1, -1}, b[2] = {-1, 1}, one[1] = {1};
+    canon_memory_stats before, first, second, after;
+    canon_memory_get(&before);
+    canon_group *g = NULL;
+    CHECK(canon_group_create(ctx_of[0], 3, gens, 2, &g) == CANON_COMPLETE && g != NULL);
+    if (g == NULL) {
+        return;
+    }
+    CHECK(g->signs == NULL);
+    CHECK(canon_group_set_signs(g, gens, 2, a) == CANON_COMPLETE);
+    CHECK(g->signs != NULL && g->signs->gens.count == 2 && g->signs->signs[0] == 1 &&
+          g->signs->signs[1] == -1);
+    canon_memory_get(&first);
+    CHECK(canon_group_set_signs(g, gens, 2, b) == CANON_COMPLETE);
+    CHECK(g->signs->signs[0] == -1 && g->signs->signs[1] == 1); /* replaced, not kept */
+    canon_memory_get(&second);
+    CHECK(second.live_bytes == first.live_bytes); /* same sizes: the old block was freed */
+    CHECK(canon_group_set_signs(g, gens, 1, one) == CANON_COMPLETE);
+    CHECK(g->signs->gens.count == 1 && g->signs->signs[0] == 1);
+    canon_group_release(g);
+    canon_memory_get(&after);
+    CHECK(after.live_bytes == before.live_bytes); /* nothing leaked across all three calls */
+}
+
 int main(void)
 {
     const canon_context_options chain = {CANON_BACKEND_CHAIN}, expl = {CANON_BACKEND_EXPLICIT};
     CHECK(canon_context_create_with_options(NULL, &chain, &ctx_of[0]) == CANON_COMPLETE);
     CHECK(canon_context_create_with_options(NULL, &expl, &ctx_of[1]) == CANON_COMPLETE);
     validation();
+    set_signs_twice();
     capacity();
     product_rule();
     t1_characters();

@@ -67,8 +67,9 @@ canon_status canon_coset_least(const canon_bsgs *c, uint32_t level, const uint32
  * H is the whole group of chain `h`, K the group of chain `k` (same degree), K <= H.  On
  * CANON_COMPLETE *found is false iff K = H; otherwise `out` holds the least element of H \ K.
  * The descent discards a branch C = J r exactly when C is contained in K, tested as "r in K and
- * J <= K" (spec 9.4).  Allocation failure as canon_coset_least; CANON_INVALID_INPUT for a
- * degree mismatch. */
+ * J <= K" (spec 9.4).  The K = H shortcut checks containment (spec 9.2) as well as the chains'
+ * stored orders, so equal orders of distinct groups never decide it (B-kernel-04).  Allocation
+ * failure as canon_coset_least; CANON_INVALID_INPUT for a degree mismatch. */
 canon_status canon_coset_least_outside(const canon_bsgs *h, const canon_bsgs *k, uint32_t *out,
                                        bool *found, canon_coset_stats *stats,
                                        canon_coset_scratch *scratch);
