@@ -1032,8 +1032,7 @@ static bool tuple_cache_fingerprint_matches(const canon_bsgs_tuple_cache *cache,
         return false;
     }
     const size_t iw = (size_t)cache->fp_inputs * c->n;
-    return iw == 0 ||
-           memcmp(cache->fingerprint + gw, c->inputs.data, iw * sizeof(uint32_t)) == 0;
+    return iw == 0 || memcmp(cache->fingerprint + gw, c->inputs.data, iw * sizeof(uint32_t)) == 0;
 }
 
 /* Fingerprint c into the cache (dropping any entries of another G) and size the running key.
@@ -1276,7 +1275,7 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
     const uint32_t n = c->n;
     const canon_bsgs *cur = c;
     uint32_t level = 0;
-    bool cur_owned = false; /* cur == own, a transient chain this call must free via *own */
+    bool cur_owned = false;  /* cur == own, a transient chain this call must free via *own */
     uint32_t prefix_len = 0; /* non-trivial minimised points so far, in cache->key */
     bool orbits_done = orbit_id_out == NULL;
     uint64_t total = (uint64_t)len + n;
@@ -1358,7 +1357,7 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
         /* u = t_a^-1 in H: t_a (level `level`, base b) sends b to a */
         const canon_bsgs_level *Lv = &cur->levels[level];
         uint64_t steps = transporter_into(cur, Lv, Lv->orbit_pos[a], x->u, x->tmp);
-        canon_perm_inverse(x->u, x->tmp, n); /* tmp = u, a^u = b */
+        canon_perm_inverse(x->u, x->tmp, n);       /* tmp = u, a^u = b */
         canon_perm_compose(x->t, x->tmp, x->u, n); /* spec 7.2: t <- t u (u acts second) */
         memcpy(x->t, x->u, (size_t)n * sizeof *x->t);
         if (stats != NULL) {
@@ -1373,8 +1372,7 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
 }
 
 canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32_t len,
-                                  uint32_t *t_out, uint32_t *orbit_id_out,
-                                  canon_bsgs_stats *stats)
+                                  uint32_t *t_out, uint32_t *orbit_id_out, canon_bsgs_stats *stats)
 {
     return canon_bsgs_tuple_min_ws(c, L, len, t_out, orbit_id_out, stats, NULL, NULL);
 }
@@ -1415,8 +1413,7 @@ canon_status canon_bsgs_tuple_min_ws(const canon_bsgs *c, const uint32_t *L, uin
         /* Fast path (K2): an exact memo hit on (G, ordered F) - in particular every repeat
          * of the empty F and of a node's repeated sweep lists - returns the recomputed
          * least minimiser and orbit ids word for word (spec 16). */
-        if (orbit_id_out != NULL &&
-            tuple_memo_lookup(cache, L, len, n, t_out, orbit_id_out)) {
+        if (orbit_id_out != NULL && tuple_memo_lookup(cache, L, len, n, t_out, orbit_id_out)) {
             return CANON_COMPLETE;
         }
     }

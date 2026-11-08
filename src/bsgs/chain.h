@@ -218,7 +218,7 @@ typedef struct canon_bsgs_tuple_cache_entry {
 /* One memoised G-stage result (spec 16 keyed by ordered fixed tuple F): the least minimiser
  * t of F and the orbit ids of G_M, exactly as a recomputation returns them. */
 typedef struct canon_bsgs_tuple_memo_entry {
-    uint32_t *key;   /* the ordered fixed tuple F, len entries */
+    uint32_t *key; /* the ordered fixed tuple F, len entries */
     uint32_t len;
     uint32_t *block; /* one allocation: t (n words), then the orbit ids (n words) */
     uint64_t bytes;
@@ -227,8 +227,8 @@ typedef struct canon_bsgs_tuple_memo_entry {
 typedef struct canon_bsgs_tuple_cache {
     canon_bsgs_tuple_cache_entry *entries; /* insertion order */
     uint32_t count, entries_cap;
-    uint64_t bytes;     /* retained entry bytes plus the fingerprint/key bytes below */
-    uint64_t byte_cap;  /* spec 11.2: three times the root chain's byte count */
+    uint64_t bytes;    /* retained entry bytes plus the fingerprint/key bytes below */
+    uint64_t byte_cap; /* spec 11.2: three times the root chain's byte count */
     canon_bsgs_tuple_memo_entry *memo; /* least-recently-entered first */
     uint32_t memo_count, memo_cap_entries;
     uint64_t memo_bytes;
@@ -254,8 +254,7 @@ void canon_bsgs_tuple_cache_reset(canon_bsgs_tuple_cache *cache);
  * entry of L >= n, CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure.  The
  * transient rebased chains it builds are not verified (S3 review item 2). */
 canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32_t len,
-                                  uint32_t *t_out, uint32_t *orbit_id_out,
-                                  canon_bsgs_stats *stats);
+                                  uint32_t *t_out, uint32_t *orbit_id_out, canon_bsgs_stats *stats);
 
 /* As canon_bsgs_tuple_min, with optional caller scratch and stabiliser cache (either may be
  * NULL).  The result (least minimiser t and G_M orbit ids) is identical with or without

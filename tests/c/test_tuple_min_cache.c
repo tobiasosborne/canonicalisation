@@ -70,8 +70,8 @@ static void fixtures_init(fixtures *f)
 }
 
 /* ws (scratch + cache) == old entry point == explicit (when ex is not NULL), t and orbits. */
-static void compare_one(const canon_bsgs *c, const canon_group *ex, const uint32_t *L,
-                        uint32_t len, uint32_t n, fixtures *f)
+static void compare_one(const canon_bsgs *c, const canon_group *ex, const uint32_t *L, uint32_t len,
+                        uint32_t n, fixtures *f)
 {
     uint32_t told[MAXN], oold[MAXN], tws[MAXN], ows[MAXN], tex[MAXN], oex[MAXN];
     CHECK(canon_bsgs_tuple_min(c, L, len, told, oold, NULL) == CANON_COMPLETE);
