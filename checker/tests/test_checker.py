@@ -588,5 +588,68 @@ class Mutation(CheckerTestCase):
         self.assertEqual(proc.returncode, 2)
 
 
+class Capacity(CheckerTestCase):
+    """Rule 7 resource limits (C-checker-api-06): beyond a checker limit the verdict is
+    exit 2 with CAPACITY (no verdict on the certificate), never REJECT."""
+
+    def capacity(self, data, label):
+        self.assertEqual(run_check(data), (2, "CAPACITY"), label)
+
+    def test_nat_beyond_u64_is_capacity(self):
+        # graph_case's first arc multiplicity Nat: set its byte length to 9 (> 2^64 counts)
+        gens = [(1, 2, 0), (1, 0, 2)]
+        arcs = ((0, 1, b"", 1), (1, 2, b"", 1), (2, 0, b"", 2))
+        _, data = certificate(graph_args(3, gens, (b"", b"", b""), arcs, "cap-nat"), False)
+        p = Parsed(data)
+        stream_at = 4 + 10 + 4 + 4  # magic, ids, n, B(stream) length
+        # stream header 15 bytes, tag 09, n empty colours (4 bytes each), arc count,
+        # first arc's source/target and empty label length: the Nat length follows
+        nat_at = stream_at + 15 + 1 + 4 * p.n + 4 + 8 + 4
+        self.assertEqual(data[stream_at + 15], 0x09)
+        self.assertIn(struct.unpack_from(">I", data, nat_at)[0], (1, 2))
+        self.capacity(put_u32(data, nat_at, 9), "Nat beyond u64")
+
+    def test_depth_times_n_is_capacity(self):
+        # a hand-built header, empty graph on n points and a root chain declaring depth = n:
+        # the declared depth x n pos arrays alone exceed the live budget, on a small file
+        n = 20000
+        stream = (b"\x43\x4e\x02" + struct.pack(">HHII", 1, 1, n, 1) + b"\x09"
+                  + struct.pack(">I", 0) * n + struct.pack(">II", 0, 0))
+        data = (b"CNC0" + struct.pack(">HHHHH", 1, 1, 1, 2, 1) + struct.pack(">I", n)
+                + struct.pack(">I", len(stream)) + stream
+                + struct.pack(">I", 0)               # k = 0 generators
+                + struct.pack(">II", n, n))          # CHAIN header: n, depth = n
+        self.capacity(data, "depth x n")
+
+    def test_inflated_generator_lists_are_capacity(self):
+        # repeat one generator id 30000 times in each of the root chain's first two levels:
+        # the nesting term s0 x s1 x n of the per-chain work bound exceeds CC_MAX_WORK
+        gens = [(1, 2, 0), (1, 0, 2)]
+        _, data = certificate(subset_args(3, gens, [], "cap-s"), "explicit")
+        p = Parsed(data)
+        r = Reader(data)
+        r.at = p.root_chain_at
+        self.assertEqual(r.u32(), p.n)
+        depth = r.u32()
+        self.assertGreaterEqual(depth, 2)
+        levels = []
+        for _ in range(depth):
+            r.u32()
+            rlen = r.u32()
+            r.u32s(3 * rlen)
+            s_at = r.at
+            s = r.u32()
+            ids_at = r.at
+            ids = r.u32s(s)
+            levels.append((s_at, ids_at, s, ids))
+        self.assertTrue(all(s >= 1 for _, _, s, _ in levels[:2]))
+        out = data
+        for s_at, ids_at, s, ids in reversed(levels[:2]):
+            end = ids_at + 4 * s
+            out = out[:s_at] + struct.pack(">I", s + 30000) + out[s_at + 4:end] \
+                + struct.pack(">I", ids[0]) * 30000 + out[end:]
+        self.capacity(out, "inflated s")
+
+
 if __name__ == "__main__":
     unittest.main()

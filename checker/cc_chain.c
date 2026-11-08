@@ -15,18 +15,18 @@ void cc_chain_init(cc_chain *c)
 void cc_chain_free(cc_chain *c)
 {
     for (uint32_t i = 0; c->levels != NULL && i < c->depth; ++i) {
-        free(c->levels[i].orbit);
-        free(c->levels[i].parent_point);
-        free(c->levels[i].parent_gen);
-        free(c->levels[i].gen_ids);
-        free(c->levels[i].pos);
+        cc_free(c->levels[i].orbit);
+        cc_free(c->levels[i].parent_point);
+        cc_free(c->levels[i].parent_gen);
+        cc_free(c->levels[i].gen_ids);
+        cc_free(c->levels[i].pos);
     }
-    free(c->levels);
-    free(c->gen_node);
-    free(c->gens);
-    free(c->invs);
-    free(c->prov);
-    free(c->inputs);
+    cc_free(c->levels);
+    cc_free(c->gen_node);
+    cc_free(c->gens);
+    cc_free(c->invs);
+    cc_free(c->prov);
+    cc_free(c->inputs);
     cc_chain_init(c);
 }
 
@@ -54,6 +54,11 @@ cc_reason cc_chain_read(cc_reader *r, uint32_t n, cc_chain *c)
     c->n = n;
     if (c->depth > n) {
         return CC_CHAIN_STRUCTURE; /* base points are distinct points of the domain */
+    }
+    /* every level carries an n-word pos array: depth x n words from the two declared sizes,
+     * checked here (rule 7) instead of discovered allocation by allocation */
+    if (n > 0 && (size_t)c->depth > (CC_MAX_TOTAL_BYTES / sizeof(uint32_t)) / (size_t)n) {
+        return CC_CAPACITY;
     }
     c->levels = cc_alloc(c->depth, sizeof *c->levels, &why);
     if (c->levels == NULL) {
@@ -120,6 +125,11 @@ cc_reason cc_chain_read(cc_reader *r, uint32_t n, cc_chain *c)
     if (c->p > UINT32_MAX / 3u) {
         return CC_CAPACITY;
     }
+    /* the verifier evaluates every provenance node into a p x n array: the product of the two
+     * declared sizes, checked before the p records are read (rule 7) */
+    if (n > 0 && (size_t)c->p > (CC_MAX_TOTAL_BYTES / sizeof(uint32_t)) / (size_t)n) {
+        return CC_CAPACITY;
+    }
     c->prov = cc_get_u32s(r, c->p * 3u, &why);
     if (c->prov == NULL) {
         return why;
@@ -160,6 +170,7 @@ static void transporter(const cc_chain *c, const cc_level *L, uint32_t pos, uint
         t[v] = v;
     }
     while (k-- > 0) {
+        cc_work_charge(c->n); /* one n-word composition per tree step (rule 7) */
         const uint32_t *s = gen_row(c, path[k]);
         for (uint32_t v = 0; v < c->n; ++v) {
             t[v] = s[t[v]]; /* t <- t s */
@@ -173,6 +184,7 @@ static void times_transporter_inverse(const cc_chain *c, const cc_level *L, uint
                                       uint32_t *g)
 {
     while (pos != 0) {
+        cc_work_charge(c->n); /* one n-word composition per tree step (rule 7) */
         const uint32_t *inv = inv_row(c, L->gen_ids[L->parent_gen[pos]]);
         for (uint32_t v = 0; v < c->n; ++v) {
             g[v] = inv[g[v]];
@@ -214,14 +226,14 @@ typedef struct vs {
 
 static void vs_free(vs *s)
 {
-    free(s->t);
-    free(s->tmp);
-    free(s->g);
-    free(s->path);
-    free(s->mark);
-    free(s->gmark);
-    free(s->bitmap);
-    free(s->rows);
+    cc_free(s->t);
+    cc_free(s->tmp);
+    cc_free(s->g);
+    cc_free(s->path);
+    cc_free(s->mark);
+    cc_free(s->gmark);
+    cc_free(s->bitmap);
+    cc_free(s->rows);
 }
 
 /* Structure: every index read later is in range. */
@@ -260,11 +272,19 @@ static cc_reason structure(const cc_chain *c, vs *s)
 static cc_reason bijections(const cc_chain *c, vs *s)
 {
     for (uint32_t k = 0; k < c->i; ++k) {
+        cc_work_charge(c->n);
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY; /* rule 7 */
+        }
         if (!cc_is_bijection(c->inputs + (size_t)k * c->n, c->n, s->bitmap)) {
             return CC_CHAIN_NOT_BIJECTION;
         }
     }
     for (uint32_t k = 0; k < c->g; ++k) {
+        cc_work_charge(c->n);
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY; /* rule 7 */
+        }
         if (!cc_is_bijection(gen_row(c, k), c->n, s->bitmap)) {
             return CC_CHAIN_NOT_BIJECTION;
         }
@@ -279,6 +299,10 @@ static cc_reason provenance(const cc_chain *c, vs *s)
 {
     const uint32_t n = c->n;
     for (uint32_t j = 0; j < c->p; ++j) {
+        cc_work_charge(n); /* one n-word row per provenance node (rule 7) */
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY;
+        }
         const uint32_t kind = c->prov[3u * j], a = c->prov[3u * j + 1u], b = c->prov[3u * j + 2u];
         uint32_t *row = s->rows + (size_t)j * n;
         if (kind == 1) {
@@ -317,6 +341,10 @@ static cc_reason prefix_fixed(const cc_chain *c)
     for (uint32_t i = 0; i < c->depth; ++i) {
         const cc_level *L = &c->levels[i];
         for (uint32_t k = 0; k < L->s; ++k) {
+            cc_work_charge(i); /* one check per earlier base point (rule 7) */
+            if (cc_work_exceeded()) {
+                return CC_CAPACITY;
+            }
             const uint32_t *g = gen_row(c, L->gen_ids[k]);
             for (uint32_t j = 0; j < i; ++j) {
                 if (g[c->levels[j].base] != c->levels[j].base) {
@@ -338,6 +366,10 @@ static cc_reason nested(const cc_chain *c, vs *s)
             const uint32_t *gm = gen_row(c, M->gen_ids[k]);
             bool found = false;
             for (uint32_t l = 0; l < L->s && !found; ++l) {
+                cc_work_charge(c->n); /* one n-word compare per pair (rule 7) */
+                if (cc_work_exceeded()) {
+                    return CC_CAPACITY;
+                }
                 found = c->n == 0 || memcmp(gm, gen_row(c, L->gen_ids[l]),
                                             (size_t)c->n * sizeof *gm) == 0;
             }
@@ -381,6 +413,10 @@ static cc_reason orbit_trees(cc_chain *c, vs *s)
         for (uint32_t q = 1; q < L->r; ++q) {
             uint32_t at = q, steps = 0;
             while (at != 0) {
+                cc_work_charge(1); /* rule 7 */
+                if (cc_work_exceeded()) {
+                    return CC_CAPACITY;
+                }
                 if (steps++ > L->r) {
                     return CC_CHAIN_ORBIT_TREE;
                 }
@@ -398,6 +434,10 @@ static cc_reason orbits_closed(const cc_chain *c)
     for (uint32_t i = 0; i < c->depth; ++i) {
         const cc_level *L = &c->levels[i];
         for (uint32_t k = 0; k < L->s; ++k) {
+            cc_work_charge(L->r); /* rule 7 */
+            if (cc_work_exceeded()) {
+                return CC_CAPACITY;
+            }
             const uint32_t *g = gen_row(c, L->gen_ids[k]);
             for (uint32_t q = 0; q < L->r; ++q) {
                 if (L->pos[g[L->orbit[q]]] == CC_NONE) {
@@ -415,6 +455,9 @@ static cc_reason transversals(const cc_chain *c, vs *s)
     for (uint32_t i = 0; i < c->depth; ++i) {
         const cc_level *L = &c->levels[i];
         for (uint32_t q = 0; q < L->r; ++q) {
+            if (cc_work_exceeded()) {
+                return CC_CAPACITY; /* rule 7: charged in transporter */
+            }
             transporter(c, L, q, s->t, s->path);
             if (s->t[L->base] != L->orbit[q]) {
                 return CC_CHAIN_TRANSVERSAL;
@@ -433,6 +476,9 @@ static cc_reason schreier(const cc_chain *c, vs *s)
         for (uint32_t q = 0; q < L->r; ++q) {
             transporter(c, L, q, s->t, s->path); /* t_b */
             for (uint32_t k = 0; k < L->s; ++k) {
+                if (cc_work_exceeded()) {
+                    return CC_CAPACITY; /* rule 7: charged in the transporter/sift steps */
+                }
                 const uint32_t *gen = gen_row(c, L->gen_ids[k]);
                 cc_compose(s->t, gen, s->g, c->n);                       /* t_b s */
                 times_transporter_inverse(c, L, L->pos[gen[L->orbit[q]]], s->g); /* t_(b^s)^-1 */
@@ -449,6 +495,9 @@ static cc_reason schreier(const cc_chain *c, vs *s)
 static cc_reason inputs_member(const cc_chain *c, vs *s)
 {
     for (uint32_t k = 0; k < c->i; ++k) {
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY; /* rule 7: charged in the sift steps */
+        }
         if (c->n > 0) {
             memcpy(s->g, c->inputs + (size_t)k * c->n, (size_t)c->n * sizeof *s->g);
         }
@@ -459,10 +508,58 @@ static cc_reason inputs_member(const cc_chain *c, vs *s)
     return CC_ACCEPT;
 }
 
+/* An upper bound, from the chain's declared sizes alone, on the word operations of the
+ * verifier below (rule 7): each term bounds one condition's loops (a transporter has at most
+ * r tree steps of n words; a sift crosses at most depth levels of at most Rmax steps).
+ * The arithmetic saturates on overflow, which the caller reads as beyond capacity.  A chain
+ * whose bound exceeds CC_MAX_WORK is CC_CAPACITY before any of that work is done; the work
+ * ledger additionally bounds the cumulative work over every chain of a certificate. */
+static uint64_t wadd(uint64_t a, uint64_t b)
+{
+    return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+
+static uint64_t wmul(uint64_t a, uint64_t b)
+{
+    return a != 0 && b > UINT64_MAX / a ? UINT64_MAX : a * b;
+}
+
+static uint64_t chain_work_bound(const cc_chain *c)
+{
+    const uint64_t n = c->n, depth = c->depth;
+    uint64_t rmax = 0, bound = 0;
+    for (uint32_t i = 0; i < c->depth; ++i) {
+        if (c->levels[i].r > rmax) {
+            rmax = c->levels[i].r;
+        }
+    }
+    bound = wadd(bound, wmul(wadd(c->i, c->g), n)); /* 1 bijections */
+    bound = wadd(bound, wmul(wadd(c->p, c->g), n)); /* 2 provenance, generator compares */
+    bound = wadd(bound, wmul(c->g, n));             /* inverses */
+    for (uint32_t i = 0; i < c->depth; ++i) {
+        const uint64_t s = c->levels[i].s, r = c->levels[i].r;
+        bound = wadd(bound, wmul(s, i));                              /* 3 prefix */
+        bound = wadd(bound, wadd(wmul(r, r), r));                     /* 4 orbit trees */
+        bound = wadd(bound, wmul(s, r));                              /* 5 orbit closure */
+        bound = wadd(bound, wmul(2, wmul(r, wmul(r, n))));            /* 6 transversals (+7 t_b) */
+        bound = wadd(bound, wmul(wmul(r, s),
+                                 wadd(n, wadd(wmul(r, n), wmul(depth, wmul(rmax, n))))));
+        /* 7 schreier residues: compose, transporter inverse, sift below */
+        if (i + 1 < c->depth) {
+            bound = wadd(bound, wmul(wmul(c->levels[i + 1].s, s), n)); /* nesting */
+        }
+    }
+    bound = wadd(bound, wmul(wmul(c->i, depth), wmul(rmax, n))); /* 8 inputs sift */
+    return bound;
+}
+
 cc_reason cc_chain_verify(cc_chain *c)
 {
     const uint32_t n = c->n;
     c->verified = false;
+    if (chain_work_bound(c) > CC_MAX_WORK) {
+        return CC_CAPACITY; /* rule 7: the declared sizes alone exceed the work budget */
+    }
     vs s;
     memset(&s, 0, sizeof s);
     cc_reason why = CC_ACCEPT;
@@ -541,6 +638,7 @@ void cc_chain_orbit_ids(const cc_chain *c, uint32_t level, uint32_t *orbit_id, u
     if (level < c->depth) {
         const cc_level *L = &c->levels[level];
         for (uint32_t k = 0; k < L->s; ++k) {
+            cc_work_charge(n); /* one union pass over the domain per generator (rule 7) */
             const uint32_t *s = gen_row(c, L->gen_ids[k]);
             for (uint32_t v = 0; v < n; ++v) {
                 uint32_t a = uf_find(parent, v), b = uf_find(parent, s[v]);

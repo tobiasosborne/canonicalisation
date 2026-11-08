@@ -54,6 +54,43 @@ bool cc_get_b(cc_reader *r, const uint8_t **out, uint32_t *len)
     return true;
 }
 
+/* ---- the resource ledger (checker/README.md rule 7) ----
+ * Every block handed out here carries its charged byte count in a header, so cc_free can
+ * uncharge exactly what cc_alloc / cc_realloc charged.  The header is max_align_t-sized, so
+ * the returned pointer keeps malloc's alignment. */
+typedef union cc_header {
+    max_align_t align;
+    size_t bytes;
+} cc_header;
+
+static size_t cc_live_bytes;
+static uint64_t cc_work_units;
+
+void cc_ledger_reset(void)
+{
+    cc_live_bytes = 0;
+    cc_work_units = 0;
+}
+
+void cc_work_charge(uint64_t units)
+{
+    cc_work_units = units > UINT64_MAX - cc_work_units ? UINT64_MAX : cc_work_units + units;
+}
+
+bool cc_work_exceeded(void)
+{
+    return cc_work_units > CC_MAX_WORK;
+}
+
+static bool cc_charge(size_t bytes)
+{
+    if (bytes > CC_MAX_TOTAL_BYTES - cc_live_bytes) {
+        return false; /* the live total would exceed the checker's budget */
+    }
+    cc_live_bytes += bytes;
+    return true;
+}
+
 void *cc_alloc(size_t count, size_t size, cc_reason *why)
 {
     /* never malloc(0): an empty array is one element, so a success is never NULL */
@@ -67,11 +104,62 @@ void *cc_alloc(size_t count, size_t size, cc_reason *why)
         *why = CC_CAPACITY; /* beyond CC_MAX_ALLOC (or SIZE_MAX) */
         return NULL;
     }
-    void *block = malloc(count * size);
-    if (block == NULL) {
-        *why = CC_OUT_OF_MEMORY;
+    const size_t bytes = count * size;
+    if (!cc_charge(bytes)) {
+        *why = CC_CAPACITY; /* beyond CC_MAX_TOTAL_BYTES live */
+        return NULL;
     }
-    return block;
+    cc_header *base = malloc(sizeof *base + bytes);
+    if (base == NULL) {
+        cc_live_bytes -= bytes;
+        *why = CC_OUT_OF_MEMORY;
+        return NULL;
+    }
+    base->bytes = bytes;
+    return base + 1;
+}
+
+void *cc_realloc(void *block, size_t bytes, cc_reason *why)
+{
+    if (block == NULL) {
+        return cc_alloc(bytes, 1, why);
+    }
+    if (bytes == 0) {
+        bytes = 1;
+    }
+    if (bytes > CC_MAX_ALLOC) {
+        *why = CC_CAPACITY;
+        return NULL;
+    }
+    cc_header *base = (cc_header *)block - 1;
+    const size_t old = base->bytes;
+    if (bytes > old && !cc_charge(bytes - old)) {
+        *why = CC_CAPACITY; /* beyond CC_MAX_TOTAL_BYTES live; the old block is intact */
+        return NULL;
+    }
+    cc_header *grown = realloc(base, sizeof *grown + bytes);
+    if (grown == NULL) {
+        if (bytes > old) {
+            cc_live_bytes -= bytes - old;
+        }
+        *why = CC_OUT_OF_MEMORY;
+        return NULL;
+    }
+    if (bytes < old) {
+        cc_live_bytes -= old - bytes;
+    }
+    grown->bytes = bytes;
+    return grown + 1;
+}
+
+void cc_free(void *block)
+{
+    if (block == NULL) {
+        return;
+    }
+    cc_header *base = (cc_header *)block - 1;
+    cc_live_bytes = base->bytes > cc_live_bytes ? 0 : cc_live_bytes - base->bytes;
+    free(base);
 }
 
 uint32_t *cc_get_u32s(cc_reader *r, uint32_t k, cc_reason *why)

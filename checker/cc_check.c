@@ -31,23 +31,23 @@ static void checker_free(checker *c)
 {
     cc_object_free(&c->x);
     cc_object_free(&c->img);
-    free(c->gens);
+    cc_free(c->gens);
     cc_chain_free(&c->root);
-    free(c->auts);
+    cc_free(c->auts);
     cc_buf_free(&c->trace);
     cc_buf_free(&c->best_trace);
     cc_buf_free(&c->best_bytes);
     cc_buf_free(&c->bytes);
-    free(c->best_t);
-    free(c->prefix);
-    free(c->u);
-    free(c->last_u);
-    free(c->fixed);
-    free(c->orbit_id);
-    free(c->key);
-    free(c->scratch);
-    free(c->tmp);
-    free(c->bitmap);
+    cc_free(c->best_t);
+    cc_free(c->prefix);
+    cc_free(c->u);
+    cc_free(c->last_u);
+    cc_free(c->fixed);
+    cc_free(c->orbit_id);
+    cc_free(c->key);
+    cc_free(c->scratch);
+    cc_free(c->tmp);
+    cc_free(c->bitmap);
     cc_chain_free(&c->rebased);
 }
 
@@ -106,6 +106,7 @@ typedef struct sig_ctx {
 static int sig_cmp(void *ctx, uint32_t a, uint32_t b)
 {
     const cc_signatures *s = ((sig_ctx *)ctx)->s;
+    cc_work_charge((uint64_t)s->width); /* the signature scan (rule 7) */
     const uint64_t *sa = s->counts + (size_t)a * s->width, *sb = s->counts + (size_t)b * s->width;
     for (size_t i = 0; i < s->width; ++i) {
         if (sa[i] != sb[i]) {
@@ -134,6 +135,9 @@ static cc_reason stage_o(checker *c, cc_partition *p)
         cc_partition_split(p, sig_cmp, &ctx, c->tmp);
     }
     cc_signatures_free(&s);
+    if (why == CC_ACCEPT && cc_work_exceeded()) {
+        why = CC_CAPACITY; /* rule 7: charged in sig_cmp and the split */
+    }
     if (why != CC_ACCEPT) {
         return why;
     }
@@ -234,6 +238,9 @@ static cc_reason stage_g(checker *c, cc_partition *p)
         c->key[v] = c->orbit_id[c->u[v]];
     }
     cc_partition_split(p, key_cmp, c->key, c->tmp);
+    if (cc_work_exceeded()) {
+        return CC_CAPACITY; /* rule 7: charged in the sifts, orbits and split */
+    }
     if (!trace_sizes(&c->trace, 0x21, p)) {
         return CC_OUT_OF_MEMORY;
     }
@@ -330,8 +337,8 @@ static cc_reason branch(checker *c, cc_partition *p, uint32_t depth)
     cc_partition child;
     memset(&child, 0, sizeof child);
     if (state == NULL || reps == NULL || (why = cc_partition_init(&child, n)) != CC_ACCEPT) {
-        free(state);
-        free(reps);
+        cc_free(state);
+        cc_free(reps);
         cc_partition_free(&child);
         return why;
     }
@@ -408,8 +415,8 @@ static cc_reason branch(checker *c, cc_partition *p, uint32_t depth)
             why = CC_PRUNED_REP_NOT_EXPLORED; /* "retained equivalent subtree" (spec 7.3) */
         }
     }
-    free(state);
-    free(reps);
+    cc_free(state);
+    cc_free(reps);
     cc_partition_free(&child);
     return why;
 }
@@ -418,6 +425,9 @@ static cc_reason branch(checker *c, cc_partition *p, uint32_t depth)
  * (continue only after a strict split, one no-change sweep always), then a leaf or a branch. */
 static cc_reason node(checker *c, cc_partition *p, uint32_t depth, uint32_t atom)
 {
+    if (cc_work_exceeded()) {
+        return CC_CAPACITY; /* rule 7: the cumulative work of the replay so far */
+    }
     uint32_t rdepth = 0, ratom = 0, sweeps = 0;
     if (!cc_get_u32(&c->r, &rdepth) || !cc_get_u32(&c->r, &ratom) || !cc_get_u32(&c->r, &sweeps)) {
         return CC_TRUNCATED;
@@ -547,6 +557,10 @@ static cc_reason run(checker *c)
         return why;
     }
     for (uint32_t j = 0; j < c->k; ++j) {
+        cc_work_charge(n); /* rule 7: the bijection scan */
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY;
+        }
         if (!read_dense(c, c->gens + (size_t)j * n)) {
             return CC_TRUNCATED;
         }
@@ -584,6 +598,10 @@ static cc_reason run(checker *c)
         return why;
     }
     for (uint32_t j = 0; j < c->m; ++j) {
+        cc_work_charge(n); /* rule 7: bijection scan; sift and action charge their steps */
+        if (cc_work_exceeded()) {
+            return CC_CAPACITY;
+        }
         uint32_t *a = c->auts + (size_t)j * n;
         if (!read_dense(c, a)) {
             return CC_TRUNCATED;
@@ -654,6 +672,7 @@ static cc_reason run(checker *c)
 
 cc_reason cc_check(const uint8_t *cert, size_t len, uint64_t *nodes_out)
 {
+    cc_ledger_reset(); /* rule 7: each certificate gets the full memory and work budgets */
     checker c;
     memset(&c, 0, sizeof c);
     c.r.data = cert;

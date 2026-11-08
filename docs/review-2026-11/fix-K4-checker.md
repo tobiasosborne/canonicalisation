@@ -44,7 +44,53 @@ changed, so no test can prove the text (per A-search-02).
 
 ## 2. C-checker-api-06 — checker resource bounds
 
-TODO.
+Confirmed: `CC_MAX_ALLOC` capped single allocations only (`checker/cc.h`, `cc_reader.c`);
+one chain held gens+invs+inputs+`p×n` provenance rows plus `depth×n` `pos` words at once;
+`main.c` read the input with unbounded doubling; nesting is `O(depth·s_i·s_{i+1}·n)`
+compares (`cc_chain.c` `nested`), refinement splits are insertion sorts with full
+signature compares (`cc_refine.c`, `sig_cmp`), every sweep re-verifies a chain; and
+`main.c:74-83` printed `REJECT CAPACITY` with exit 1 although `cc.h` says CAPACITY is
+"never a verdict".
+
+Changed (checker only; no `src/` or `include/` includes, no producer code):
+
+- **Live-memory ledger** (`cc_reader.c`, declared in `cc.h`): `cc_alloc`/`cc_realloc` charge
+  every block (size header, `max_align_t`-sized), `cc_free` uncharges; total live beyond
+  `CC_MAX_TOTAL_BYTES` (1 GiB) or a single block beyond `CC_MAX_ALLOC` (1 GiB) is
+  `CC_CAPACITY`. All `free()` of checker allocations became `cc_free` (audited: every such
+  pointer originates in `cc_alloc`/`cc_get_u32s`); `cc_buf` growth goes through `cc_realloc`.
+  `main.c`'s input buffer stays raw but is bounded by `CC_MAX_INPUT_BYTES` (256 MiB) in the
+  rewritten `read_all`.
+- **Work ledger**: `cc_work_charge`/`cc_work_exceeded` with budget `CC_MAX_WORK` (2³¹ word
+  operations), charged at transporter/sift steps (`n` per step), provenance rows, bijection
+  scans, nesting compares (`n` per pair), orbit-tree walks, orbit closure, prefix checks,
+  level orbit unions, signature zeroing (`n·width`) and scans (`width` per `sig_cmp`), split
+  insertion-sort comparisons, string (`bytes_order`) and arc (`arc_order`) compares; checked
+  in the verifier helpers, `stage_o`/`stage_g`, `node` entry and the generator/automorphism
+  loops, returning `CC_CAPACITY`.
+- **Declared-size bounds with checked arithmetic**: `chain_work_bound` in `cc_chain_verify`
+  precomputes an upper bound on the verifier's work from `n, depth, g, p, i, s_i, r_i` alone
+  (saturating add/mul; one term per condition, transporter ≤ `r` steps, sift ≤ `depth·Rmax`
+  steps) and refuses `CC_CAPACITY` before the work; `cc_chain_read` checks `depth×n` (`pos`
+  arrays) and `p×n` (provenance rows) against the live budget before reading/allocating them;
+  `cc_signatures_compute` checks `n × 2·L·k` likewise.
+- **Distinct capacity outcome**: `main` maps `CC_CAPACITY` and an oversized input file to
+  exit 2 with `CAPACITY` on stdout and `certificate exceeds checker capacity (no verdict)`
+  on stderr; `REJECT` is only for rule violations. Documented in `checker/README.md`
+  (usage paragraph and rule 7 rewritten) and `cc.h`.
+- `cc_check` resets both ledgers on entry (the fuzz target calls it repeatedly in-process).
+
+Tests added (`checker/tests/test_checker.py`, class `Capacity`): a Nat length of 9 in the
+embedded graph stream ⇒ `(2, "CAPACITY")`; a hand-built certificate with `n = depth = 20000`
+(small file, `depth×n` alone beyond budget) ⇒ `(2, "CAPACITY")`; a root chain with one
+generator id repeated 30000× in each of the first two levels (nesting term
+`s₀·s₁·n > 2³¹`) ⇒ `(2, "CAPACITY")`. Probed against the built checker before the full run
+(`/tmp/k4_probe.py`, importing the harness): all three pass; a normal certificate still
+`ACCEPT`s and a trailing byte still `REJECT TRAILING_BYTES`. The cumulative work ledger and
+the 256 MiB input cap have no dedicated test (tripping them needs ~2³¹ charged operations
+or a >256 MiB file in the harness); they share the tested `CAPACITY` exit path. Overshoot
+note: work is charged as it is done and checked at loop boundaries, so the cumulative total
+can exceed the budget by at most one check interval (itself bounded by the per-chain bound).
 
 ## 3. H-tests-06 / C-checker-api-05 (if time)
 
