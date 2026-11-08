@@ -152,3 +152,45 @@ RESOURCE/CAPACITY with an empty chain and live bytes back at baseline (no leak, 
 double free; ASan covers the frees in the sanitizer run below). The pre-existing
 whole-flow sweep also passes: `test_faults: ok` (1927 allocations per flow, 1927
 faulted runs, every complete solve equal to the fault-free answer).
+
+## Summary
+
+All five findings assigned to this lane were confirmed and fixed, one commit each
+(on `t3/certify-rebase-order`, not pushed, `main` untouched):
+
+| Commit | Finding |
+|---|---|
+| `701008a` | B-kernel-01: order-equality certificate in `canon_bsgs_rebase` |
+| `168b553` | B-kernel-03: verifier capacity checks + stated precondition |
+| `131ca63` | B-kernel-04: `least_outside` shortcut checks containment and stored orders |
+| `a14b573` | B-kernel-05: `set_signs` frees the previous signs block |
+| `6ae9ae1` | B-kernel-06: `insert()` rolls back on allocation failure |
+
+Testing (light, per the fix brief; nothing from the brief's "do not run" list was run):
+
+- Each fix's focused C test was run before the fix (failing as recorded above) and
+  after it (passing): `test_chain`, `test_verify`, `test_coset_least`,
+  `test_group_stream`, `test_signed_group`, `test_signed`, `test_faults`.
+- Once at the end: `nice -n 19 make test` — all C tests and the fuzz replay pass.
+- Once at the end: `nice -n 19 make SANITIZE=1 BUILD=build/san test` — all pass
+  under AddressSanitizer/UBSan.
+- PROFILE-EQUIV evidence: construction counters (T1/T2/Sym(12)), enumeration and
+  Group-bytes tallies, and the fault-flow answers are unchanged; no fix alters any
+  trace, byte, status, witness or node count on inputs that satisfied the old
+  contracts. The two deliberate edge changes are recorded under B-kernel-04
+  (scratch-binding failure on the equal-order path) and, implicitly, B-kernel-03
+  (chains whose recorded capacities contradict their counts now get BAD_STRUCTURE
+  instead of being read anyway).
+- Not run (fix brief): `make check`, `ctest`, Python tiers, `refs/` runners,
+  corpus regeneration, benchmarks. `make format` was not applied: the installed
+  clang-format flags pre-existing lines this lane did not touch, so formatting
+  would churn files owned by other lanes; the new code follows the surrounding
+  style.
+
+Left undone: nothing in this lane. B-kernel-02, B-kernel-07 and B-kernel-08 were
+not assigned to this lane and are untouched. Stale "not verified" wording at some
+`canon_bsgs_rebase` call sites (e.g. in `src/coset/least.c`, `src/symmetry/`,
+`src/search/certificate.c`, and the tuple-minimum comment another lane is
+rewriting) still says the transient chains are unverified; that remains literally
+true (`verified == false`) — they are now order-certified rather than unchecked,
+which `src/bsgs/chain.h` states at the function itself.
