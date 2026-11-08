@@ -92,6 +92,40 @@ or a >256 MiB file in the harness); they share the tested `CAPACITY` exit path. 
 note: work is charged as it is done and checked at loop boundaries, so the cumulative total
 can exceed the budget by at most one check interval (itself bounded by the per-chain bound).
 
-## 3. H-tests-06 / C-checker-api-05 (if time)
+## 3. H-tests-06 / C-checker-api-05
 
-TODO.
+**C-checker-api-05 (fixed, small).** Confirmed: `cc_object_decode` accepted well-formed but
+non-canonical embedded streams (unreachable records, root not last, unsorted/duplicated
+arcs normalised away). Fix in `cc_check.c` `run()` after decode: re-encode `x` with the
+checker's own `cc_object_encode` and require byte identity with `B(stream of x)`, else
+`OBJECT_MALFORMED` (spec §4.1 reachability, §4.2 validate-by-reconstruction; comment cites
+both). The producer embeds `canon_root_stream_write` output (the canonical stream), so
+honest certificates are unaffected. Documented in `checker/README.md` rule 1.
+
+**H-tests-06 (tests added, `checker/tests/test_checker.py` only).** One mutation per
+previously unelicited reason, each asserting the exact reason string: `NODE_DEPTH` (root
+depth 0→1; also the deleted-child case now pins `NODE_DEPTH`, probed),
+`NODE_ATOM` (root atom NONE→0), `SWEEP_COUNT` (sweeps 1→0), `F_MISMATCH` (recorded `f` +1),
+`STAGE_G_SIZES` (first post-chain size +1), `TARGET_CELL` (branch position +1),
+`CHILD_MISSING` (unknown child kind `0x02`), `BRANCH_AT_DISCRETE` (leaf kind byte → branch),
+`LEAF_NOT_DISCRETE` (branch kind byte → leaf), `REBASED_BASE_PREFIX` (the forged
+base-(0,2,1) chain of `test_m_not_minimal` under the honest `M = (0,1,2)`),
+`DEGREE_MISMATCH` (stream `U32(n)` +1), `OBJECT_UNSUPPORTED` (set tag `04`→`05`),
+`OBJECT_MALFORMED` twice for C-05 (swapped atom records; an unreachable atom record — both
+decode to the same subset as before the fix). `HEADER` was already elicited by
+`test_policy_header` (the H-tests list appears to have missed it); `CAPACITY` is the new
+`Capacity` class (exit 2, not a `REJECT` reason anymore). Acceptance totals are now pinned
+in non-FAST mode: T1 = 1617 (539 pairs × 3 policies), G1 = 996 (332 × 3), random sample
+= 120 (36 in FAST) — subgroup counts recomputed from `rc.subgroups` in the probe
+(1, 1, 2, 6, 30 for Sym(0..4)). A hand-built `n = 0` empty-subset certificate (assembled
+from `checker/README.md`'s layout, no producer bytes) is accepted as `ACCEPT 1`, with
+`NODE_COUNT` and `FINAL_BYTES` mutations rejected; at `n = 0` the witness is empty, so the
+H-suggested witness flip is replaced by those two.
+
+Probed before the full run (`/tmp/k4_probe2.py`, `/tmp/k4_probe3.py` driving the new methods
+directly): counts 1617/996, deletion elicits `NODE_DEPTH`, hand-built cert accepted, and all
+ten new/updated mutation methods pass.
+
+## Tests run (final)
+
+TODO after the final run.

@@ -524,6 +524,20 @@ static cc_reason run(checker *c)
     if (why != CC_ACCEPT) {
         return why;
     }
+    /* spec 4.1 "all records are reachable from root", spec 4.2: unreachable records, a root
+     * other than the last record, noncanonical record order and unsorted or duplicated arcs
+     * are "invalid canonical encodings", validated "by reconstructing this normal form and
+     * requiring byte identity".  The embedded B(stream of x) is the input's identity (spec
+     * 4.3), so it must be exactly the checker's own canonical encoding of the decoded x --
+     * a merely well-formed stream decoding to the same object is OBJECT_MALFORMED here. */
+    why = cc_object_encode(&c->x, &c->bytes);
+    if (why != CC_ACCEPT) {
+        return why;
+    }
+    if (c->bytes.len != stream_len || memcmp(c->bytes.data, stream, stream_len) != 0) {
+        return CC_OBJECT_MALFORMED;
+    }
+    c->bytes.len = 0;
     c->best_t = cc_alloc(n, sizeof *c->best_t, &why);
     c->prefix = cc_alloc(n, sizeof *c->prefix, &why);
     c->u = cc_alloc(n, sizeof *c->u, &why);
