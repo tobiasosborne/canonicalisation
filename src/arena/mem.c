@@ -12,6 +12,27 @@ typedef union canon_mem_header {
     max_align_t align;
 } canon_mem_header;
 
+/* spec 11.2 M_allocator_overhead: a per-block allowance for the system allocator's own chunk
+ * bookkeeping and size rounding, charged in addition to what we request from it
+ * (sizeof(canon_mem_header) + payload).  32 bytes is a conservative allowance, not a
+ * measurement of a specific allocator: common allocators (e.g. glibc malloc) keep one size
+ * word per chunk and round the chunk up to the strictest alignment, which for a request of
+ * at least our header size costs at most a word plus one alignment quantum, and a minimum
+ * chunk size can add the same again for small requests.  Charging a stated upper allowance
+ * keeps the ledger an upper accounting of held memory on such allocators; an allocator with
+ * larger per-block overhead would need this constant raised. */
+#define CANON_MEM_SYSTEM_OVERHEAD ((size_t)32)
+
+static size_t block_overhead(void)
+{
+    return sizeof(canon_mem_header) + CANON_MEM_SYSTEM_OVERHEAD;
+}
+
+uint64_t canon_mem_block_overhead(void)
+{
+    return (uint64_t)block_overhead();
+}
+
 static _Atomic uint64_t mem_live, mem_peak, mem_allocations, mem_frees, mem_failures;
 static _Atomic uint64_t mem_fault_countdown; /* 0: no fault pending; k: fail the k-th */
 static _Atomic uint64_t mem_faults_injected;
@@ -47,8 +68,9 @@ static bool fault_fires(void)
 static void *allocate(size_t bytes, bool zero)
 {
     atomic_fetch_add_explicit(&mem_requests, 1u, memory_order_relaxed);
-    /* every request counts down a pending fault, whether or not it could succeed */
-    if (fault_fires() || bytes > SIZE_MAX - sizeof(canon_mem_header)) {
+    /* every request counts down a pending fault, whether or not it could succeed; the bound
+     * also keeps the charged size (payload + overhead) from wrapping */
+    if (fault_fires() || bytes > SIZE_MAX - block_overhead()) {
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
         return NULL;
     }
@@ -57,9 +79,12 @@ static void *allocate(size_t bytes, bool zero)
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
         return NULL;
     }
-    h->size = bytes;
+    h->size = bytes; /* payload only: realloc/copy semantics and the free path derive the rest */
+    /* spec 11.2: charge what is requested (header + payload) plus M_allocator_overhead, so a
+     * zero-byte block still charges its header and allowance */
+    const uint64_t charged = (uint64_t)bytes + (uint64_t)block_overhead();
     atomic_fetch_add_explicit(&mem_allocations, 1u, memory_order_relaxed);
-    raise_peak(atomic_fetch_add_explicit(&mem_live, bytes, memory_order_relaxed) + bytes);
+    raise_peak(atomic_fetch_add_explicit(&mem_live, charged, memory_order_relaxed) + charged);
     return h + 1;
 }
 
@@ -89,8 +114,9 @@ void *canon_mem_realloc(void *p, size_t bytes)
     canon_mem_header *h = (canon_mem_header *)p - 1;
     const size_t old = h->size;
     atomic_fetch_add_explicit(&mem_requests, 1u, memory_order_relaxed);
-    /* every request counts down a pending fault, whether or not it could succeed */
-    if (fault_fires() || bytes > SIZE_MAX - sizeof(canon_mem_header)) {
+    /* every request counts down a pending fault, whether or not it could succeed; the bound
+     * also keeps the charged size (payload + overhead) from wrapping */
+    if (fault_fires() || bytes > SIZE_MAX - block_overhead()) {
         atomic_fetch_add_explicit(&mem_failures, 1u, memory_order_relaxed);
         return NULL;
     }
@@ -101,7 +127,8 @@ void *canon_mem_realloc(void *p, size_t bytes)
     }
     grown->size = bytes;
     /* a resize of an existing block: not a new allocation (allocations == frees once
-     * everything is released) */
+     * everything is released); the per-block overhead is unchanged by a resize, so the
+     * charged delta is exactly the payload delta (spec 11.2) */
     if (bytes >= old) {
         raise_peak(atomic_fetch_add_explicit(&mem_live, bytes - old, memory_order_relaxed) +
                    (bytes - old));
@@ -117,7 +144,9 @@ void canon_mem_free(void *p)
         return;
     }
     canon_mem_header *h = (canon_mem_header *)p - 1;
-    atomic_fetch_sub_explicit(&mem_live, h->size, memory_order_relaxed);
+    /* spec 11.2: uncharge payload + header + allowance, exactly what allocate charged */
+    atomic_fetch_sub_explicit(&mem_live, (uint64_t)h->size + (uint64_t)block_overhead(),
+                              memory_order_relaxed);
     atomic_fetch_add_explicit(&mem_frees, 1u, memory_order_relaxed);
     free(h);
 }

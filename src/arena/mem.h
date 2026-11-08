@@ -6,7 +6,11 @@
  * Every allocation the library makes goes through canon_mem_malloc / calloc / realloc / free,
  * so that M_live of spec 11.2 is measured rather than estimated: each block carries its size in
  * a header, and the process-wide counters (live bytes, peak bytes, allocations, frees) are
- * atomic.  The ledger is process-wide (decision D17): several workspaces on several threads
+ * atomic.  Live/peak bytes charge what is actually requested from the system allocator
+ * (payload + the ledger's own size header) plus a per-block system-allocator allowance
+ * (canon_mem_block_overhead), because spec 11.2's equation ends in M_allocator_overhead and
+ * requires accounting "at every phase"; they are not payload bytes.  The ledger is
+ * process-wide (decision D17): several workspaces on several threads
  * aggregate into the same counters; a per-solve peak (canon_mem_peak_reset at solve entry,
  * canon_mem_stats at exit) is exact when one solve runs at a time.
  *
@@ -36,6 +40,11 @@ void canon_mem_free(void *p);
 
 /* The process-wide counters (spec 11.2; canon_memory_stats in the public header). */
 void canon_mem_stats(canon_memory_stats *out);
+/* Bytes charged to live/peak per live block beyond its payload (spec 11.2
+ * M_allocator_overhead): the ledger's size header plus the documented system-allocator
+ * allowance of canon_mem's implementation.  The admission plan (spec 11.1) uses this so that
+ * "peak <= plan" is stated in the same units as the ledger. */
+uint64_t canon_mem_block_overhead(void);
 /* Set the peak to the current live count and return that count (the start of a per-solve
  * high-water mark). */
 uint64_t canon_mem_peak_reset(void);
