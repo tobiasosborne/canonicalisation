@@ -128,4 +128,25 @@ ten new/updated mutation methods pass.
 
 ## Tests run (final)
 
-TODO after the final run.
+- `nice -n 19 make build/make/canon-check build/make/canon-cli` — clean under the strict
+  flags (`-Werror` etc.).
+- Probes `/tmp/k4_probe.py`, `/tmp/k4_probe2.py`, `/tmp/k4_probe3.py` (harness methods driven
+  directly, not suite runs): the three `Capacity` cases, the ten new/updated mutations, tier
+  counts and the hand-built certificate all pass.
+- `nice -n 19 python3 checker/tests/test_checker.py` (once, at the end): **37 tests OK in
+  6.7 s**; acceptance stats match the pinned totals (T1 1617 certificates, G1 996, random
+  sample 120).
+- `nice -n 19 make SANITIZE=1 BUILD=build/san test` (once): all C tests pass under
+  ASan/UBSan; fuzz replay clean (`fuzz_checker`: 4002 inputs, no crash — this also exercises
+  the new ledger alloc/free pairing and per-call reset in-process).
+- Not run, per FIX-BRIEF: `make check`, `make test` (non-sanitizer), `ctest`, corpus, e2e
+  tiers, refs/oracle.
+
+## Left undone
+
+- `docs/pruning-rules.md:3` still cites spec v2.1 (C-08(d) aside; coordinator-owned, outside
+  this lane).
+- The cumulative work ledger and the 256 MiB input cap have no dedicated harness test (see
+  §2); the per-chain bound, the product pre-checks and the distinct `CAPACITY` exit are
+  tested.
+- Nothing else in lane K4: steps 1–3 of the task are complete.
