@@ -148,3 +148,18 @@ Left undone, by design: H-tests-04 items 1–2, H-tests-05 interleave test.
 
 Run: `nice -n 19 make build/make/test_metrics && nice -n 19 ./build/make/test_metrics`
 → `test_metrics: ok` (1534 solves, peak ≤ plan on every one).
+
+## Final verification and left undone
+
+- `nice -n 19 make test` run once before the final commit: all C tests pass
+  (including the three touched programs) and the fuzz replay is clean
+  (12 006 + 4 002 inputs, no crash). No output changed: no `src/` edits.
+- Not run, per FIX-BRIEF: `make check`, `ctest`, `make corpus`, the Python
+  e2e tiers beyond the one `Pruning` class, sanitizer builds. The new CI
+  `make corpus` step and the five new ctest registrations are verified by
+  reading only; their first CI/ctest run is the real check.
+- Left undone: H-tests-04 larger-n items and the H-tests-05 interleave test
+  (above); `checker/tests/` FAST sampling (another lane); all other
+  H-tests findings (01, 06–10, 12) are outside this lane's list.
+- Commits: `8806d0c` (H-tests-03), `3f27572` (H-tests-02), `8390711`
+  (H-tests-11/05), plus this report update. Not pushed.
