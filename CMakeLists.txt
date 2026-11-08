@@ -71,7 +71,7 @@ foreach(t test_perm test_sort test_wire test_group_explicit test_partition test_
           test_dag test_cdag_decode test_dag_action test_search_dag
           test_signed_group test_labeling test_signed
           test_symmetry test_prune test_certificate
-          test_sink test_batch test_metrics test_faults)
+          test_sink test_batch test_metrics test_faults test_tuple_min_cache)
   add_executable(${t} tests/c/${t}.c)
   target_include_directories(${t} PRIVATE src)
   target_link_libraries(${t} PRIVATE canon canon_options)

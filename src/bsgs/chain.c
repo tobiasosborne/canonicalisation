@@ -1014,12 +1014,310 @@ static void add_stats(canon_bsgs_stats *acc, const canon_bsgs_stats *s)
     }
 }
 
+/* ---- stabiliser cache (spec 16; K2) ---- */
+
+void canon_bsgs_tuple_cache_init(canon_bsgs_tuple_cache *cache)
+{
+    memset(cache, 0, sizeof *cache);
+}
+
+static void tuple_cache_entry_free(canon_bsgs_tuple_cache_entry *e)
+{
+    canon_mem_free(e->prefix);
+    e->prefix = NULL;
+    canon_bsgs_free(&e->chain);
+    e->len = 0;
+    e->bytes = 0;
+}
+
+static void tuple_memo_entry_free(canon_bsgs_tuple_memo_entry *e)
+{
+    canon_mem_free(e->key);
+    canon_mem_free(e->block);
+    e->key = NULL;
+    e->block = NULL;
+    e->len = 0;
+    e->bytes = 0;
+}
+
+void canon_bsgs_tuple_cache_reset(canon_bsgs_tuple_cache *cache)
+{
+    for (uint32_t i = 0; i < cache->count; ++i) {
+        tuple_cache_entry_free(&cache->entries[i]);
+    }
+    cache->count = 0;
+    for (uint32_t i = 0; i < cache->memo_count; ++i) {
+        tuple_memo_entry_free(&cache->memo[i]);
+    }
+    cache->memo_count = 0;
+    cache->memo_bytes = 0;
+    cache->memo_byte_cap = 0;
+    canon_mem_free(cache->fingerprint);
+    cache->fingerprint = NULL;
+    cache->fingerprint_words = 0;
+    cache->fp_n = 0;
+    cache->fp_gens = 0;
+    cache->fp_inputs = 0;
+    canon_mem_free(cache->key);
+    cache->key = NULL;
+    cache->root = NULL;
+    cache->bytes = 0;
+    cache->byte_cap = 0;
+    /* hits/misses and the entries array survive: diagnostics and capacity, not content */
+}
+
+void canon_bsgs_tuple_cache_free(canon_bsgs_tuple_cache *cache)
+{
+    canon_bsgs_tuple_cache_reset(cache);
+    canon_mem_free(cache->entries);
+    canon_mem_free(cache->memo);
+    canon_bsgs_tuple_cache_init(cache);
+}
+
+/* Spec 16 exact G identity: the fingerprint is an owned copy of the root chain's strong
+ * generator table then its input table; a match is a word-for-word equality, never a hash
+ * (spec 7.3 "Never use a hash/quotient match as exact state equality"). */
+static bool tuple_cache_fingerprint_matches(const canon_bsgs_tuple_cache *cache,
+                                            const canon_bsgs *c)
+{
+    if (cache->fingerprint == NULL || cache->fp_n != c->n || cache->fp_gens != c->gens.count ||
+        cache->fp_inputs != c->inputs.count) {
+        return false;
+    }
+    const size_t gw = (size_t)cache->fp_gens * c->n;
+    if (gw > 0 && memcmp(cache->fingerprint, c->gens.data, gw * sizeof(uint32_t)) != 0) {
+        return false;
+    }
+    const size_t iw = (size_t)cache->fp_inputs * c->n;
+    return iw == 0 || memcmp(cache->fingerprint + gw, c->inputs.data, iw * sizeof(uint32_t)) == 0;
+}
+
+/* Fingerprint c into the cache (dropping any entries of another G) and size the running key.
+ * CANON_RESOURCE_LIMIT / CANON_CAPACITY_LIMIT on allocation failure (the cache is then
+ * empty but usable). */
+static canon_status tuple_cache_prepare(canon_bsgs_tuple_cache *cache, const canon_bsgs *c)
+{
+    if (tuple_cache_fingerprint_matches(cache, c)) {
+        cache->root = c;
+        return CANON_COMPLETE;
+    }
+    canon_bsgs_tuple_cache_reset(cache);
+    cache->root = c;
+    /* spec 11.2: the plan charges 4x the group's measured bytes for all derived chains
+     * together; this cache (3x) and the memo below (1x) together keep to that allowance. */
+    if (!canon_u64_mul(canon_bsgs_bytes(c), 3u, &cache->byte_cap)) {
+        cache->byte_cap = UINT64_MAX;
+    }
+    cache->memo_byte_cap = canon_bsgs_bytes(c);
+    canon_status st = CANON_COMPLETE;
+    size_t words = 0;
+    if (!canon_size_mul((size_t)c->gens.count + c->inputs.count, (size_t)c->n, &words)) {
+        return CANON_CAPACITY_LIMIT;
+    }
+    cache->fingerprint = canon_alloc_array(words, sizeof *cache->fingerprint, &st);
+    cache->key = canon_alloc_array(c->n, sizeof *cache->key, &st);
+    if (cache->fingerprint == NULL || cache->key == NULL) {
+        canon_bsgs_tuple_cache_reset(cache);
+        return st;
+    }
+    if (words > 0) {
+        const size_t gw = (size_t)c->gens.count * c->n;
+        if (gw > 0) {
+            memcpy(cache->fingerprint, c->gens.data, gw * sizeof(uint32_t));
+        }
+        if (words > gw) {
+            memcpy(cache->fingerprint + gw, c->inputs.data, (words - gw) * sizeof(uint32_t));
+        }
+    }
+    cache->fingerprint_words = words;
+    cache->fp_n = c->n;
+    cache->fp_gens = c->gens.count;
+    cache->fp_inputs = c->inputs.count;
+    cache->bytes = (uint64_t)(words + c->n) * sizeof(uint32_t);
+    return CANON_COMPLETE;
+}
+
+/* The cached chain for the minimised prefix key[0..len), or NULL.  Pointers into the
+ * entries array are invalidated by tuple_cache_insert, so callers re-read the result. */
+static const canon_bsgs *tuple_cache_lookup(canon_bsgs_tuple_cache *cache, const uint32_t *key,
+                                            uint32_t len)
+{
+    for (uint32_t i = 0; i < cache->count; ++i) {
+        const canon_bsgs_tuple_cache_entry *e = &cache->entries[i];
+        if (e->len == len && (len == 0 || memcmp(e->prefix, key, len * sizeof(uint32_t)) == 0)) {
+            cache->hits += 1;
+            return &e->chain;
+        }
+    }
+    cache->misses += 1;
+    return NULL;
+}
+
+/* Evict one entry of prefix length at least min_len, the deepest such (oldest on ties):
+ * retention prefers shallow prefixes (chain.h).  Spec 16: "Eviction changes time only".
+ * False when every entry is shallower than min_len. */
+static bool tuple_cache_evict_deep(canon_bsgs_tuple_cache *cache, uint32_t min_len)
+{
+    uint32_t victim = UINT32_MAX;
+    for (uint32_t i = 0; i < cache->count; ++i) {
+        if (cache->entries[i].len >= min_len &&
+            (victim == UINT32_MAX || cache->entries[i].len > cache->entries[victim].len)) {
+            victim = i;
+        }
+    }
+    if (victim == UINT32_MAX) {
+        return false;
+    }
+    cache->bytes -= cache->entries[victim].bytes;
+    tuple_cache_entry_free(&cache->entries[victim]);
+    if (victim + 1u < cache->count) {
+        memmove(&cache->entries[victim], &cache->entries[victim + 1u],
+                (size_t)(cache->count - victim - 1u) * sizeof *cache->entries);
+    }
+    cache->count -= 1u;
+    return true;
+}
+
+/* Move *chain into the cache under key[0..len) when it fits the byte cap; returns the cached
+ * chain, or NULL when the chain was not retained (the caller keeps it transient).  On a move
+ * *chain is re-initialised empty so the caller's free stays valid.  Allocation failure to
+ * retain is not an error: retention is time only (spec 16). */
+/* Drop the parts of a chain the tuple minimum never reads (inverse and input tables,
+ * provenance and its node indices: the step reads levels, orbits, Schreier vectors and the
+ * generator table, and a rebase from a cached chain reads only its level generator lists
+ * and generator table).  The stripped chain is cache-internal, never verified or sifted. */
+static void tuple_cache_strip(canon_bsgs *chain)
+{
+    canon_perm_table_free(&chain->invs);
+    canon_perm_table_free(&chain->inputs);
+    canon_mem_free(chain->gen_node);
+    canon_mem_free(chain->inv_node);
+    chain->gen_node = NULL;
+    chain->inv_node = NULL;
+    chain->node_cap = 0;
+    canon_prov_free(&chain->prov);
+}
+
+static const canon_bsgs *tuple_cache_insert(canon_bsgs_tuple_cache *cache, const uint32_t *key,
+                                            uint32_t len, canon_bsgs *chain)
+{
+    tuple_cache_strip(chain);
+    const uint64_t bytes =
+        canon_bsgs_bytes(chain) + (uint64_t)len * sizeof(uint32_t) + sizeof *cache->entries;
+    while (cache->bytes + bytes > cache->byte_cap && tuple_cache_evict_deep(cache, len)) {
+        /* evict deeper-or-equal prefixes only; shallower ones are never displaced */
+    }
+    if (cache->bytes + bytes > cache->byte_cap) {
+        return NULL; /* does not fit without displacing a shallower prefix: stay transient */
+    }
+    canon_status st = CANON_COMPLETE;
+    uint32_t *prefix = canon_alloc_array(len, sizeof *prefix, &st);
+    if (prefix == NULL) {
+        return NULL;
+    }
+    if (cache->count == cache->entries_cap) {
+        void *slot = cache->entries;
+        st = canon_grow_array_to(&slot, &cache->entries_cap, cache->count,
+                                 (uint64_t)cache->count + 1u, 8u, sizeof *cache->entries);
+        cache->entries = slot;
+        if (st != CANON_COMPLETE) {
+            canon_mem_free(prefix);
+            return NULL;
+        }
+    }
+    memcpy(prefix, key, (size_t)len * sizeof *prefix);
+    canon_bsgs_tuple_cache_entry *e = &cache->entries[cache->count++];
+    e->prefix = prefix;
+    e->len = len;
+    e->chain = *chain;
+    e->bytes = bytes;
+    canon_bsgs_init(chain, chain->n);
+    cache->bytes += bytes;
+    return &e->chain;
+}
+
+/* ---- G-stage result memo (spec 16, keyed by ordered fixed tuple F; K2) ---- */
+
+/* Copy a memoised (t, orbit ids) for the exact ordered tuple L into the outputs; false on a
+ * miss.  Exact key equality by memcmp, never a hash (spec 7.3). */
+static bool tuple_memo_lookup(canon_bsgs_tuple_cache *cache, const uint32_t *L, uint32_t len,
+                              uint32_t n, uint32_t *t_out, uint32_t *orbit_id_out)
+{
+    for (uint32_t i = 0; i < cache->memo_count; ++i) {
+        const canon_bsgs_tuple_memo_entry *e = &cache->memo[i];
+        if (e->len == len && (len == 0 || memcmp(e->key, L, len * sizeof(uint32_t)) == 0)) {
+            memcpy(t_out, e->block, (size_t)n * sizeof(uint32_t));
+            memcpy(orbit_id_out, e->block + n, (size_t)n * sizeof(uint32_t));
+            cache->memo_hits += 1;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Memoise a computed (t, orbit ids) under L, evicting oldest entries to the memo byte cap
+ * (spec 16: "Eviction changes time only").  Allocation failure is not an error. */
+static void tuple_memo_store(canon_bsgs_tuple_cache *cache, const uint32_t *L, uint32_t len,
+                             uint32_t n, const uint32_t *t, const uint32_t *orbit_id)
+{
+    const uint64_t bytes = (uint64_t)(len + 2u * n) * sizeof(uint32_t) + sizeof *cache->memo;
+    while (cache->memo_count > 0u && cache->memo_bytes + bytes > cache->memo_byte_cap) {
+        cache->memo_bytes -= cache->memo[0].bytes;
+        tuple_memo_entry_free(&cache->memo[0]);
+        memmove(&cache->memo[0], &cache->memo[1],
+                (size_t)(cache->memo_count - 1u) * sizeof *cache->memo);
+        cache->memo_count -= 1u;
+    }
+    if (cache->memo_bytes + bytes > cache->memo_byte_cap) {
+        return;
+    }
+    canon_status st = CANON_COMPLETE;
+    uint32_t *key = canon_alloc_array(len, sizeof *key, &st);
+    uint32_t *block = canon_alloc_array((size_t)2u * n, sizeof *block, &st);
+    if (key == NULL || block == NULL) {
+        canon_mem_free(key);
+        canon_mem_free(block);
+        return;
+    }
+    if (cache->memo_count == cache->memo_cap_entries) {
+        void *slot = cache->memo;
+        st = canon_grow_array_to(&slot, &cache->memo_cap_entries, cache->memo_count,
+                                 (uint64_t)cache->memo_count + 1u, 8u, sizeof *cache->memo);
+        cache->memo = slot;
+        if (st != CANON_COMPLETE) {
+            canon_mem_free(key);
+            canon_mem_free(block);
+            return;
+        }
+    }
+    if (len > 0) {
+        memcpy(key, L, (size_t)len * sizeof *key);
+    }
+    memcpy(block, t, (size_t)n * sizeof *block);
+    memcpy(block + n, orbit_id, (size_t)n * sizeof *block);
+    canon_bsgs_tuple_memo_entry *e = &cache->memo[cache->memo_count++];
+    e->key = key;
+    e->len = len;
+    e->block = block;
+    e->bytes = bytes;
+    cache->memo_bytes += bytes;
+}
+
 /* spec 7.2: "A constructive procedure starts t=id, H=G; at list position i set a=t[L[i]],
  * choose b=min(a^H) and u in H with a^u=b, then t <- t u and H <- H_b."  H is a suffix of a
  * chain (cur, level); when b is not the base point of that level, H is rebased so that its
  * first base point is b.  That is one rebuild per such step, not verified: these chains are
- * transient and correct by construction.  At most O(n) rebuilds per call, the known S3 cost
- * (M5 work).  u = t_a^-1, where t_a sends b to a in the rebased level.
+ * transient and correct by construction.  u = t_a^-1, where t_a sends b to a in the rebased
+ * level.
+ *
+ * K2 (spec 16 cache; chain.h): with a cache, the chain for H with first base point b is
+ * looked up by the minimised prefix (the b of every earlier non-trivial step, then this b;
+ * H is the pointwise stabiliser of that prefix, since a size-1 orbit step leaves H
+ * unchanged) and a miss stores the rebased chain under that key instead of freeing it.  The
+ * cached chain need not be the very chain an uncached run would build here (its strong
+ * generators come from another representative of H), but spec 7.2 makes the final t unique:
+ * the processed list L followed by 0..n-1 covers every point and "Intermediate transporter
+ * choices cannot change t", and the orbit ids at |L| are the orbits of the abstract G_M.
  *
  * The list processed is L followed by 0, 1, ..., n-1.  After the |L| entries of L, t
  * minimises L^t and the minimisers are exactly the coset t G_M, M = L^t (if L^g = M then
@@ -1029,13 +1327,32 @@ static void add_stats(canon_bsgs_stats *acc, const canon_bsgs_stats *s)
  * requires (src/bsgs/group.h). */
 static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t len,
                               uint32_t *orbit_id_out, tm_ctx *x, canon_bsgs *own,
-                              canon_bsgs_stats *stats)
+                              canon_bsgs_stats *stats, canon_bsgs_tuple_cache *cache)
 {
     const uint32_t n = c->n;
     const canon_bsgs *cur = c;
     uint32_t level = 0;
+    bool cur_owned = false;  /* cur == own, a transient chain this call must free via *own */
+    uint32_t prefix_len = 0; /* non-trivial minimised points so far, in cache->key */
     bool orbits_done = orbit_id_out == NULL;
-    const uint64_t total = (uint64_t)len + n;
+    uint64_t total = (uint64_t)len + n;
+    /* Fast path (K2): a full list (len == n, entries distinct; leaves and discrete G stages)
+     * needs no 0..n-1 tail: spec 7.2 "the final full list determines t uniquely", so the
+     * minimiser of L alone is already the least minimiser and every tail step would find H
+     * trivial.  Distinctness by a seen pass over the queue (dead until the first step). */
+    if (len == n) {
+        bool full = true;
+        for (uint32_t v = 0; v < n; ++v) {
+            x->queue[v] = 0;
+        }
+        for (uint32_t i = 0; i < len && full; ++i) {
+            full = x->queue[Lst[i]] == 0;
+            x->queue[Lst[i]] = 1;
+        }
+        if (full) {
+            total = len;
+        }
+    }
     for (uint64_t i = 0; i < total; ++i) {
         if (i == len && !orbits_done) {
             canon_bsgs_orbit_ids(cur, level, orbit_id_out); /* spec 7.1: orbits of G_M */
@@ -1052,24 +1369,52 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
             continue; /* H fixes a: u = id, H_b = H */
         }
         if (level >= cur->depth || cur->levels[level].base_point != b) {
-            /* spec 9.2 base change: H with base starting at b */
-            canon_bsgs next;
-            /* internal and transient: correct by the deterministic closure, not verified
-             * (S3 review item 2; the group's own chain was verified at creation) */
-            canon_status st = canon_bsgs_rebase(cur, level, &b, 1, false, &next);
-            if (st != CANON_COMPLETE) {
-                return st;
+            const canon_bsgs *hit = NULL;
+            if (cache != NULL) {
+                cache->key[prefix_len] = b;
+                hit = tuple_cache_lookup(cache, cache->key, prefix_len + 1u);
             }
-            add_stats(stats, &next.stats);
-            canon_bsgs_free(own);
-            *own = next;
-            cur = own;
+            if (hit != NULL) {
+                if (cur_owned) {
+                    canon_bsgs_free(own);
+                    cur_owned = false;
+                }
+                cur = hit;
+            } else {
+                /* spec 9.2 base change: H with base starting at b */
+                canon_bsgs next;
+                /* internal and transient: correct by the deterministic closure, not verified
+                 * (S3 review item 2; the group's own chain was verified at creation) */
+                canon_status st = canon_bsgs_rebase(cur, level, &b, 1, false, &next);
+                if (st != CANON_COMPLETE) {
+                    return st;
+                }
+                add_stats(stats, &next.stats);
+                if (cur_owned) {
+                    canon_bsgs_free(own);
+                    cur_owned = false;
+                }
+                if (cache != NULL) {
+                    hit = tuple_cache_insert(cache, cache->key, prefix_len + 1u, &next);
+                }
+                if (hit != NULL) {
+                    cur = hit;
+                } else {
+                    *own = next;
+                    cur = own;
+                    cur_owned = true;
+                }
+            }
             level = 0;
         }
+        if (cache != NULL) {
+            cache->key[prefix_len] = b; /* spec 16 key: the minimised prefix M so far */
+        }
+        prefix_len += 1u;
         /* u = t_a^-1 in H: t_a (level `level`, base b) sends b to a */
         const canon_bsgs_level *Lv = &cur->levels[level];
         uint64_t steps = transporter_into(cur, Lv, Lv->orbit_pos[a], x->u, x->tmp);
-        canon_perm_inverse(x->u, x->tmp, n); /* tmp = u, a^u = b */
+        canon_perm_inverse(x->u, x->tmp, n);       /* tmp = u, a^u = b */
         canon_perm_compose(x->t, x->tmp, x->u, n); /* spec 7.2: t <- t u (u acts second) */
         memcpy(x->t, x->u, (size_t)n * sizeof *x->t);
         if (stats != NULL) {
@@ -1084,8 +1429,16 @@ static canon_status tuple_run(const canon_bsgs *c, const uint32_t *Lst, uint32_t
 }
 
 canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32_t len,
-                                  uint32_t *t_out, uint32_t *orbit_id_out,
-                                  canon_bsgs_stats *stats)
+                                  uint32_t *t_out, uint32_t *orbit_id_out, canon_bsgs_stats *stats)
+{
+    return canon_bsgs_tuple_min_ws(c, L, len, t_out, orbit_id_out, stats, NULL, NULL);
+}
+
+canon_status canon_bsgs_tuple_min_ws(const canon_bsgs *c, const uint32_t *L, uint32_t len,
+                                     uint32_t *t_out, uint32_t *orbit_id_out,
+                                     canon_bsgs_stats *stats,
+                                     const canon_bsgs_tuple_scratch *scratch,
+                                     canon_bsgs_tuple_cache *cache)
 {
     const uint32_t n = c->n;
     for (uint32_t i = 0; i < len; ++i) {
@@ -1093,32 +1446,77 @@ canon_status canon_bsgs_tuple_min(const canon_bsgs *c, const uint32_t *L, uint32
             return CANON_INVALID_INPUT;
         }
     }
+    if (n == 0) {
+        return CANON_COMPLETE; /* spec 7.2: "the empty list has the unique identity action" */
+    }
+    /* Fast path (K2): a trivial G has the unique minimiser id for every L and G_M = 1, whose
+     * spec 7.1 orbit ids are the singletons ranked by point; the general procedure reduces to
+     * exactly this (its first level has no generators, so the loop breaks at once with t =
+     * id and orbit ids from the terminal level). */
+    if (c->levels[0].gen_count == 0) {
+        for (uint32_t v = 0; v < n; ++v) {
+            t_out[v] = v;
+        }
+        if (orbit_id_out != NULL) {
+            canon_bsgs_orbit_ids(c, 0, orbit_id_out);
+        }
+        return CANON_COMPLETE;
+    }
+    if (cache != NULL) {
+        canon_status st = tuple_cache_prepare(cache, c);
+        if (st != CANON_COMPLETE) {
+            return st;
+        }
+        /* Fast path (K2): an exact memo hit on (G, ordered F) - in particular every repeat
+         * of the empty F and of a node's repeated sweep lists - returns the recomputed
+         * least minimiser and orbit ids word for word (spec 16). */
+        if (orbit_id_out != NULL && tuple_memo_lookup(cache, L, len, n, t_out, orbit_id_out)) {
+            return CANON_COMPLETE;
+        }
+    }
     canon_status st = CANON_COMPLETE;
     tm_ctx x;
     x.stamp = 0;
-    x.t = canon_alloc_array(n, sizeof *x.t, &st);
-    x.u = canon_alloc_array(n, sizeof *x.u, &st);
-    x.tmp = canon_alloc_array(n, sizeof *x.tmp, &st);
-    x.queue = canon_alloc_array(n, sizeof *x.queue, &st);
-    x.mark = canon_alloc_array(n, sizeof *x.mark, &st);
+    /* Without caller scratch the four working arrays are one allocation (t, u, queue, mark;
+     * tmp aliases queue: orbit_min's queue is dead once a step's orbit minimum is known,
+     * which is exactly when the transporter needs a dense-product temporary). */
+    uint32_t *block = NULL;
+    if (scratch != NULL) {
+        x.t = t_out; /* spec 7.2: t is accumulated in place (chain.h failure note) */
+        x.u = scratch->work;
+        x.queue = scratch->queue;
+        x.tmp = scratch->queue;
+        x.mark = scratch->mark;
+    } else {
+        size_t words = 0;
+        if (!canon_size_mul((size_t)n, 4u, &words)) {
+            return CANON_CAPACITY_LIMIT; /* spec 11.1 */
+        }
+        block = canon_alloc_array(words, sizeof *block, &st);
+        if (block == NULL) {
+            return st;
+        }
+        x.t = block;
+        x.u = block + (size_t)n;
+        x.queue = block + 2u * (size_t)n;
+        x.tmp = x.queue;
+        x.mark = block + 3u * (size_t)n;
+    }
     canon_bsgs own;
     canon_bsgs_init(&own, n);
-    if (x.t != NULL && x.u != NULL && x.tmp != NULL && x.queue != NULL && x.mark != NULL) {
-        for (uint32_t v = 0; v < n; ++v) {
-            x.t[v] = v;
-            x.mark[v] = 0;
-        }
-        st = tuple_run(c, L, len, orbit_id_out, &x, &own, stats);
-        if (st == CANON_COMPLETE && n > 0) {
-            memcpy(t_out, x.t, (size_t)n * sizeof *t_out);
-        }
+    for (uint32_t v = 0; v < n; ++v) {
+        x.t[v] = v; /* spec 7.2: "starts t=id, H=G" */
+        x.mark[v] = 0;
+    }
+    st = tuple_run(c, L, len, orbit_id_out, &x, &own, stats, cache);
+    if (st == CANON_COMPLETE && scratch == NULL) {
+        memcpy(t_out, x.t, (size_t)n * sizeof *t_out);
+    }
+    if (st == CANON_COMPLETE && cache != NULL && orbit_id_out != NULL) {
+        tuple_memo_store(cache, L, len, n, t_out, orbit_id_out); /* spec 16 (K2) */
     }
     canon_bsgs_free(&own);
-    canon_mem_free(x.t);
-    canon_mem_free(x.u);
-    canon_mem_free(x.tmp);
-    canon_mem_free(x.queue);
-    canon_mem_free(x.mark);
+    canon_mem_free(block);
     return st;
 }
 

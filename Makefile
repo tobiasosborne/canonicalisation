@@ -46,7 +46,7 @@ UNIT_TESTS = test_perm test_sort test_wire test_group_explicit test_partition te
              test_dag test_cdag_decode test_dag_action test_search_dag \
              test_signed_group test_labeling test_signed \
              test_symmetry test_prune test_certificate \
-             test_sink test_batch test_metrics test_faults
+             test_sink test_batch test_metrics test_faults test_tuple_min_cache
 TESTS    = $(BUILD)/test_version $(BUILD)/test_header_abi $(UNIT_TESTS:%=$(BUILD)/%)
 CHECKER  = $(BUILD)/canon-check
 CLI      = $(BUILD)/canon-cli
