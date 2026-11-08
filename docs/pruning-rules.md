@@ -1,6 +1,6 @@
 # Pruning rules of the P1 canonical-image search
 
-Status: slices S7 (12 October 2026) and S7b (13 October 2026). Normative text: `docs/specification.md` v2.1, §7.1–7.3, §8.2, §11.1, §14.3 (R2), §20. This file states every prune the engine applies to profile P1, with its coverage lemma, its objective scope and its quota rule. The unpruned evaluator of §7.1 is normative (§7.3 "The unpruned evaluator above is normative"); a prune is admissible only with a lemma showing that the key minimum of §7.2 is unchanged.
+Status: slices S7 (12 October 2026) and S7b (13 October 2026). Normative text: `docs/specification.md` v2.2, §7.1–7.3, §8.2, §11.1, §14.3 (R2), §20. This file states every prune the engine applies to profile P1, with its coverage lemma, its objective scope and its quota rule. The unpruned evaluator of §7.1 is normative (§7.3 "The unpruned evaluator above is normative"); a prune is admissible only with a lemma showing that the key minimum of §7.2 is unchanged.
 
 ## 1. Definitions
 
@@ -42,7 +42,7 @@ The rule is applied to **`CANONICAL_IMAGE` only**. It preserves the key minimum,
 - **Witness.** The least `t` over all leaves attaining the minimum key is not preserved: pruned leaves can carry smaller `t`. With `witness_mode = DETERMINISTIC` the witness is computed from the complete stabiliser (§3, S4) and is unaffected. With `witness_mode = ANY` the pruned run returns the least `t` among the **explored** leaves attaining the key, a valid witness (`x^t = c`, `t ∈ G`) that may differ from the unpruned run's; the tests compare traces and bytes in that mode and witnesses only in deterministic mode.
 - **Complete stabiliser, enumeration objectives, labeling coset, signed image.** §8.2: "Image-preserving pruning need not preserve complete-group coverage"; "Keeping one best image is insufficient for full A or an enumeration stream." The §8.1 enumerations stay unpruned. The P1 runs inside `CANONICAL_LABELING_COSET` and `SIGNED_CANONICAL_IMAGE` also stay unpruned in S7 (their `t` is part of the answer and is compared with the model), under every work policy.
 
-### Quota (§11.1 v2.1, work-policy ID)
+### Quota (§11.1 v2.2, work-policy ID)
 
 The quota counts "the nodes of the traversal fixed by the profile's policy for the objective", selected by the **work-policy ID** of the capacity descriptor (`canon_capacity.work_policy`):
 
