@@ -39,7 +39,27 @@ Branch: `t3/ledger-decoder-arena-fixes`. Base includes K1 merge `26b28ce`.
 
 ## B-kernel-07 — decoder O(n) bit maps up front
 
-- Confirmation: pending.
+- Confirmed by reading `canon_cdag_decode` (allocated `canon_cdag_bits_words(n)`
+  unconditionally after the header; only Perm/Group/Coset readers use the maps) and by
+  the new test failing pre-fix (peak ≥ 1 MiB bound exceeded by the 64 MiB maps).
+- Change (`src/encoding/cdag_decode.c` only): `decode_records` owns a lazy
+  `ensure_bits()` holder, allocated and zeroed on the first Perm/Group/Coset record and
+  freed on exit. When needed, the size is still bounded by the caller's admitted
+  `max_n` (§11.1, checked against the header before any record). The exported readers'
+  bits contract and `src/object/dag.c`'s own scratch are unchanged.
+- Status effect: none for well-resourced runs (same statuses/reasons/bytes; whole
+  `test_cdag_decode` passes). Under allocation failure, a stream with no Perm/Group
+  record no longer fails at the up-front maps allocation, and the allocation-request
+  count drops by one for such streams (fault-injection `k` numbering shifts
+  accordingly; `test_faults` derives `k` from the live request count).
+- Left as-is, with reason: a short stream that *does* contain a Perm/Group record
+  mentioning a high point still allocates the O(n) maps. That size is the caller's
+  admitted `max_n` scratch (public default 4096 → 1 KiB), and avoiding it would need a
+  sparse-map redesign of the exported readers used by `src/object/dag.c`; the finding
+  (severity low) names lazy allocation as the remedy and its test is the literal case.
+- Test: `test_lazy_bits()` in `tests/c/test_cdag_decode.c` — 24-byte stream, n = 2^28,
+  one empty literal, `max_n = UINT32_MAX`: decode COMPLETE with ledger peak < 1 MiB
+  (failed pre-fix, passes post-fix).
 
 ## B-kernel-08 — `canon_dag_normalise` trusts payloads
 
@@ -49,7 +69,8 @@ Branch: `t3/ledger-decoder-arena-fixes`. Base includes K1 merge `26b28ce`.
 
 - Pre-fix probe `/tmp/probe_ledger.c` (not committed): `delta=64`, `zero_delta=0`.
 - `nice -n 19 ./build/make/test_metrics`: ok (1534 solves, peak ≤ plan on all).
+- `test_cdag_decode`: new `test_lazy_bits` failed pre-fix (1 failure), ok post-fix.
 
 ## Left undone
 
-- B-kernel-07, B-kernel-08.
+- B-kernel-08.

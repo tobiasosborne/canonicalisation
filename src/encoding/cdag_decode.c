@@ -459,10 +459,33 @@ static canon_status read_children(canon_cdag_reader *r, uint8_t tag, uint32_t i,
     return canon_dag_append(out, tag, NULL, 0, kd->child, kd->mult, k, NULL);
 }
 
-static canon_status decode_records(canon_cdag_reader *r, uint32_t n, uint32_t q, uint64_t *bits,
-                                   canon_dag *out, canon_cdag_reason *reason)
+/* B-kernel-07 (spec 11.1, 11.2): the two n-bit maps are scratch for Perm/Group/Coset
+ * payloads only, so they are allocated on the first such record, not from the header degree
+ * alone: a tiny stream claiming a huge n but carrying e.g. one literal must not force an
+ * O(n) allocation.  When they are needed, their size is still bounded by the max_n the
+ * caller admitted (checked against the header before any record is read).  The maps are
+ * zeroed once here; the readers' contract (cdag_decode.h) keeps them zero thereafter. */
+static canon_status ensure_bits(uint64_t **bits, uint32_t n, canon_cdag_reason *reason)
+{
+    if (*bits != NULL) {
+        return CANON_COMPLETE;
+    }
+    canon_status st = CANON_COMPLETE;
+    const size_t words = canon_cdag_bits_words(n);
+    uint64_t *fresh = canon_alloc_array(words, sizeof *fresh, &st);
+    if (fresh == NULL) {
+        return fail(reason, CANON_CDAG_SIZE, st);
+    }
+    memset(fresh, 0, (words > 0 ? words : 1u) * sizeof *fresh); /* bits contract: zero entry */
+    *bits = fresh;
+    return CANON_COMPLETE;
+}
+
+static canon_status decode_records(canon_cdag_reader *r, uint32_t n, uint32_t q, canon_dag *out,
+                                   canon_cdag_reason *reason)
 {
     kids kd = {0, 0, NULL, NULL};
+    uint64_t *bits = NULL; /* lazy: only Perm/Group/Coset records allocate it (ensure_bits) */
     canon_status st = CANON_COMPLETE;
     for (uint32_t i = 0; i < q && st == CANON_COMPLETE; ++i) {
         const uint8_t *tagp = NULL;
@@ -495,14 +518,23 @@ static canon_status decode_records(canon_cdag_reader *r, uint32_t n, uint32_t q,
             st = read_children(r, tag, i, &kd, out, reason);
             continue; /* appended there */
         case CANON_REC_PERM:
-            st = canon_cdag_read_perm(r, n, bits, NULL, reason); /* spec 4.1 Perm(p) */
+            st = ensure_bits(&bits, n, reason);
+            if (st == CANON_COMPLETE) {
+                st = canon_cdag_read_perm(r, n, bits, NULL, reason); /* spec 4.1 Perm(p) */
+            }
             break;
         case CANON_REC_GROUP:
-            st = canon_cdag_read_group(r, n, bits, NULL, NULL, reason); /* spec 9.4 */
+            st = ensure_bits(&bits, n, reason);
+            if (st == CANON_COMPLETE) {
+                st = canon_cdag_read_group(r, n, bits, NULL, NULL, reason); /* spec 9.4 */
+            }
             break;
         case CANON_REC_COSET:
             /* spec 4.1: "08 Group(H), Perm(r)" */
-            st = canon_cdag_read_group(r, n, bits, NULL, NULL, reason);
+            st = ensure_bits(&bits, n, reason);
+            if (st == CANON_COMPLETE) {
+                st = canon_cdag_read_group(r, n, bits, NULL, NULL, reason);
+            }
             if (st == CANON_COMPLETE) {
                 st = canon_cdag_read_perm(r, n, bits, NULL, reason);
             }
@@ -523,6 +555,7 @@ static canon_status decode_records(canon_cdag_reader *r, uint32_t n, uint32_t q,
             st = canon_dag_append(out, tag, r->data + start, r->pos - start, NULL, NULL, 0, NULL);
         }
     }
+    canon_mem_free(bits);
     canon_mem_free(kd.child);
     canon_mem_free(kd.mult);
     return st;
@@ -579,15 +612,9 @@ canon_status canon_cdag_decode(const uint8_t *stream, size_t length, const uint3
         return TRUNCATED(reason);
     }
     canon_dag_reset(out, n);
-    canon_status st = CANON_COMPLETE;
-    const size_t words = canon_cdag_bits_words(n);
-    uint64_t *bits = canon_alloc_array(words, sizeof *bits, &st);
-    if (bits == NULL) {
-        return fail(reason, CANON_CDAG_SIZE, st);
-    }
-    memset(bits, 0, (words > 0 ? words : 1u) * sizeof *bits); /* bits contract: zero on entry */
-    st = decode_records(&r, n, q, bits, out, reason);
-    canon_mem_free(bits);
+    /* no O(n) scratch is allocated here: decode_records makes the bit maps lazily, only if a
+     * Perm/Group/Coset record actually appears (B-kernel-07, spec 11.1/11.2) */
+    canon_status st = decode_records(&r, n, q, out, reason);
     if (st != CANON_COMPLETE) {
         canon_dag_reset(out, n);
         return st;
