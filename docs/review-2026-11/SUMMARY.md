@@ -177,3 +177,25 @@ Section 4.8 states what the node-count arguments do and do not prove.
 3. Performance item 3.1 as a slice with a brief (it also unblocks the T3 run of HANDOFF open item 4).
 4. An independent check of the high findings (and, where a fix relies on them, the S1-proofs
    derivations) before any fix.
+
+## 7. Fix round of 8 November 2026 (Muse Wonder Full, high; stopped when the Muse quota ran out)
+
+Brief: [FIX-BRIEF.md](FIX-BRIEF.md). Each lane worked in its own worktree; the coordinator merged
+into `main`. On the final merged tree `make`, `make test` (all C tests, fuzz replay) and
+`make check` (68 + 32 Python tests, 37 checker tests; certificate totals 1 617 / 996 / 120
+unchanged) pass.
+
+| Lane | Landed on `main` | Report |
+|---|---|---|
+| K1-kernel | B-kernel-01 (order-equality certificate inside `canon_bsgs_rebase`, decision 1.3), B-kernel-03, -04, -05, -06 | [fix-K1-kernel.md](fix-K1-kernel.md) |
+| K3-tests | H-tests-03 (CI builds `canon-check`, five Python tests registered in ctest, CI `make corpus`), H-tests-02 (cross-shape transporter, constraint matrix, checkpoint stubs), H-tests-11, admission boundary and `0x0001` presentation tests | [fix-K3-tests.md](fix-K3-tests.md) |
+| K4-checker | A-search-02/03 and C-checker-api-08 text; C-checker-api-06 (checker memory/work ledgers, `CAPACITY` exit 2); C-checker-api-05 (canonical-stream check); H-tests-06 mutations | [fix-K4-checker.md](fix-K4-checker.md) |
+| R1-partition | E-perf-refine-02 (stable counting split), E-perf-refine-03 option 1 (typed signature sort); n = 500 dihedral 0.660 s → 0.483 s, output identical | [fix-R1-partition.md](fix-R1-partition.md) |
+| K2-tuplemin | **Cut off by quota before its report.** Four commits landed: `tuple_min` workspace scratch, stabiliser cache and G-stage memo (`ad64dfd`), a test against the old entry point and the explicit backend (`bf9b4c2`), cache cap 3× root bytes (`6828725`), formatting. Passes `make check`; no before/after timing was recorded and F-perf-group-02 was not adopted as far as the commits show. Re-review before relying on it. | none |
+| R2-ledger | **Cut off by quota.** Landed: B-kernel-02 (ledger charges header + allocator allowance, plan in the same units), B-kernel-07 (lazy decoder bit maps). Not landed: B-kernel-08 (draft test committed as WIP on branch `t3/ledger-decoder-arena-fixes`). | partial, on the branch |
+| R3-tracegate | **Cut off by quota.** Landed: `docs/pruning-rules.md` cites v2.2. Not landed: `tools/refgate.py` draft and report (H-tests-01), committed as WIP on branch `t3/add-ref-b-tracegate`, untested. | WIP on the branch |
+| R4-snapshot | Cancelled before any commit (E-perf-refine-06 undone). | none |
+
+Still open from the review: H-tests-01 (independent trace gate), B-kernel-08, E-perf-refine-01/04/06,
+the rest of the performance list (§3 items 2–7), C-checker-api-04/07/09–13, H-tests-04/05
+remainder, and decisions 1.4–1.5.
