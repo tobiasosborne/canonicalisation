@@ -13,14 +13,14 @@ void cc_object_init(cc_object *x)
 
 void cc_object_free(cc_object *x)
 {
-    free(x->atoms);
-    free(x->member);
+    cc_free(x->atoms);
+    cc_free(x->member);
     if (x->owns_tables) {
-        free(x->colours);
-        free(x->labels);
+        cc_free(x->colours);
+        cc_free(x->labels);
     }
-    free(x->colour_of);
-    free(x->arcs);
+    cc_free(x->colour_of);
+    cc_free(x->arcs);
     cc_object_init(x);
 }
 
@@ -33,7 +33,7 @@ void cc_buf_init(cc_buf *b)
 
 void cc_buf_free(cc_buf *b)
 {
-    free(b->data);
+    cc_free(b->data);
     cc_buf_init(b);
 }
 
@@ -50,7 +50,8 @@ bool cc_buf_put(cc_buf *b, const uint8_t *bytes, size_t len)
             }
             cap *= 2u;
         }
-        uint8_t *grown = realloc(b->data, cap);
+        cc_reason why = CC_ACCEPT;
+        uint8_t *grown = cc_realloc(b->data, cap, &why); /* charged to the ledger */
         if (grown == NULL) {
             return false;
         }
@@ -78,6 +79,7 @@ bool cc_buf_put_u32(cc_buf *b, uint32_t v)
 /* spec 4.1 B order: (byte length, unsigned bytes). */
 static int bytes_order(const cc_bytes *a, const cc_bytes *b)
 {
+    cc_work_charge((a->len < b->len ? a->len : b->len) + 1u); /* the byte scan (rule 7) */
     if (a->len != b->len) {
         return a->len < b->len ? -1 : 1;
     }
@@ -123,6 +125,10 @@ static cc_reason rank_strings(const cc_bytes *strings, uint32_t count, cc_bytes 
         }
         rank[i] = lo;
     }
+    if (cc_work_exceeded()) {
+        cc_free(sorted);
+        return CC_CAPACITY; /* rule 7: charged in bytes_order */
+    }
     *table = sorted;
     *table_count = distinct;
     return CC_ACCEPT;
@@ -155,6 +161,7 @@ static cc_reason get_nat(cc_reader *r, uint64_t *out)
 
 static int arc_order(const void *pa, const void *pb)
 {
+    cc_work_charge(1); /* one qsort comparison (rule 7) */
     const cc_arc *a = pa, *b = pb;
     if (a->source != b->source) {
         return a->source < b->source ? -1 : 1;
@@ -173,6 +180,9 @@ static cc_reason normalise_arcs(cc_arc *arcs, uint32_t *count)
 {
     if (*count > 0) {
         qsort(arcs, *count, sizeof *arcs, arc_order);
+    }
+    if (cc_work_exceeded()) {
+        return CC_CAPACITY; /* rule 7 */
     }
     uint32_t out = 0;
     for (uint32_t i = 0; i < *count; ++i) {
@@ -341,14 +351,14 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
         cc_bytes *colours = cc_alloc(n, sizeof *colours, &why);
         x->colour_of = cc_alloc(n, sizeof *x->colour_of, &why);
         if (colours == NULL || x->colour_of == NULL) {
-            free(colours);
+            cc_free(colours);
             goto done;
         }
         for (uint32_t v = 0; v < n; ++v) {
             (void)cc_get_b(&rr, &colours[v].data, &colours[v].len);
         }
         why = rank_strings(colours, n, &x->colours, &x->colour_count, x->colour_of);
-        free(colours);
+        cc_free(colours);
         if (why != CC_ACCEPT) {
             goto done;
         }
@@ -362,8 +372,8 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
         cc_bytes *labels = cc_alloc(e, sizeof *labels, &why);
         uint32_t *label_rank = cc_alloc(e, sizeof *label_rank, &why);
         if (x->arcs == NULL || labels == NULL || label_rank == NULL) {
-            free(labels);
-            free(label_rank);
+            cc_free(labels);
+            cc_free(label_rank);
             goto done;
         }
         for (uint32_t i = 0; i < e; ++i) {
@@ -373,7 +383,7 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
             (void)get_nat(&rr, &x->arcs[i].multiplicity);
         }
         why = rank_strings(labels, e, &x->labels, &x->label_count, label_rank);
-        free(labels);
+        cc_free(labels);
         if (why == CC_ACCEPT) {
             for (uint32_t i = 0; i < e; ++i) {
                 x->arcs[i].label = label_rank[i];
@@ -381,7 +391,7 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
             x->e = e;
             why = normalise_arcs(x->arcs, &x->e);
         }
-        free(label_rank);
+        cc_free(label_rank);
         if (why != CC_ACCEPT) {
             goto done;
         }
@@ -389,7 +399,7 @@ cc_reason cc_object_decode(const uint8_t *stream, size_t len, uint32_t n, cc_obj
         why = CC_OBJECT_UNSUPPORTED; /* an atom root or a literal: nested-object territory */
     }
 done:
-    free(recs);
+    cc_free(recs);
     if (why != CC_ACCEPT) {
         cc_object_free(x);
     }
@@ -450,6 +460,9 @@ cc_reason cc_object_act(const cc_object *x, const uint32_t *p, cc_object *img)
     img->e = x->e;
     if (img->e > 0) {
         qsort(img->arcs, img->e, sizeof *img->arcs, arc_order); /* distinct stays distinct */
+    }
+    if (cc_work_exceeded()) {
+        return CC_CAPACITY; /* rule 7 */
     }
     return CC_ACCEPT;
 }

@@ -30,9 +30,9 @@ cc_reason cc_partition_init(cc_partition *p, uint32_t n)
 
 void cc_partition_free(cc_partition *p)
 {
-    free(p->lab);
-    free(p->start);
-    free(p->cell_of);
+    cc_free(p->lab);
+    cc_free(p->start);
+    cc_free(p->cell_of);
     memset(p, 0, sizeof *p);
 }
 
@@ -59,7 +59,7 @@ static void sort_members(uint32_t *m, uint32_t len, const sort_ctx *c)
     for (uint32_t i = 1; i < len; ++i) {
         const uint32_t v = m[i];
         uint32_t j = i;
-        while (j > 0 && c->cmp(c->ctx, m[j - 1], v) > 0) {
+        while (j > 0 && (cc_work_charge(1), c->cmp(c->ctx, m[j - 1], v) > 0)) { /* rule 7 */
             m[j] = m[j - 1];
             --j;
         }
@@ -121,7 +121,7 @@ void cc_partition_individualise(cc_partition *p, uint32_t cell, uint32_t a)
 
 void cc_signatures_free(cc_signatures *s)
 {
-    free(s->counts);
+    cc_free(s->counts);
     memset(s, 0, sizeof *s);
 }
 
@@ -140,9 +140,18 @@ cc_reason cc_signatures_compute(const cc_object *x, const cc_partition *p, cc_si
         return CC_CAPACITY;
     }
     s->width = 2u * L * k;
+    /* the dense counts are n x width words from the declared sizes n, L (distinct labels)
+     * and k (cells): checked against the live budget before the allocation (rule 7) */
+    if (s->width > 0 && (size_t)n > (CC_MAX_TOTAL_BYTES / sizeof *s->counts) / s->width) {
+        return CC_CAPACITY;
+    }
     s->counts = cc_alloc(n, s->width * sizeof *s->counts, &why);
     if (s->counts == NULL) {
         return why;
+    }
+    cc_work_charge((uint64_t)n * (uint64_t)s->width); /* the dense zeroing (rule 7) */
+    if (cc_work_exceeded()) {
+        return CC_CAPACITY;
     }
     if (n > 0 && s->width > 0) {
         memset(s->counts, 0, (size_t)n * s->width * sizeof *s->counts);

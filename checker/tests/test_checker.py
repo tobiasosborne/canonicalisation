@@ -292,6 +292,10 @@ class Acceptance(CheckerTestCase):
                     for prune in POLICIES:
                         self.accept(subset_args(n, gens, atoms, f"t1-n{n}-g{gi}-m{mask}"),
                                     prune, stats)
+        if not FAST:
+            # 539 (group, subset) pairs over Sym(n<=4), three policies (H-tests-06: pin the
+            # acceptance total so a shrinking tier cannot pass silently)
+            self.assertEqual(stats["certificates"], 1617)
         print("checker T1 subsets:", stats)
 
     def test_g1_digraphs(self):
@@ -311,6 +315,9 @@ class Acceptance(CheckerTestCase):
                     cid = "g1-n%d-g%d-m%s-c%d" % (n, gi, "".join(map(str, mult)), distinct)
                     for prune in POLICIES:
                         self.accept(graph_args(n, gens, colours, arcs, cid), prune, stats)
+        if not FAST:
+            # 332 (group, digraph, colouring) cases over Sym(n<=2), three policies
+            self.assertEqual(stats["certificates"], 996)
         print("checker G1 digraphs:", stats)
 
     def test_larger_sample(self):
@@ -328,6 +335,8 @@ class Acceptance(CheckerTestCase):
                 colours = tuple(rng.choice((b"", b"c")) for _ in range(n))
                 for prune in POLICIES:
                     self.accept(graph_args(n, gens, colours, arcs, f"rg-n{n}-{k}"), prune, stats)
+        # 2 degrees x (3 if FAST else 10) groups x (subset + digraph) x three policies
+        self.assertEqual(stats["certificates"], 36 if FAST else 120)
         print("checker random sample:", stats)
 
 
@@ -499,7 +508,8 @@ class Mutation(CheckerTestCase):
         p = self.branch_case()
         self.assertIn("explored_child", p.first)
         start, end = p.first["explored_child"]
-        self.reject(p.data[:start] + p.data[end:], None, "deleted child")
+        # the following sibling's record is then read at the wrong depth
+        self.reject(p.data[:start] + p.data[end:], {"NODE_DEPTH"}, "deleted child")
 
     def test_policy_header(self):
         p = self.pruned_case()
@@ -580,12 +590,193 @@ class Mutation(CheckerTestCase):
                   + p.data[sw["chain_end"]:])
         self.reject(forged, {"M_NOT_MINIMAL"}, "M not minimal")
 
+    # H-tests-06 (November 2026 review): named reasons the mutations above never elicited.
+    # HEADER is covered by test_policy_header and CAPACITY by the Capacity class below.
+
+    def test_node_depth_and_atom(self):
+        p = self.graph_case()
+        self.reject(put_u32(p.data, p.nodes_at, 1), {"NODE_DEPTH"}, "root depth")
+        self.reject(put_u32(p.data, p.nodes_at + 4, 0), {"NODE_ATOM"}, "root atom")
+
+    def test_sweep_count(self):
+        p = self.graph_case()
+        self.reject(put_u32(p.data, p.nodes_at + 8, 0), {"SWEEP_COUNT"}, "no sweep")
+
+    def test_f_mismatch(self):
+        p = self.graph_case()
+        sw = p.sweeps[0]
+        f_at = sw["u_at"] - 4 * len(sw["fixed"]) - 4
+        self.assertEqual(struct.unpack_from(">I", p.data, f_at)[0], len(sw["fixed"]))
+        self.reject(put_u32(p.data, f_at, len(sw["fixed"]) + 1), {"F_MISMATCH"}, "F count")
+
+    def test_stage_g_sizes(self):
+        p = self.graph_case()
+        at = p.sweeps[0]["chain_end"] + 4  # first cell size after U32(k_G)
+        old = struct.unpack_from(">I", p.data, at)[0]
+        self.reject(put_u32(p.data, at, old + 1), {"STAGE_G_SIZES"}, "stage G size")
+
+    def test_target_cell_and_child_missing(self):
+        p = self.branch_case()
+        first = p.entries[0]
+        self.assertEqual(first["depth"], 0)
+        pos_at = first["at"] - 8  # BRANCH = U32(position) | U32(size) | children
+        old = struct.unpack_from(">I", p.data, pos_at)[0]
+        self.reject(put_u32(p.data, pos_at, old + 1), {"TARGET_CELL"}, "target cell")
+        data = bytearray(p.data)
+        data[first["at"]] = 0x02  # an unknown child kind: the cover is not established
+        self.reject(bytes(data), {"CHILD_MISSING"}, "unknown child kind")
+
+    def test_branch_at_discrete_and_leaf_not_discrete(self):
+        p = self.graph_case()
+        data = bytearray(p.data)
+        data[p.first["leaf_t"] - 1] = 0x01  # a leaf's kind byte becomes BRANCH
+        self.reject(bytes(data), {"BRANCH_AT_DISCRETE"}, "branch at a leaf")
+        p = self.branch_case()
+        data = bytearray(p.data)
+        data[p.entries[0]["at"] - 9] = 0x00  # the root BRANCH kind byte becomes LEAF
+        self.reject(bytes(data), {"LEAF_NOT_DISCRETE"}, "leaf at a branch")
+
+    def test_rebased_base_prefix(self):
+        # as test_m_not_minimal's forged chain (a valid chain of <(1 2)> with base (0, 2, 1)),
+        # but keeping the honest u and M = (0, 1, 2): the base prefix is not M
+        _, data = certificate(subset_args(3, [(0, 2, 1)], [], "bp"), "off")
+        p = Parsed(data)
+        sw = next(s for s in p.sweeps if s["fixed"] == [0, 2, 1])
+        none = NONE
+        chain = struct.pack(">II", 3, 3)
+        chain += struct.pack(">II" + "I" * 3 + "I" + "I", 0, 1, 0, none, none, 1, 0)
+        chain += struct.pack(">II" + "I" * 6 + "I" + "I", 2, 2, 2, 1, none, 2, none, 0, 1, 0)
+        chain += struct.pack(">II" + "I" * 3 + "I", 1, 1, 1, none, none, 0)
+        chain += struct.pack(">I" + "I" * 4, 1, 0, 0, 2, 1)  # g = 1: node 0, (1 2)
+        chain += struct.pack(">I" + "I" * 3, 1, 1, 0, 0)    # p = 1: INPUT 0
+        chain += struct.pack(">I" + "I" * 3, 1, 0, 2, 1)    # i = 1: (1 2)
+        forged = p.data[:sw["chain_at"]] + chain + p.data[sw["chain_end"]:]
+        self.reject(forged, {"REBASED_BASE_PREFIX"}, "rebased base prefix")
+
+    def test_object_stream_reasons(self):
+        # DEGREE_MISMATCH: the embedded stream's U32(n) differs from the header's
+        gens = [(1, 2, 0), (1, 0, 2)]
+        _, data = certificate(subset_args(3, gens, [0, 2], "os"), False)
+        p = Parsed(data)
+        stream_at = 4 + 10 + 4 + 4
+        self.assertEqual(data[stream_at:stream_at + 3], b"\x43\x4e\x02")
+        self.reject(put_u32(data, stream_at + 7, p.n + 1), {"DEGREE_MISMATCH"}, "stream n")
+        # OBJECT_UNSUPPORTED: the set record's tag 04 becomes 05 (certificate v1 territory);
+        # the two atom records occupy 5 bytes each after the 15-byte stream header
+        set_tag_at = stream_at + 15 + 5 * 2
+        self.assertEqual(data[set_tag_at], 0x04)
+        forged = bytearray(data)
+        forged[set_tag_at] = 0x05
+        self.reject(bytes(forged), {"OBJECT_UNSUPPORTED"}, "stream tag")
+        # OBJECT_MALFORMED (C-checker-api-05): swap the two atom records' values.  The stream
+        # stays well formed and decodes to the same subset {0, 2}, but it is not the
+        # canonical encoding (atom records are sorted by atom, spec 4.2)
+        a0 = struct.unpack_from(">I", data, stream_at + 16)[0]
+        a1 = struct.unpack_from(">I", data, stream_at + 21)[0]
+        self.assertEqual((a0, a1), (0, 2))
+        forged = put_u32(put_u32(data, stream_at + 16, a1), stream_at + 21, a0)
+        self.reject(forged, {"OBJECT_MALFORMED"}, "non-canonical stream")
+        # OBJECT_MALFORMED: an extra atom record (atom 1) unreachable from the root set
+        # {0, 2}; well formed and decodes to the same subset, but spec 4.1 requires every
+        # record of a complete stream to be reachable from the root
+        stream2 = (b"\x43\x4e\x02" + struct.pack(">HHII", 1, 1, 3, 4)
+                   + b"\x01" + struct.pack(">I", 0) + b"\x01" + struct.pack(">I", 2)
+                   + b"\x01" + struct.pack(">I", 1)
+                   + b"\x04" + struct.pack(">III", 2, 0, 1) + struct.pack(">I", 3))
+        forged = data[:18] + struct.pack(">I", len(stream2)) + stream2 \
+            + data[stream_at + len(p.stream):]
+        self.reject(forged, {"OBJECT_MALFORMED"}, "unreachable record")
+
+    def test_hand_built_empty_certificate(self):
+        # a CERT-0 for the empty subset under the trivial group on 0 points, assembled from
+        # checker/README.md's layout alone (no producer bytes): one root leaf node
+        stream = (b"\x43\x4e\x02" + struct.pack(">HHII", 1, 1, 0, 1) + b"\x04"
+                  + struct.pack(">II", 0, 0))
+        chain = struct.pack(">IIIII", 0, 0, 0, 0, 0)
+        node = (struct.pack(">III", 0, NONE, 1) + struct.pack(">I", 0) + struct.pack(">I", 0)
+                + chain + struct.pack(">I", 0) + b"\x00")
+        trace = bytes.fromhex("10" + "00000000" + "20" + "00000000" + "21" + "00000000" + "00")
+        cert = (b"CNC0" + struct.pack(">HHHHH", 1, 1, 1, 2, 1) + struct.pack(">I", 0)
+                + struct.pack(">I", len(stream)) + stream
+                + struct.pack(">I", 0) + chain + struct.pack(">I", 0) + node
+                + struct.pack(">I", len(trace)) + trace
+                + struct.pack(">I", len(stream)) + stream
+                + struct.pack(">Q", 1))
+        self.assertEqual(run_check(cert), (0, "ACCEPT 1"))
+        self.reject(cert[:-8] + struct.pack(">Q", 2), {"NODE_COUNT"}, "hand count")
+        forged = bytearray(cert)
+        forged[-9] ^= 1  # last byte of the final B(bytes) payload
+        self.reject(bytes(forged), {"FINAL_BYTES"}, "hand bytes")
+
     def test_usage(self):
         proc = subprocess.run([str(CHECK)], capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 2)
         proc = subprocess.run([str(CHECK), "/nonexistent/certificate"], capture_output=True,
                               text=True, check=False)
         self.assertEqual(proc.returncode, 2)
+
+
+class Capacity(CheckerTestCase):
+    """Rule 7 resource limits (C-checker-api-06): beyond a checker limit the verdict is
+    exit 2 with CAPACITY (no verdict on the certificate), never REJECT."""
+
+    def capacity(self, data, label):
+        self.assertEqual(run_check(data), (2, "CAPACITY"), label)
+
+    def test_nat_beyond_u64_is_capacity(self):
+        # graph_case's first arc multiplicity Nat: set its byte length to 9 (> 2^64 counts)
+        gens = [(1, 2, 0), (1, 0, 2)]
+        arcs = ((0, 1, b"", 1), (1, 2, b"", 1), (2, 0, b"", 2))
+        _, data = certificate(graph_args(3, gens, (b"", b"", b""), arcs, "cap-nat"), False)
+        p = Parsed(data)
+        stream_at = 4 + 10 + 4 + 4  # magic, ids, n, B(stream) length
+        # stream header 15 bytes, tag 09, n empty colours (4 bytes each), arc count,
+        # first arc's source/target and empty label length: the Nat length follows
+        nat_at = stream_at + 15 + 1 + 4 * p.n + 4 + 8 + 4
+        self.assertEqual(data[stream_at + 15], 0x09)
+        self.assertIn(struct.unpack_from(">I", data, nat_at)[0], (1, 2))
+        self.capacity(put_u32(data, nat_at, 9), "Nat beyond u64")
+
+    def test_depth_times_n_is_capacity(self):
+        # a hand-built header, empty graph on n points and a root chain declaring depth = n:
+        # the declared depth x n pos arrays alone exceed the live budget, on a small file
+        n = 20000
+        stream = (b"\x43\x4e\x02" + struct.pack(">HHII", 1, 1, n, 1) + b"\x09"
+                  + struct.pack(">I", 0) * n + struct.pack(">II", 0, 0))
+        data = (b"CNC0" + struct.pack(">HHHHH", 1, 1, 1, 2, 1) + struct.pack(">I", n)
+                + struct.pack(">I", len(stream)) + stream
+                + struct.pack(">I", 0)               # k = 0 generators
+                + struct.pack(">II", n, n))          # CHAIN header: n, depth = n
+        self.capacity(data, "depth x n")
+
+    def test_inflated_generator_lists_are_capacity(self):
+        # repeat one generator id 30000 times in each of the root chain's first two levels:
+        # the nesting term s0 x s1 x n of the per-chain work bound exceeds CC_MAX_WORK
+        gens = [(1, 2, 0), (1, 0, 2)]
+        _, data = certificate(subset_args(3, gens, [], "cap-s"), "explicit")
+        p = Parsed(data)
+        r = Reader(data)
+        r.at = p.root_chain_at
+        self.assertEqual(r.u32(), p.n)
+        depth = r.u32()
+        self.assertGreaterEqual(depth, 2)
+        levels = []
+        for _ in range(depth):
+            r.u32()
+            rlen = r.u32()
+            r.u32s(3 * rlen)
+            s_at = r.at
+            s = r.u32()
+            ids_at = r.at
+            ids = r.u32s(s)
+            levels.append((s_at, ids_at, s, ids))
+        self.assertTrue(all(s >= 1 for _, _, s, _ in levels[:2]))
+        out = data
+        for s_at, ids_at, s, ids in reversed(levels[:2]):
+            end = ids_at + 4 * s
+            out = out[:s_at] + struct.pack(">I", s + 30000) + out[s_at + 4:end] \
+                + struct.pack(">I", ids[0]) * 30000 + out[end:]
+        self.capacity(out, "inflated s")
 
 
 if __name__ == "__main__":

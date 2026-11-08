@@ -1,7 +1,7 @@
 /*
  * canon.h: public C17 API of the canon library (opaque handles only).
  *
- * Normative text: docs/specification.md v2.1 (v2.0 plus the 2 October 2026 editorial decisions).  Sections cited below refer to it.
+ * Normative text: docs/specification.md v2.2 (19 October 2026).  Sections cited below refer to it.
  * Conventions (spec section 3): permutation arrays store p[v] = v^p and products act left to
  * right, (pq)[v] = q[p[v]].
  *
@@ -153,13 +153,26 @@ typedef struct canon_capacity {
      * verified by membership and exact action, and uses them at every later decision.  All
      * three reproduce P1's trace and bytes, so the profile ID stays CANON_PROFILE_P1; the
      * count is a function of the input, the objective and the descriptor.  Any other value is
-     * CANON_UNSUPPORTED_ACTION at problem creation. */
+     * CANON_UNSUPPORTED_ACTION at problem creation.
+     * Reading of spec 11.1 recorded 8 November 2026 (docs/review-2026-11/SUMMARY.md section 1,
+     * recommendation 1; for spec v2.3, no code change): under a work policy other than
+     * 0x0001 the count, and hence CANON_CAPACITY_LIMIT, is a function of the input as
+     * presented (the generator list and its order, docs/pruning-rules.md "as given") together
+     * with the objective and the descriptor; 0x0001 stays presentation-free and is the
+     * reference for determinism claims.
+     * Reading of spec 11.1 recorded 8 November 2026 (SUMMARY.md section 1, recommendation 2;
+     * for spec v2.3, no code change): the profile claims the trace, the bytes and the
+     * deterministic witness.  A CANON_WITNESS_ANY witness is by definition any element of the
+     * solution coset, so a pruned run may report a different one without changing profile;
+     * CANON_WITNESS_DETERMINISTIC witnesses must agree across work policies. */
     uint16_t work_policy;
     /* S8, spec 11.1-11.2: the live-memory budget of one solve in bytes (zero: the context
      * default, 1 << 32).  At problem creation a deterministic plan of the solve's own
      * allocations is computed from the input (docs/slices/S8.md 1.4) and the problem is refused
      * with CANON_CAPACITY_LIMIT when the plan exceeds the budget; the plan is the policy, the
-     * measured peak (canon_metrics) never changes a status. */
+     * measured peak (canon_metrics) never changes a status.  The 8 November 2026 reading of
+     * spec 11.1 above (SUMMARY.md section 1, recommendation 1) covers admission too: the plan
+     * may read the group backend and the generators as given. */
     uint64_t max_live_bytes;
 } canon_capacity;
 
@@ -369,7 +382,8 @@ canon_status canon_stream_validate(canon_context *ctx, const uint8_t *stream, si
 
 /* spec section 17, 3: bind group, object, objective, profile, encoding and order explicitly.
  * `capacity` may be NULL (all context defaults); a zero field selects the context default.
- * The problem retains the group and the object, which may be a subset or a graph (S2).
+ * The problem retains the group and the object, which may be a subset (S1), a graph (S2) or a
+ * nested object imported from a CDAG-2 stream (S5, canon_object_create).
  * Equivalent to canon_problem_create_with_options (S4) with no target and default options.
  * Validation, in this order (for CANONICAL_IMAGE; see canon_problem_create_with_options for
  * the other objectives):
@@ -448,7 +462,10 @@ typedef enum canon_evidence {
  *   CANONICAL_LABELING_COSET (0x0005), SIGNED_CANONICAL_IMAGE (0x0007) (S6)
  *                               profile P1 (spec 4.3: "canonical and signed image objectives
  *                               use P1"; spec 8.2: the labeling coset runs spec 7), order
- *                               CDAG-BYTE-1, witness mode CANON_WITNESS_ANY.
+ *                               CDAG-BYTE-1.
+ * Both witness modes (CANON_WITNESS_ANY and CANON_WITNESS_DETERMINISTIC) are accepted for
+ * every objective above (spec v2.2 3 defines the deterministic witness of every objective,
+ * vacuous for STABILISER; see canon_witness_mode).
  * The target is required for TRANSPORTER_ONE and TRANSPORTER_COSET and must be NULL
  * otherwise; it must have the object's degree (a target of another kind is admitted and gives
  * the complete empty result, M0a).  The problem retains it.  The labeling
@@ -456,9 +473,10 @@ typedef enum canon_evidence {
  * copies it.  SIGNED_CANONICAL_IMAGE needs a signed group (canon_group_create_signed); the
  * other objectives ignore a group's signs.
  * Validation, in this order: CANON_INVALID_INPUT for NULL ctx/group/object/out or an unknown
- * witness mode; CANON_UNSUPPORTED_ACTION for a combination not listed above (including a
- * deterministic witness for TRANSPORTER_ONE, STABILISER, CANONICAL_LABELING_COSET or
- * SIGNED_CANONICAL_IMAGE), SIGNED_CANONICAL_IMAGE on an unsigned group, a work policy other
+ * witness mode (a witness_mode other than CANON_WITNESS_ANY or CANON_WITNESS_DETERMINISTIC;
+ * both modes themselves are accepted for every objective, spec v2.2 3);
+ * CANON_UNSUPPORTED_ACTION for a combination not listed above, SIGNED_CANONICAL_IMAGE on an
+ * unsigned group, a work policy other
  * than CANON_WORK_POLICY_UNPRUNED, PRUNE_1 or PRUNE_2 (S7, S7b), or a certificate request
  * for an objective other than CANONICAL_IMAGE or an object that is neither a subset nor a
  * graph (S7); CANON_INVALID_INPUT
@@ -503,7 +521,12 @@ canon_status canon_workspace_create(canon_context *ctx, canon_workspace **out);
  * 11.1: P1 NODE tokens plus coset-enumeration visits), with a result that has no trace, no
  * bytes, no witness and all flags false; CANON_RESOURCE_LIMIT on allocation failure (a result
  * is returned when it could itself be allocated).  CANON_INVALID_INPUT for NULL arguments (no
- * result).  Evidence mode: TRUSTED_ENGINE (spec 3.2), exhaustion asserted by this engine. */
+ * result).  Evidence mode (spec v2.2 3.2, canon_result_evidence):
+ * CANON_EVIDENCE_TRUSTED_ENGINE, exhaustion asserted by this engine, unless the problem
+ * requested a certificate (canon_problem_options.certificate) and the result is complete
+ * and carries one, in which case CANON_EVIDENCE_CHECKED_CERTIFICATE; only canon-check's
+ * acceptance of that certificate makes the claim checked, which this library never does
+ * itself. */
 canon_status canon_solve(canon_workspace *workspace, const canon_problem *problem,
                          canon_result **out);
 
@@ -526,7 +549,11 @@ const uint8_t *canon_result_trace(const canon_result *result, size_t *length);
  * leaves carry exactly Aut_G(x) t); S4's tests check this.  Under the prunes
  * (CANON_WORK_POLICY_PRUNE_1, and PRUNE_2 the default) CANON_WITNESS_ANY returns the least t
  * among the EXPLORED leaves attaining the key, a valid witness that may differ from the
- * unpruned one (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
+ * unpruned one (docs/pruning-rules.md); only the deterministic mode keeps the guarantee.
+ * That is the 8 November 2026 reading of spec 11.1 (SUMMARY.md section 1, recommendation 2):
+ * the profile claims trace, bytes and the deterministic witness, so a differing ANY witness
+ * under a prune does not change the profile, while deterministic witnesses agree across
+ * policies.  LEX_MIN_IMAGE: a g in G attaining the minimum (the least such g in
  * deterministic mode, else the first found by the spec 8.1 reference traversal).
  * TRANSPORTER_ONE and TRANSPORTER_COSET: a g with x^g = target (the first hit of the traversal;
  * in deterministic mode the least element r0 of A g, for both since M0a).

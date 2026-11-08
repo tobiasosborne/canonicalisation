@@ -126,7 +126,10 @@ canon_status canon_cert_write_chain(canon_buf *out, const canon_bsgs *chain)
     return st;
 }
 
-/* Any failure ends the certificate: the search goes on, the result carries no certificate. */
+/* Any failure ends the certificate and is returned to the search, which fails the run with
+ * it: a requested certificate is never silently dropped (certificate.h; spec 17: no
+ * fabricated completion).  The !active early returns of the canon_cert_* entry points are
+ * therefore reachable only after a caller has already seen the first failing status. */
 /* Settle a writer call: a failure deactivates the writer; so does a certificate whose parts
  * written so far exceed the limit (spec 11.1 CAPACITY_LIMIT: the length of the finished
  * certificate is at least that sum, so the verdict does not depend on when it is checked). */

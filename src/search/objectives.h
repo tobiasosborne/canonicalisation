@@ -113,17 +113,22 @@ canon_status canon_obj_labeling(canon_obj_search *s, canon_p1_search *p1, const 
 
 /* spec 8.4, 7.3 (slice S6): the signed canonical image of x under the signed group g
  * (CANON_UNSUPPORTED_ACTION for an unsigned group, module contract).
- *   Fast path (spec 7.3): if every generator fixes x then A = G; the first odd generator (input
- *   order) is the zero certificate; if there is none, A = G is even, P1 gives c = x and t, and
- *   s = +1.
+ *   Fast path (spec 7.3): if every generator fixes x then A = G; in ANY mode the first odd
+ *   generator (input order) is the zero certificate; if there is none, A = G is even, P1 gives
+ *   c = x and t, and s = +1.
  *   Otherwise (spec 8.4 reference algorithm): the stabiliser enumeration of spec 8.2 evaluates
- *   chi on every hit and stops at the first odd one (the zero certificate, in s->best); on
- *   exhaustion A is complete and chi = +1 is checked on its generators; P1 gives c = x^t and
- *   s = chi(t), so [x] = s [c].
+ *   chi on every hit and in ANY mode stops at the first odd one (the zero certificate, in
+ *   s->best); on exhaustion A is complete and chi = +1 is checked on its generators; P1 gives
+ *   c = x^t and s = chi(t), so [x] = s [c].
  * A nonzero outcome has the trace, stream and t as for canon_obj_labeling, the sign in
- * out->sign and Group(A) in s->group.  `deterministic` (M0a, docs/slices/M0a.md 2.4): a
- * nonzero witness is the least element of A t (same sign: A is even); a zero certificate is
- * unchanged.  `quota` bounds the enumeration visits plus the P1 NODE tokens (spec 11.1).
+ * out->sign and Group(A) in s->group.  `deterministic` (spec v2.2 3, decision D1; M0a,
+ * docs/slices/M0a.md 2.4): a nonzero witness is the least element of A t (same sign: A is
+ * even); a certified zero's witness is the least odd element of A, i.e. the least element of
+ * A+ a with A+ = A cap ker chi and a any odd element of A.  On the enumeration route the
+ * enumeration is then exhausted (not stopped at the first odd hit) so A+ is complete; on the
+ * fast path A = G is known without traversal, A+ = ker chi is built by Schreier generators
+ * over the transversal {1, a}, a the first odd generator, and nothing is enumerated.
+ * `quota` bounds the enumeration visits plus the P1 NODE tokens (spec 11.1).
  * Statuses as canon_obj_run. */
 canon_status canon_obj_signed(canon_obj_search *s, canon_p1_search *p1, const canon_group *g,
                               const canon_root *x, bool deterministic, uint64_t quota,

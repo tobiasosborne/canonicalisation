@@ -4,7 +4,9 @@
  *
  *   canon-check FILE      read a CERT-0 certificate (FILE, or '-' for standard input)
  *   exit 0 and "ACCEPT <nodes>" on acceptance; exit 1 and "REJECT <reason>" on rejection;
- *   exit 2 on a usage or input error. */
+ *   exit 2 and "CAPACITY" when the certificate exceeds this checker's resource limits
+ *   (checker/README.md rule 7: no verdict on the certificate); exit 2 on a usage or input
+ *   error. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,26 +15,33 @@
 
 cc_reason cc_check(const uint8_t *cert, size_t len, uint64_t *nodes_out);
 
-static uint8_t *read_all(FILE *f, size_t *len)
+/* Read the whole certificate, at most CC_MAX_INPUT_BYTES of it (rule 7).  Returns 0 on
+ * success, 1 on a read or allocation failure, 2 when the input is larger than the limit
+ * (one byte past it is enough to know). */
+static int read_all(FILE *f, uint8_t **out, size_t *len)
 {
     size_t cap = 1u << 16, used = 0;
     uint8_t *buf = malloc(cap);
     if (buf == NULL) {
-        return NULL;
+        return 1;
     }
     for (;;) {
         if (used == cap) {
-            if (cap > SIZE_MAX / 2u) {
+            if (cap > CC_MAX_INPUT_BYTES) {
                 free(buf);
-                return NULL;
+                return 2; /* already past the limit and the stream is not exhausted */
             }
-            uint8_t *grown = realloc(buf, cap * 2u);
+            size_t next = cap > SIZE_MAX / 2u ? cap : cap * 2u;
+            if (next > CC_MAX_INPUT_BYTES + 1u) {
+                next = CC_MAX_INPUT_BYTES + 1u;
+            }
+            uint8_t *grown = realloc(buf, next);
             if (grown == NULL) {
                 free(buf);
-                return NULL;
+                return 1;
             }
             buf = grown;
-            cap *= 2u;
+            cap = next;
         }
         const size_t got = fread(buf + used, 1, cap - used, f);
         used += got;
@@ -42,10 +51,22 @@ static uint8_t *read_all(FILE *f, size_t *len)
     }
     if (ferror(f)) {
         free(buf);
-        return NULL;
+        return 1;
     }
+    if (used > CC_MAX_INPUT_BYTES) {
+        free(buf);
+        return 2;
+    }
+    *out = buf;
     *len = used;
-    return buf;
+    return 0;
+}
+
+static int capacity_exit(void)
+{
+    puts("CAPACITY");
+    fputs("canon-check: certificate exceeds checker capacity (no verdict)\n", stderr);
+    return 2;
 }
 
 int main(int argc, char **argv)
@@ -60,11 +81,15 @@ int main(int argc, char **argv)
         return 2;
     }
     size_t len = 0;
-    uint8_t *cert = read_all(f, &len);
+    uint8_t *cert = NULL;
+    const int read_status = read_all(f, &cert, &len);
     if (f != stdin) {
         fclose(f);
     }
-    if (cert == NULL) {
+    if (read_status == 2) {
+        return capacity_exit(); /* rule 7: beyond CC_MAX_INPUT_BYTES, no verdict */
+    }
+    if (read_status != 0) {
         fputs("canon-check: cannot read the certificate\n", stderr);
         return 2;
     }
@@ -74,6 +99,9 @@ int main(int argc, char **argv)
     if (why == CC_OUT_OF_MEMORY) {
         fputs("canon-check: out of memory\n", stderr);
         return 2;
+    }
+    if (why == CC_CAPACITY) {
+        return capacity_exit(); /* rule 7: a checker limit, never a rejection */
     }
     if (why == CC_ACCEPT) {
         printf("ACCEPT %llu\n", (unsigned long long)nodes);

@@ -21,11 +21,25 @@
 
 #define CC_NONE UINT32_MAX
 
-/* The largest single allocation this checker makes (bytes).  A size beyond it is CC_CAPACITY, a
- * limit of the checker and never a verdict on the certificate; every array sized from the stream
- * is also bounded by the bytes that must follow it (CC_TRUNCATED), so this cap is only reached
- * by the p x n provenance evaluation of a chain. */
+/* Resource limits of this checker (checker/README.md rule 7).  Exceeding any of them is
+ * CC_CAPACITY, a limit of the checker and never a verdict on the certificate: main reports it
+ * with exit 2, distinct from a rejection.  Every array sized from the stream is also bounded
+ * by the bytes that must follow it (CC_TRUNCATED).
+ *   CC_MAX_ALLOC:       the largest single allocation (bytes);
+ *   CC_MAX_TOTAL_BYTES: the largest total of simultaneously live allocations charged to the
+ *                       ledger in cc_reader.c (every cc_alloc / cc_realloc; the certificate
+ *                       buffer of main is bounded separately by CC_MAX_INPUT_BYTES);
+ *   CC_MAX_INPUT_BYTES: the largest certificate file main reads;
+ *   CC_MAX_WORK:        the largest total work, in word operations charged by
+ *                       cc_work_charge at the loops whose trip counts are products of the
+ *                       declared sizes (degree, depths, generator and node counts), plus the
+ *                       per-chain bound precomputed from those sizes in cc_chain_verify.
+ * All size products feeding these limits are checked before they are formed (spec 11.1:
+ * exact, checked arithmetic). */
 #define CC_MAX_ALLOC ((size_t)1 << 30)
+#define CC_MAX_TOTAL_BYTES ((size_t)1 << 30)
+#define CC_MAX_INPUT_BYTES ((size_t)1 << 28)
+#define CC_MAX_WORK ((uint64_t)1 << 31)
 
 /* ---- reasons: every rejection names its rule ---- */
 
@@ -101,11 +115,24 @@ bool cc_get_b(cc_reader *r, const uint8_t **out, uint32_t *len);
 /* k x U32 into a new array (NULL with CC_OUT_OF_MEMORY / CC_CAPACITY in *why). */
 uint32_t *cc_get_u32s(cc_reader *r, uint32_t k, cc_reason *why);
 
-/* ---- checked allocation ---- */
+/* ---- checked allocation and the resource ledger ---- */
 
-/* malloc(count * size), or NULL with *why = CC_CAPACITY or CC_OUT_OF_MEMORY.  count 0 gives a
- * non-NULL block. */
+/* Reset the live-bytes and work ledgers (cc_check does this on entry, so repeated calls in
+ * one process, e.g. the fuzz target, each get the full budget). */
+void cc_ledger_reset(void);
+/* malloc(count * size) charged to the ledger, or NULL with *why = CC_CAPACITY (the block, or
+ * the live total with it, would exceed CC_MAX_ALLOC / CC_MAX_TOTAL_BYTES) or
+ * CC_OUT_OF_MEMORY.  count 0 gives a non-NULL block.  Free with cc_free, never free(). */
 void *cc_alloc(size_t count, size_t size, cc_reason *why);
+/* Resize a cc_alloc block to `bytes` bytes (NULL block: allocate), charged as the change in
+ * size; NULL with *why as cc_alloc and the old block intact on failure. */
+void *cc_realloc(void *block, size_t bytes, cc_reason *why);
+/* Release a cc_alloc / cc_realloc block (NULL is a no-op) and uncharge it. */
+void cc_free(void *block);
+/* Charge `units` word operations to the work ledger.  Once the total exceeds CC_MAX_WORK,
+ * cc_work_exceeded() stays true; callers that can name a reason then return CC_CAPACITY. */
+void cc_work_charge(uint64_t units);
+bool cc_work_exceeded(void);
 
 /* ---- permutations (spec 3) ---- */
 
