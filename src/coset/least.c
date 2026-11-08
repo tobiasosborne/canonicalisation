@@ -398,15 +398,21 @@ canon_status canon_coset_least_outside(const canon_bsgs *h, const canon_bsgs *k,
     if (h->n != k->n) {
         return CANON_INVALID_INPUT;
     }
-    /* K <= H with |K| = |H| means K = H: nothing is outside (spec 9.4 "until K=H") */
-    if (canon_bsgs_suffix_order(k, 0) == canon_bsgs_suffix_order(h, 0)) {
-        return CANON_COMPLETE;
-    }
     const uint32_t n = h->n;
     canon_coset_scratch local;
     canon_coset_scratch *s = scratch_use(scratch, &local);
     least_scratch x;
     canon_status st = bind(&x, s, n);
+    if (st == CANON_COMPLETE && k->order == h->order && k->order != 0 &&
+        level_in(k, 0, h, &x)) {
+        /* B-kernel-04: "nothing outside" (spec 9.4 "until K=H") needs K <= H as well as
+         * |K| = |H|; equal orders alone also hold for distinct groups.  Containment is
+         * spec 9.2 "containment checks all generators" (level_in), and the orders are the
+         * chains' stored exact orders (a built chain's order is never the 0 that
+         * canon_bsgs_suffix_order returns on overflow, spec 9.2), so K = H here. */
+        scratch_done(scratch, &local);
+        return CANON_COMPLETE;
+    }
     if (st == CANON_COMPLETE) {
         if (stats != NULL) {
             stats->descents += 1;

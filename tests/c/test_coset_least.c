@@ -316,6 +316,36 @@ static void outside(void)
     printf("rule 2 least outside: %llu (H, K) pairs\n", (unsigned long long)cases);
 }
 
+/* B-kernel-04: the "nothing outside" shortcut must not decide by order equality alone.
+ * Two distinct order-2 subgroups of Sym(3) have equal orders but neither contains the
+ * other, so the least element of H \ K exists (the identity is in every K).  The same
+ * group from different generators, with containment, does give "nothing outside". */
+static void outside_shortcut(void)
+{
+    const uint32_t s01[3] = {1, 0, 2}, s12[3] = {0, 2, 1};
+    canon_bsgs h, k;
+    uint32_t out[3];
+    bool found = false;
+    CHECK(canon_bsgs_build_verified(&h, 3, s01, 1) == CANON_COMPLETE);
+    CHECK(canon_bsgs_build_verified(&k, 3, s12, 1) == CANON_COMPLETE);
+    CHECK(h.order == 2 && k.order == 2);
+    CHECK(canon_coset_least_outside(&h, &k, out, &found, NULL, NULL) == CANON_COMPLETE);
+    CHECK(found && eq(out, s01, 3));
+    CHECK(canon_coset_least_outside(&k, &h, out, &found, NULL, NULL) == CANON_COMPLETE);
+    CHECK(found && eq(out, s12, 3));
+    canon_bsgs_free(&h);
+    canon_bsgs_free(&k);
+    /* Sym(3) from two presentations: equal order and K <= H, so nothing is outside */
+    const uint32_t a[6] = {1, 0, 2, 1, 2, 0}, b[6] = {0, 2, 1, 2, 0, 1};
+    CHECK(canon_bsgs_build_verified(&h, 3, a, 2) == CANON_COMPLETE);
+    CHECK(canon_bsgs_build_verified(&k, 3, b, 2) == CANON_COMPLETE);
+    CHECK(h.order == 6 && k.order == 6);
+    CHECK(canon_coset_least_outside(&h, &k, out, &found, NULL, NULL) == CANON_COMPLETE);
+    CHECK(!found);
+    canon_bsgs_free(&h);
+    canon_bsgs_free(&k);
+}
+
 static void invalid(void)
 {
     canon_bsgs c, d;
@@ -354,6 +384,7 @@ int main(void)
     t1();
     t2();
     outside();
+    outside_shortcut();
     invalid();
     canon_coset_scratch_free(&shared);
     return check_finish("test_coset_least");

@@ -73,3 +73,30 @@ including the obligation of any future chain importer. This is the finding's
 table caps, prov.cap, a level's gen_cap, each set one below its count) must each give
 BAD_STRUCTURE. `test_verify: ok`; `test_chain: ok` (hand-built chains there and in
 test_verify's nesting counterexample already record honest capacities).
+
+## B-kernel-04 — `least_outside` equality shortcut trusts its precondition
+
+**Confirmed.** `canon_coset_least_outside` (`src/coset/least.c`) returned "nothing
+outside" whenever the recomputed suffix orders were equal, i.e. it trusted the
+unchecked `K <= H` precondition, and `canon_bsgs_suffix_order` returns 0 on `uint64`
+overflow so two overflowing products would also compare equal. New test cases with
+two distinct order-2 subgroups of Sym(3) returned "nothing outside" before the fix.
+
+**Change.** The shortcut now uses the chains' stored exact `order` fields (never the
+0-on-overflow recomputation; a built chain's order is at least 1, also guarded) **and**
+checks containment `K <= H` via the existing `level_in` (spec §9.2 "containment
+checks all generators") before deciding `K = H` (spec §9.4 "until K=H"). Equal orders
+of distinct groups therefore fall through to the descent, which returns the genuine
+least outside element. The containment test runs only when the orders are already
+equal — for the sole production caller (rule 2 in `src/encoding/group_stream.c`) that
+is only the terminating iteration. The general `K <= H` precondition stays in
+`src/coset/coset.h`, now with the shortcut's checks stated. One edge changed
+deliberately: the shortcut now binds the descent scratch first, so an allocation
+failure there surfaces as `CANON_RESOURCE_LIMIT` instead of a scratch-free
+`CANON_COMPLETE` on the equal-order path; results, bytes and descent counts on
+successful runs are unchanged.
+
+**Tests.** `tests/c/test_coset_least.c`, new `outside_shortcut()`: `H = ⟨(0 1)⟩`,
+`K = ⟨(1 2)⟩` (and symmetrically) must find `(0 1)` resp. `(1 2)` outside; Sym(3)
+from two presentations must give "nothing outside". `test_coset_least: ok` and
+`test_group_stream: ok` (Group bytes of the production caller unchanged).
