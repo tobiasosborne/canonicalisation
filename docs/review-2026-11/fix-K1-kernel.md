@@ -121,3 +121,34 @@ different signs/counts; the replacement content is read back each time, live byt
 after a same-size second call equal those after the first, and after
 `canon_group_release` live bytes return exactly to the pre-create baseline.
 `test_signed_group: ok`, `test_signed: ok`.
+
+## B-kernel-06 — chain `insert()` not failure-atomic
+
+**Confirmed.** `insert()` in `src/bsgs/chain.c` pushed the generator row, then the
+inverse row, then the provenance inverse, then the id level by level; a failure
+partway left `gens.count != invs.count`, the id in some levels only, and possibly an
+appended base point. No inconsistent chain escapes today (`canon_bsgs_build` frees
+the whole chain on any failure), so this was a contract hazard for any future reuse.
+
+**Change.** `insert()` snapshots the entry depth and generator count; a new
+`insert_rollback()` helper undoes the counted pushes on every allocation-failure
+path (node-array growth, the gens/invs/provenance pushes, and each level push —
+levels `0..i-1` when level `i` fails) and removes a base point appended by the same
+insert, restoring the terminal level. After an allocation failure the chain denotes
+exactly the group it denoted on entry (`gens.count == invs.count`, no level names a
+missing generator). Capacities, construction counters and already-appended
+provenance nodes keep their grown values (work done, not chain meaning; unreferenced
+provenance nodes are inert). The one deliberately non-atomic failure stays the
+order overflow (`CANON_CAPACITY_LIMIT`), detected only after the orbits are
+extended; the comment at `insert()` states the chain must then be freed, not reused,
+and that `canon_bsgs_build` frees on every failure regardless. Success-path behaviour
+is untouched: T1/T2/Sym(12) construction counters are identical to before.
+
+**Tests.** `insert()` is static and `canon_bsgs_build` frees the chain on failure, so
+the rollback itself is observable only as releasable, consistent state under fault
+injection: `tests/c/test_chain.c`, new `build_fault_atomicity()`, sweeps every
+allocation index of a Sym(8) verified build — each faulted build ends in
+RESOURCE/CAPACITY with an empty chain and live bytes back at baseline (no leak, no
+double free; ASan covers the frees in the sanitizer run below). The pre-existing
+whole-flow sweep also passes: `test_faults: ok` (1927 allocations per flow, 1927
+faulted runs, every complete solve equal to the fault-free answer).

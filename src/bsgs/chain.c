@@ -384,14 +384,46 @@ static canon_status prov_times_recorded(canon_bsgs *c, const build_ctx *x, uint3
     return CANON_COMPLETE;
 }
 
+/* Undo the counted pushes of a failed insert (B-kernel-06): the new generator id is the
+ * last entry of each of the first `pushed_levels` levels and row `old_count` of the gens
+ * and invs tables, and a base point appended by this insert is levels[old_depth].
+ * Capacities and construction counters keep their grown values (they record work done,
+ * not chain meaning), as do provenance nodes appended before the failure (unreferenced
+ * once the counts roll back; canon_prov_check evaluates only reachable nodes). */
+static void insert_rollback(canon_bsgs *c, uint32_t old_depth, bool appended, uint32_t old_count,
+                            uint32_t pushed_levels)
+{
+    for (uint32_t i = 0; i < pushed_levels; ++i) {
+        c->levels[i].gen_count -= 1;
+    }
+    c->gens.count = old_count;
+    c->invs.count = old_count;
+    if (appended) {
+        canon_bsgs_level *L = &c->levels[old_depth];
+        canon_mem_free(L->orbit); /* the appended level's one block */
+        canon_mem_free(L->gen_ids);
+        memset(L, 0, sizeof *L);
+        L->base_point = CANON_BSGS_NONE; /* the terminal level again */
+        c->depth = old_depth;
+    }
+}
+
 /* Insert the nonidentity residue x->g with provenance `node` at level `level` (policies 2, 3:
  * level == depth means the base is first extended by its least moved point), extend the orbits
- * of the changed levels 0..level, and refresh the order.  *inserted_at receives the level. */
+ * of the changed levels 0..level, and refresh the order.  *inserted_at receives the level.
+ * Failure atomicity (B-kernel-06, spec 17): on an allocation failure the counted pushes are
+ * rolled back (insert_rollback), so the chain still denotes the group it denoted on entry --
+ * gens.count == invs.count, no level names a missing generator, no appended base point stays.
+ * The one non-atomic failure is the order overflow (CANON_CAPACITY_LIMIT below), detected only
+ * after the orbits are extended; the chain must then be freed, not reused.  The sole caller
+ * path, canon_bsgs_build, frees the chain on every failure in any case. */
 static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t node,
                            uint32_t *inserted_at)
 {
     const uint32_t n = c->n;
     canon_status st = CANON_COMPLETE;
+    const uint32_t old_depth = c->depth, old_count = c->gens.count; /* == invs.count */
+    bool appended = false;
     if (level == c->depth) {
         /* policy 2: base extension by the least moved point */
         uint32_t b = 0;
@@ -403,8 +435,9 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
         }
         st = append_base_point(c, b);
         if (st != CANON_COMPLETE) {
-            return st;
+            return st; /* append_base_point changed at most capacities */
         }
+        appended = true;
     }
     /* gen_node and inv_node are parallel arrays sharing node_cap: grow both, then commit */
     uint32_t cap_g = c->node_cap, cap_i = c->node_cap;
@@ -416,6 +449,7 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
         c->inv_node = in;
     }
     if (st != CANON_COMPLETE) {
+        insert_rollback(c, old_depth, appended, old_count, 0);
         return st;
     }
     c->node_cap = cap_g < cap_i ? cap_g : cap_i;
@@ -430,6 +464,7 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
         st = canon_prov_inverse(&c->prov, node, &inv_node);
     }
     if (st != CANON_COMPLETE) {
+        insert_rollback(c, old_depth, appended, old_count, 0);
         return st;
     }
     c->gen_node[id] = node;
@@ -438,6 +473,7 @@ static canon_status insert(canon_bsgs *c, build_ctx *x, uint32_t level, uint32_t
     for (uint32_t i = 0; i <= level; ++i) {
         st = level_push_gen(&c->levels[i], id);
         if (st != CANON_COMPLETE) {
+            insert_rollback(c, old_depth, appended, old_count, i); /* levels 0..i-1 pushed */
             return st;
         }
     }

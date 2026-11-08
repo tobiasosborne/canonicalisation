@@ -696,9 +696,57 @@ static void rebase_order_certificate(void)
     }
 }
 
+/* B-kernel-06: insert() rolls its pushes back on allocation failure, and in any case a
+ * failed build frees the chain and leaves *out empty (spec 17).  Sweep every allocation
+ * of a Sym(8) build with an injected fault: each run must end in RESOURCE/CAPACITY (or
+ * COMPLETE only when no fault remained to fire), an empty chain, and the live-memory
+ * ledger back at its baseline; ASan in the sanitizer build checks the frees. */
+static void build_fault_atomicity(void)
+{
+    const uint32_t n = 8;
+    uint32_t gens[2 * 8];
+    for (uint32_t v = 0; v < n; ++v) {
+        gens[v] = v;
+        gens[n + v] = (v + 1) % n;
+    }
+    gens[0] = 1;
+    gens[1] = 0;
+    canon_memory_stats base, now;
+    canon_memory_get(&base);
+    const uint64_t requests_before = canon_mem_requests();
+    canon_bsgs c;
+    CHECK(canon_bsgs_build_verified(&c, n, gens, 2) == CANON_COMPLETE && c.order == 40320);
+    canon_bsgs_free(&c);
+    const uint64_t per_build = canon_mem_requests() - requests_before;
+    CHECK(per_build > 10);
+    uint64_t faults_before = canon_mem_fail_after(0), faulted = 0;
+    for (uint64_t k = 1; k <= per_build + 1u; ++k) {
+        canon_mem_fail_after(k);
+        const canon_status st = canon_bsgs_build_verified(&c, n, gens, 2);
+        const uint64_t faults = canon_mem_fail_after(0); /* cancel pending, read count */
+        if (faults == faults_before) {
+            CHECK(st == CANON_COMPLETE); /* nothing left to fail */
+            canon_bsgs_free(&c);
+            break;
+        }
+        faults_before = faults;
+        ++faulted;
+        CHECK(st == CANON_RESOURCE_LIMIT || st == CANON_CAPACITY_LIMIT);
+        CHECK(c.levels == NULL && c.gens.count == 0 && c.invs.count == c.gens.count);
+        canon_bsgs_free(&c); /* safe on the empty chain */
+        canon_memory_get(&now);
+        CHECK(now.live_bytes == base.live_bytes); /* no leak, no double free */
+        if (k == per_build + 1u) {
+            CHECK(false); /* the sweep must have run out of allocations */
+        }
+    }
+    CHECK(faulted >= per_build - 2u);
+}
+
 int main(void)
 {
     rebase_order_certificate();
+    build_fault_atomicity();
     conjugation();
     conventions();
     t1_tier();
