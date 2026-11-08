@@ -11,6 +11,8 @@
  *    every T1 group and subset, under both backends;
  *  - canon_result_verify_witness accepts every engine witness and rejects tampered ones
  *    (non-member, wrong image, non-bijection);
+ *  - spec 3/8.2 cross-shape transporter targets (complete empty result), the stream subset
+ *    boundary hit, degree-mismatch INVALID_INPUT, and the CONSTRAINT stub matrix;
  *  - problem validation (targets, combinations, the spec 4.4 class, options), capacity
  *    (quota and the output bound), results outliving their problem, workspace reuse;
  *  - counters of the stabiliser objective on T1 (printed for docs/slices/S4-notes.md). */
@@ -38,6 +40,32 @@ static canon_object *subset(uint32_t n, const uint32_t *atoms, size_t count)
 {
     canon_object *x = NULL;
     CHECK(canon_object_create_subset(ctx_chain, n, atoms, count, &x) == CANON_COMPLETE);
+    return x;
+}
+
+/* Import an object from a CDAG-2 stream written as hex (spec 4.1 grammar; the same
+ * unhex helper pattern as tests/c/test_search_dag.c). */
+static canon_object *from_hex(uint32_t n, const char *hex)
+{
+    uint8_t buf[512];
+    size_t len = 0;
+    int hi = -1;
+    for (const char *c = hex; *c != '\0'; ++c) {
+        int v = *c >= '0' && *c <= '9' ? *c - '0' : (*c >= 'a' && *c <= 'f' ? *c - 'a' + 10 : -1);
+        if (v < 0) {
+            continue;
+        }
+        if (hi < 0) {
+            hi = v;
+        } else {
+            CHECK(len < sizeof buf);
+            buf[len++] = (uint8_t)(hi * 16 + v);
+            hi = -1;
+        }
+    }
+    canon_object *x = NULL;
+    CHECK(canon_object_create(ctx_chain, CANON_SCHEMA_EXT_DAG_1, CANON_ACTION_ATOM_TRANSPORT_1, n,
+                              buf, len, &x) == CANON_COMPLETE);
     return x;
 }
 
@@ -183,6 +211,198 @@ static void hand_built(void)
     canon_object_release(x1);
     canon_group_release(s2);
     canon_group_release(triv);
+}
+
+/* ---- spec 3 cross-shape transporter targets (H-tests-02) ----
+ *
+ * Expectations are derived from the spec text, not from running the code:
+ *  - spec 3: "The transporter objectives take a target y on the domain of x.  A y of another
+ *    shape than x (another root kind, e.g. a tuple against a set of atoms or a graph against
+ *    a nested object) with the same degree n is an ordinary input, not INVALID_INPUT: no
+ *    g in G sends x to it, so exhaustion gives the complete empty result."
+ *  - spec 8.2 (Transporter one): "A y of another shape than x on the same degree is never
+ *    hit and gives the complete empty result (3)"; (Transporter coset): "If no g, return
+ *    exhausted empty."
+ *  - spec 3 table: TRANSPORTER_ONE is "One g in G with x^g=y, or complete empty result",
+ *    TRANSPORTER_COSET "Empty, or complete A g".
+ *  - header flag contract for a proved-empty transporter/coset: CANON_COMPLETE with
+ *    transport_exhausted and every other flag false; no witness, transporter, bytes or
+ *    group payload.
+ *  - Boundary (spec 7.1: "the top-level subset (a set consisting only of atom nodes)"): a
+ *    set of atoms imported from a stream is a subset root, the same shape as a built
+ *    subset, so transport between them can hit.
+ *  - Degree mismatch is outside spec 3's same-degree sentence; the header's
+ *    problem-creation contract names it CANON_INVALID_INPUT ("it must have the object's
+ *    degree"; validation order lists "a degree mismatch" under CANON_INVALID_INPUT). */
+static void cross_shape_empty(const canon_group *g, const canon_object *x, const canon_object *y)
+{
+    const canon_objective objs[2] = {CANON_OBJECTIVE_TRANSPORTER_ONE,
+                                     CANON_OBJECTIVE_TRANSPORTER_COSET};
+    for (int oi = 0; oi < 2; ++oi) {
+        for (int mode = 0; mode < 2; ++mode) {
+            canon_status st;
+            canon_result *r = solve(g, x, y, objs[oi], CANON_ORDER_CDAG_BYTE_1,
+                                    (canon_witness_mode)mode, 0, &st);
+            size_t len = 7;
+            uint32_t deg = 7;
+            CHECK(st == CANON_COMPLETE && r != NULL && canon_result_status(r) == CANON_COMPLETE);
+            CHECK(flags_are(canon_result_get_flags(r), false, false, false, false, false, true,
+                            false));
+            CHECK(canon_result_witness(r, &deg) == NULL && deg == 0);
+            CHECK(canon_result_transporter(r, &deg) == NULL && deg == 0);
+            CHECK(canon_result_bytes(r, &len) == NULL && len == 0);
+            CHECK(canon_result_group_bytes(r, &len) == NULL && len == 0);
+            bool valid = true;
+            CHECK(canon_result_verify_witness(r, &valid) == CANON_INVALID_INPUT && !valid);
+            canon_result_release(r);
+        }
+    }
+}
+
+static void cross_shape(void)
+{
+    const uint32_t zero = 0, one = 1;
+    const uint32_t swap2[2] = {1, 0};
+    const uint32_t sym3[6] = {1, 0, 2, 1, 2, 0};
+    canon_object *sub0 = subset(2, &zero, 1), *sub1 = subset(2, &one, 1);
+    canon_arc arc = {0, 1, NULL, 0, 1};
+    canon_object *graph2 = NULL, *graph3 = NULL;
+    CHECK(canon_object_create_graph(ctx_chain, 2, NULL, NULL, &arc, 1, &graph2) == CANON_COMPLETE);
+    CHECK(canon_object_create_graph(ctx_chain, 3, NULL, NULL, &arc, 1, &graph3) == CANON_COMPLETE);
+    /* spec 4.1 records: 01 atom, 03 tuple, 04 set; header H(n) as in spec 7.4 */
+    canon_object *tuple2 = from_hex(2, "434e0200010001 00000002 00000002 01 00000000 "
+                                       "03 00000002 00000000 00000000 00000001");
+    canon_object *tuple3 = from_hex(3, "434e0200010001 00000003 00000002 01 00000000 "
+                                       "03 00000002 00000000 00000000 00000001");
+    canon_object *nested2 = from_hex(2, "434e0200010001 00000002 00000004 01 00000000 "
+                                        "01 00000001 03 00000002 00000000 00000001 "
+                                        "04 00000001 00000002 00000003");
+    canon_object *stream_sub0 = from_hex(2, "434e0200010001 00000002 00000002 01 00000000 "
+                                            "04 00000001 00000000 00000001");
+    canon_object *stream_sub1 = from_hex(2, "434e0200010001 00000002 00000002 01 00000001 "
+                                            "04 00000001 00000000 00000001");
+    canon_object *sub0_3 = subset(3, &zero, 1);
+
+    /* every cross-shape pair below, under Sym(2) and under G=1, both backends */
+    canon_object *pairs[][2] = {{sub0, tuple2},   /* set of atoms against a tuple (spec 3) */
+                                {tuple2, sub0},   /* the same pair, reversed */
+                                {sub0, nested2},  /* subset against a nested root */
+                                {nested2, sub0},
+                                {graph2, sub0},   /* graph against a subset */
+                                {sub0, graph2},
+                                {graph2, nested2}, /* graph against a nested object (spec 3) */
+                                {graph2, tuple2}};
+    canon_context *ctxs[2] = {ctx_chain, ctx_explicit};
+    for (int b = 0; b < 2; ++b) {
+        canon_group *gs[2] = {group(ctxs[b], 2, swap2, 1), group(ctxs[b], 2, NULL, 0)};
+        for (size_t pi = 0; pi < sizeof pairs / sizeof pairs[0]; ++pi) {
+            for (int gi = 0; gi < 2; ++gi) {
+                cross_shape_empty(gs[gi], pairs[pi][0], pairs[pi][1]);
+            }
+        }
+        /* degree 3: subset against tuple and graph against subset, Sym(3) and G=1 */
+        canon_group *g3s[2] = {group(ctxs[b], 3, sym3, 2), group(ctxs[b], 3, NULL, 0)};
+        for (int gi = 0; gi < 2; ++gi) {
+            cross_shape_empty(g3s[gi], sub0_3, tuple3);
+            cross_shape_empty(g3s[gi], graph3, sub0_3);
+        }
+        canon_group_release(g3s[0]);
+        canon_group_release(g3s[1]);
+        canon_group_release(gs[0]);
+        canon_group_release(gs[1]);
+    }
+
+    /* boundary: a stream-imported set of atoms IS a subset (spec 7.1), so these hit:
+     * {0} -> {1} under Sym(2) has the unique transporter [1,0] and A = 1, hence the
+     * spec 7.4 coset payload for H=1, r=[1,0] (as in hand_built above) */
+    canon_group *s2 = group(ctx_chain, 2, swap2, 1);
+    canon_status st;
+    canon_result *r = solve(s2, stream_sub0, sub1, CANON_OBJECTIVE_TRANSPORTER_ONE,
+                            CANON_ORDER_CDAG_BYTE_1, CANON_WITNESS_ANY, 0, &st);
+    uint32_t deg = 0;
+    const uint32_t *w = canon_result_transporter(r, &deg);
+    CHECK(st == CANON_COMPLETE && w != NULL && deg == 2 && w[0] == 1 && w[1] == 0);
+    CHECK(flags_are(canon_result_get_flags(r), true, false, false, false, false, false, false));
+    verify_ok(r);
+    canon_result_release(r);
+    r = solve(s2, sub0, stream_sub1, CANON_OBJECTIVE_TRANSPORTER_COSET, CANON_ORDER_CDAG_BYTE_1,
+              CANON_WITNESS_DETERMINISTIC, 0, &st);
+    size_t len = 0;
+    const uint8_t *gb = canon_result_group_bytes(r, &len);
+    CHECK(st == CANON_COMPLETE && gb != NULL &&
+          check_hex_is(gb, len, "01 00000000 00000002 00000000 00000001 00000001 00000000"));
+    w = canon_result_transporter(r, &deg);
+    CHECK(w != NULL && w[0] == 1 && w[1] == 0);
+    verify_ok(r);
+    canon_result_release(r);
+
+    /* degree mismatch: not the spec 3 ordinary-input rule; INVALID_INPUT at creation */
+    static int sentinel;
+    canon_problem *p = (canon_problem *)(void *)&sentinel;
+    CHECK(canon_problem_create_with_options(ctx_chain, s2, sub0, tuple3,
+                                            CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE,
+                                            CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
+                                            NULL, &p) == CANON_INVALID_INPUT);
+    CHECK(p == NULL);
+    p = (canon_problem *)(void *)&sentinel;
+    CHECK(canon_problem_create_with_options(ctx_chain, s2, graph2, sub0_3,
+                                            CANON_OBJECTIVE_TRANSPORTER_COSET,
+                                            CANON_PROFILE_NO_TREE, CANON_ENCODING_CDAG_2,
+                                            CANON_ORDER_CDAG_BYTE_1, NULL, NULL,
+                                            &p) == CANON_INVALID_INPUT);
+    CHECK(p == NULL);
+    canon_group *s3 = group(ctx_chain, 3, sym3, 2);
+    p = (canon_problem *)(void *)&sentinel;
+    CHECK(canon_problem_create_with_options(ctx_chain, s3, sub0_3, graph2,
+                                            CANON_OBJECTIVE_TRANSPORTER_ONE, CANON_PROFILE_NO_TREE,
+                                            CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
+                                            NULL, &p) == CANON_INVALID_INPUT);
+    CHECK(p == NULL);
+    canon_group_release(s3);
+    canon_group_release(s2);
+    canon_object_release(sub0);
+    canon_object_release(sub1);
+    canon_object_release(sub0_3);
+    canon_object_release(graph2);
+    canon_object_release(graph3);
+    canon_object_release(tuple2);
+    canon_object_release(tuple3);
+    canon_object_release(nested2);
+    canon_object_release(stream_sub0);
+    canon_object_release(stream_sub1);
+}
+
+/* CONSTRAINT_ONE/ENUM are stubs (HANDOFF/CLAUDE: "stubs returning UNSUPPORTED_ACTION";
+ * header validation order: an unlisted objective/profile/order combination is
+ * CANON_UNSUPPORTED_ACTION, checked before target presence).  Pin the full matrix over
+ * profile, order and target presence so a partial implementation cannot land silently
+ * under one combination only (H-tests-02). */
+static void constraint_stub_matrix(void)
+{
+    const uint32_t swap[2] = {1, 0}, zero = 0;
+    canon_group *g = group(ctx_chain, 2, swap, 1);
+    canon_object *x = subset(2, &zero, 1);
+    const canon_objective objs[2] = {CANON_OBJECTIVE_CONSTRAINT_ONE,
+                                     CANON_OBJECTIVE_CONSTRAINT_ENUM};
+    const canon_profile profs[2] = {CANON_PROFILE_NO_TREE, CANON_PROFILE_P1};
+    const canon_order ords[2] = {CANON_ORDER_CDAG_BYTE_1, CANON_ORDER_SIMPLE_UPPER_1};
+    static int sentinel;
+    for (int oi = 0; oi < 2; ++oi) {
+        for (int pi = 0; pi < 2; ++pi) {
+            for (int ri = 0; ri < 2; ++ri) {
+                for (int ti = 0; ti < 2; ++ti) {
+                    canon_problem *p = (canon_problem *)(void *)&sentinel;
+                    CHECK(canon_problem_create_with_options(ctx_chain, g, x, ti ? x : NULL, objs[oi],
+                                                            profs[pi], CANON_ENCODING_CDAG_2,
+                                                            ords[ri], NULL, NULL,
+                                                            &p) == CANON_UNSUPPORTED_ACTION);
+                    CHECK(p == NULL);
+                }
+            }
+        }
+    }
+    canon_object_release(x);
+    canon_group_release(g);
 }
 
 /* a coset with a nontrivial A: x = {0,1} on 4 points under Sym(4), y = {2,3}.  A = Sym{0,1} x
@@ -707,6 +927,8 @@ int main(void)
     CHECK(canon_context_create_with_options(NULL, &co, &ctx_chain) == CANON_COMPLETE);
     CHECK(canon_context_create_with_options(NULL, &eo, &ctx_explicit) == CANON_COMPLETE);
     hand_built();
+    cross_shape();
+    constraint_stub_matrix();
     coset_deterministic();
     simple_upper();
     deterministic_t1();

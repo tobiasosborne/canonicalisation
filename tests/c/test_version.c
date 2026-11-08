@@ -79,6 +79,21 @@ int main(void)
     CHECK(!valid);
     CHECK(canon_checkpoint_write(NULL, NULL, NULL) == CANON_UNSUPPORTED_ACTION);
     CHECK(canon_checkpoint_read(NULL, NULL, 0, NULL) == CANON_UNSUPPORTED_ACTION);
+    /* H-tests-02: the stub verdict must not depend on the arguments being NULL; with a
+     * real context/workspace and a non-NULL byte buffer it is still UNSUPPORTED_ACTION
+     * (stub until M6) and a non-NULL out-pointer receives NULL. */
+    canon_context *ctx = NULL;
+    CHECK(canon_context_create(NULL, &ctx) == CANON_COMPLETE);
+    canon_workspace *ws = NULL;
+    CHECK(canon_workspace_create(ctx, &ws) == CANON_COMPLETE);
+    CHECK(canon_checkpoint_write(ws, NULL, NULL) == CANON_UNSUPPORTED_ACTION);
+    static const unsigned char some_bytes[4] = {0x43, 0x4e, 0x02, 0x00};
+    canon_checkpoint *cp = (canon_checkpoint *)&failures;
+    CHECK(canon_checkpoint_read(ctx, some_bytes, sizeof some_bytes, &cp) ==
+          CANON_UNSUPPORTED_ACTION);
+    CHECK(cp == NULL);
+    canon_workspace_release(ws);
+    canon_context_release(ctx);
 
     if (failures != 0) {
         return 1;
