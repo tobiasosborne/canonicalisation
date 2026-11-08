@@ -1048,8 +1048,8 @@ static canon_status tuple_cache_prepare(canon_bsgs_tuple_cache *cache, const can
     canon_bsgs_tuple_cache_reset(cache);
     cache->root = c;
     /* spec 11.2: the plan charges 4x the group's measured bytes for all derived chains
-     * together; the cache keeps at most half of that allowance. */
-    if (!canon_u64_mul(canon_bsgs_bytes(c), 2u, &cache->byte_cap)) {
+     * together; this cache (3x) and the memo below (1x) together keep to that allowance. */
+    if (!canon_u64_mul(canon_bsgs_bytes(c), 3u, &cache->byte_cap)) {
         cache->byte_cap = UINT64_MAX;
     }
     cache->memo_byte_cap = canon_bsgs_bytes(c);

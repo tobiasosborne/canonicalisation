@@ -202,8 +202,9 @@ typedef struct canon_bsgs_tuple_scratch {
  * the orbit convention (canon_bsgs_orbit_ids) and the stage (tuple minimum) are fixed, and G
  * is identified exactly by an owned copy of the root chain's generator and input tables (not
  * by address alone, so a freed group's reused address cannot produce a false hit).  Retained
- * bytes are capped at twice the root chain's canon_bsgs_bytes (within the admission plan's
- * 4x chain allowance, spec 11.2); retention prefers shallow prefixes, whose rebuilds are
+ * bytes are capped at three times the root chain's canon_bsgs_bytes, plus once more for
+ * the result memo (the admission plan's 4x chain allowance, spec 11.2); retention prefers
+ * shallow prefixes, whose rebuilds are
  * the expensive ones and which every call revisits, so a deeper entry is evicted before a
  * shallower one and a chain that would displace a shallower prefix stays transient.  One
  * active owner: not shared between threads (spec 17 workspace rule). */
@@ -227,11 +228,11 @@ typedef struct canon_bsgs_tuple_cache {
     canon_bsgs_tuple_cache_entry *entries; /* insertion order */
     uint32_t count, entries_cap;
     uint64_t bytes;     /* retained entry bytes plus the fingerprint/key bytes below */
-    uint64_t byte_cap;  /* spec 11.2: twice the root chain's byte count */
+    uint64_t byte_cap;  /* spec 11.2: three times the root chain's byte count */
     canon_bsgs_tuple_memo_entry *memo; /* least-recently-entered first */
     uint32_t memo_count, memo_cap_entries;
     uint64_t memo_bytes;
-    uint64_t memo_byte_cap; /* spec 11.2: the root chain's byte count (3x in all with above) */
+    uint64_t memo_byte_cap; /* spec 11.2: the root chain's byte count (4x in all with above) */
     uint64_t memo_hits;     /* diagnostics for tests; not semantic output */
     const canon_bsgs *root; /* the chain the fingerprint was taken of (identity aid only) */
     uint32_t *fingerprint;  /* owned exact copy: gens rows, then inputs rows */
