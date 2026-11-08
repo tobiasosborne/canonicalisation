@@ -138,7 +138,10 @@ uint64_t canon_bsgs_suffix_order(const canon_bsgs *c, uint32_t level);
  * optional)": a new chain for K_from (the suffix of `src` from level `from`) built from that
  * level's strong generators, with base starting with `prefix`.  With `verify`, the result is
  * then checked by canon_bsgs_verify against those generators (CANON_INTERNAL_ERROR if it is
- * rejected); internal transient rebuilds (the tuple minimum) pass false.  Otherwise as
+ * rejected).  Without `verify`, the result is certified by order equality (decision 1.3,
+ * docs/review-2026-11/SUMMARY.md 1): the checked product of its orbit lengths must equal
+ * the suffix order of `src` from `from`, else CANON_INTERNAL_ERROR and *out is freed and
+ * left empty; such a chain is complete but stays unverified.  Otherwise as
  * canon_bsgs_build. */
 canon_status canon_bsgs_rebase(const canon_bsgs *src, uint32_t from, const uint32_t *prefix,
                                uint32_t prefix_len, bool verify, canon_bsgs *out);

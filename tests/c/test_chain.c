@@ -587,8 +587,118 @@ static void conjugation(void)
     CHECK(checked == 1 + 1 + 2 * 2 + 6 * 6 + 30 * 24);
 }
 
+/* B-kernel-01 / decision 1.3 (spec 9.2 "base change rebuilds/certifies"): an unverified
+ * rebase is certified by order equality -- the product of the rebuilt chain's orbit lengths
+ * must equal the source suffix order, else CANON_INTERNAL_ERROR and an empty result. */
+static void check_rebase_ok(const canon_bsgs *c, uint32_t from, const uint32_t *prefix,
+                            uint32_t plen)
+{
+    canon_bsgs rb;
+    CHECK(canon_bsgs_rebase(c, from, prefix, plen, false, &rb) == CANON_COMPLETE);
+    CHECK(rb.order == canon_bsgs_suffix_order(c, from));
+    CHECK(!rb.verified); /* order-certified, not fully verified */
+    canon_bsgs_free(&rb);
+}
+
+static void check_rebase_truncated(canon_bsgs *c, uint32_t from, uint32_t keep)
+{
+    const uint32_t saved = c->levels[from].gen_count;
+    CHECK(canon_bsgs_suffix_order(c, from) > 1);
+    c->levels[from].gen_count = keep; /* deliberately truncated generator list */
+    canon_bsgs rb;
+    CHECK(canon_bsgs_rebase(c, from, NULL, 0, false, &rb) == CANON_INTERNAL_ERROR);
+    CHECK(rb.levels == NULL && rb.depth == 0); /* freed and left empty */
+    canon_bsgs_free(&rb);
+    c->levels[from].gen_count = saved;
+    check_rebase_ok(c, from, NULL, 0); /* restored chain rebases again */
+}
+
+static void rebase_order_certificate(void)
+{
+    /* Sym(8) from (0 1) and the 8-cycle: symbolic symmetric group (spec 9.2 tests) */
+    {
+        const uint32_t n = 8;
+        uint32_t gens[2 * 8];
+        for (uint32_t v = 0; v < n; ++v) {
+            gens[v] = v;
+            gens[n + v] = (v + 1) % n;
+        }
+        gens[0] = 1;
+        gens[1] = 0;
+        canon_bsgs c;
+        CHECK(canon_bsgs_build_verified(&c, n, gens, 2) == CANON_COMPLETE);
+        CHECK(c.order == 40320); /* 8! */
+        const uint32_t p1[3] = {7, 0, 3}, p2[1] = {5}, prev[8] = {7, 6, 5, 4, 3, 2, 1, 0};
+        check_rebase_ok(&c, 0, p1, 3);
+        check_rebase_ok(&c, 0, p2, 1);
+        check_rebase_ok(&c, 0, prev, 8);
+        const uint32_t ps[2] = {6, 1};
+        check_rebase_ok(&c, 2, ps, 2); /* suffix rebase: compares against the suffix order */
+        check_rebase_truncated(&c, 0, 1);
+        check_rebase_truncated(&c, 0, 0);
+        check_rebase_truncated(&c, 1, 0);
+        check_rebase_ok(&c, c.depth, NULL, 0); /* terminal suffix: the trivial group */
+        canon_bsgs_free(&c);
+    }
+    /* Product group Sym(4) x Sym(4) on {0..3} x {4..7} (spec 9.2 tests) */
+    {
+        const uint32_t n = 8;
+        uint32_t gens[4 * 8];
+        for (uint32_t k = 0; k < 4; ++k) {
+            for (uint32_t v = 0; v < n; ++v) {
+                gens[k * n + v] = v;
+            }
+        }
+        gens[0] = 1;
+        gens[1] = 0; /* (0 1) */
+        for (uint32_t v = 0; v < 4; ++v) {
+            gens[n + v] = (v + 1) % 4; /* (0 1 2 3) */
+        }
+        gens[2 * n + 4] = 5;
+        gens[2 * n + 5] = 4; /* (4 5) */
+        for (uint32_t v = 0; v < 4; ++v) {
+            gens[3 * n + 4 + v] = 4 + (v + 1) % 4; /* (4 5 6 7) */
+        }
+        canon_bsgs c;
+        CHECK(canon_bsgs_build_verified(&c, n, gens, 4) == CANON_COMPLETE);
+        CHECK(c.order == 576); /* 24 * 24 */
+        const uint32_t inter[4] = {4, 0, 5, 1}, second[2] = {7, 6};
+        check_rebase_ok(&c, 0, inter, 4);
+        check_rebase_ok(&c, 0, second, 2);
+        check_rebase_truncated(&c, 0, 1);
+        canon_bsgs_free(&c);
+    }
+    /* Long Schreier paths: the 64-cycle (one orbit of 64, path of 63 edges; spec 9.2) */
+    {
+        const uint32_t n = 64;
+        uint32_t cyc[64];
+        for (uint32_t v = 0; v < n; ++v) {
+            cyc[v] = (v + 1) % n;
+        }
+        canon_bsgs c;
+        CHECK(canon_bsgs_build_verified(&c, n, cyc, 1) == CANON_COMPLETE);
+        CHECK(c.order == 64);
+        const uint32_t p1[1] = {63}, p2[2] = {32, 17};
+        check_rebase_ok(&c, 0, p1, 1);
+        check_rebase_ok(&c, 0, p2, 2);
+        check_rebase_truncated(&c, 0, 0);
+        canon_bsgs_free(&c);
+    }
+    /* Small group Sym(3), for the record alongside the exhaustive tiers below */
+    {
+        const uint32_t gens[6] = {0, 2, 1, 1, 2, 0};
+        canon_bsgs c;
+        CHECK(canon_bsgs_build_verified(&c, 3, gens, 2) == CANON_COMPLETE);
+        const uint32_t p[2] = {2, 0};
+        check_rebase_ok(&c, 0, p, 2);
+        check_rebase_truncated(&c, 0, 1);
+        canon_bsgs_free(&c);
+    }
+}
+
 int main(void)
 {
+    rebase_order_certificate();
     conjugation();
     conventions();
     t1_tier();
