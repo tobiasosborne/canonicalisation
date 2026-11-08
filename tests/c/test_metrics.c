@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/mem.h"
 #include "canon/canon.h"
 #include "check.h"
 #include "t1_groups.h"
@@ -226,6 +227,47 @@ static void boundary_and_presentation(void)
         canon_group_release(gb);
     }
     canon_context_release(ectx);
+}
+
+/* B-kernel-02 (spec 11.2 M_allocator_overhead): the ledger charges payload + the ledger's
+ * size header + the per-block system-allocator allowance, not payload alone.  N small
+ * blocks must raise live_bytes by N * (payload + overhead); a zero-byte block still charges
+ * its overhead; a realloc changes the charge by exactly the payload delta; freeing all
+ * returns to the baseline. */
+static void ledger_overhead(void)
+{
+    enum { N = 64 };
+    const uint64_t ov = canon_mem_block_overhead();
+    /* the header holds a size_t padded to max alignment, plus a positive allowance */
+    CHECK(ov >= sizeof(size_t) + 16u);
+    canon_memory_stats a, b;
+    canon_mem_stats(&a);
+    void *blocks[N];
+    for (int i = 0; i < N; ++i) {
+        blocks[i] = canon_mem_malloc(1);
+        CHECK(blocks[i] != NULL);
+    }
+    canon_mem_stats(&b);
+    CHECK(b.live_bytes - a.live_bytes == (uint64_t)N * (1u + ov));
+    CHECK(b.live_bytes - a.live_bytes > (uint64_t)N * sizeof(size_t)); /* not payload-only */
+    void *zero = canon_mem_malloc(0);
+    CHECK(zero != NULL);
+    canon_mem_stats(&b);
+    CHECK(b.live_bytes - a.live_bytes == (uint64_t)N * (1u + ov) + ov);
+    blocks[0] = canon_mem_realloc(blocks[0], 100);
+    CHECK(blocks[0] != NULL);
+    canon_mem_stats(&b);
+    CHECK(b.live_bytes - a.live_bytes == (uint64_t)N * (1u + ov) + ov + 99u);
+    blocks[0] = canon_mem_realloc(blocks[0], 1);
+    CHECK(blocks[0] != NULL);
+    canon_mem_free(zero);
+    for (int i = 0; i < N; ++i) {
+        canon_mem_free(blocks[i]);
+    }
+    canon_mem_stats(&b);
+    CHECK(b.live_bytes == a.live_bytes);
+    CHECK(b.allocations - a.allocations == (uint64_t)N + 1u);
+    CHECK(b.frees - a.frees == (uint64_t)N + 1u);
 }
 
 /* The ledger: after every handle is released the live count returns to the baseline. */
@@ -563,6 +605,7 @@ int main(void)
     CHECK(canon_context_create(NULL, &ctx) == CANON_COMPLETE);
     golden_counters();
     boundary_and_presentation();
+    ledger_overhead();
     ledger();
     tiers();
     review();

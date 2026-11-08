@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arena/mem.h"
 #include "check.h"
 #include "encoding/cdag_decode.h"
 #include "encoding/cdag_encode.h"
@@ -398,8 +399,32 @@ static void test_reason_order(void)
         CANON_CDAG_TRUNCATED);
 }
 
+/* B-kernel-07 (spec 11.1, 11.2): the two n-bit maps are needed only by Perm/Group/Coset
+ * payloads, so a tiny stream whose header claims a huge degree but whose only record is a
+ * literal must not force an O(n) allocation.  n = 2^28 would need 64 MiB of maps; the
+ * ledger peak of the whole decode must stay far below that.  (With a Perm/Group record the
+ * maps are allocated on first use, still bounded by the caller's max_n admission.) */
+static void test_lazy_bits(void)
+{
+    uint8_t buf[64];
+    /* HDR | U32(n=2^28) | U32(q=1) | 02 B("") | U32(root=0) */
+    const size_t len = unhex(HDR "10000000 00000001 02 00000000 00000000", buf, sizeof buf);
+    canon_dag d;
+    canon_dag_init(&d, 0);
+    canon_cdag_reason reason = CANON_CDAG_OK;
+    const uint64_t base = canon_mem_peak_reset();
+    const canon_status st = canon_cdag_decode(buf, len, NULL, UINT32_MAX, &d, &reason);
+    canon_memory_stats mem;
+    canon_mem_stats(&mem);
+    CHECK(st == CANON_COMPLETE && reason == CANON_CDAG_OK);
+    CHECK(d.count == 1 && d.root == 0);
+    CHECK(mem.peak_bytes - base < (UINT64_C(1) << 20)); /* no O(n) maps for a literal */
+    canon_dag_free(&d);
+}
+
 int main(void)
 {
+    test_lazy_bits();
     test_bits_contract();
     test_reason_order();
     test_round_trips();

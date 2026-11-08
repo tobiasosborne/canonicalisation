@@ -180,7 +180,10 @@ typedef struct canon_capacity {
  * allocation the library makes is counted; the ledger is process-wide, so several threads
  * aggregate into it).  canon_memory_get reads it at any time. */
 typedef struct canon_memory_stats {
-    uint64_t live_bytes;   /* bytes allocated and not yet freed */
+    /* Charged bytes allocated and not yet freed (spec 11.2 M_live): each block's payload plus
+     * the ledger's size header and a per-block system-allocator allowance
+     * (M_allocator_overhead); not payload bytes alone. */
+    uint64_t live_bytes;
     uint64_t peak_bytes;   /* the largest live count since the start or the last solve */
     uint64_t allocations;  /* blocks allocated (a resize of a block is not counted) */
     uint64_t frees;

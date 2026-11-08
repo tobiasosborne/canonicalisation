@@ -577,15 +577,49 @@ static uint64_t mul_ok(uint64_t a, uint64_t b, bool *ok)
     return r;
 }
 
+/* spec 11.2: canon_bsgs_bytes sums the payload capacities of a chain's arrays; the ledger
+ * charges each owned block its header + allocator allowance (canon_mem_block_overhead) on
+ * top, so the plan must add one overhead per owned block (the levels array, each used
+ * level's orbit block and gen_ids, the three perm tables, gen_node/inv_node and the
+ * provenance nodes) plus the chain struct itself, or "peak <= plan" would compare charged
+ * bytes against payload bytes.  Counted here, not in src/bsgs, because this is the plan's
+ * unit conversion. */
+static uint64_t chain_bytes_charged(const canon_bsgs *c, bool *ok)
+{
+    uint64_t blocks = 0;
+    if (c->levels != NULL) {
+        blocks += 1u;
+        /* levels[0..depth] are used (levels[depth] is trivial); level_cap bounds the array */
+        const uint32_t used = c->depth + 1u < c->level_cap ? c->depth + 1u : c->level_cap;
+        for (uint32_t i = 0; i < used; ++i) {
+            blocks += c->levels[i].orbit != NULL ? 1u : 0u;
+            blocks += c->levels[i].gen_ids != NULL ? 1u : 0u;
+        }
+    }
+    blocks += c->gens.data != NULL ? 1u : 0u;
+    blocks += c->invs.data != NULL ? 1u : 0u;
+    blocks += c->inputs.data != NULL ? 1u : 0u;
+    blocks += c->gen_node != NULL ? 1u : 0u;
+    blocks += c->inv_node != NULL ? 1u : 0u;
+    blocks += c->prov.nodes != NULL ? 1u : 0u;
+    uint64_t total = add_ok(canon_bsgs_bytes(c), (uint64_t)sizeof *c, ok);
+    return add_ok(total, mul_ok(blocks, canon_mem_block_overhead(), ok), ok);
+}
+
 /* The bytes a group's representation holds (spec 11.2 M_root_group): the chain backend's
- * measured chain, the explicit backend's element table (and its lift) by |G| rows. */
+ * measured chain, the explicit backend's element table (and its lift) by |G| rows, in both
+ * cases charged in the ledger's units (payload + per-block overhead, spec 11.2). */
 static uint64_t group_bytes(const canon_group *g, bool *ok)
 {
     const canon_bsgs *chain = canon_group_chain_of(g);
     if (chain != NULL) {
-        return canon_bsgs_bytes(chain);
+        return chain_bytes_charged(chain, ok);
     }
-    return mul_ok(mul_ok(g->ops->order(g), g->degree, ok), 2u * sizeof(uint32_t), ok);
+    /* explicit backend: the element table and its lift are the two |G|-row tables the
+     * payload term charges; each is one block, and its row-set/hash scratch of the same
+     * build is charged here as two further blocks (spec 11.2 M_allocator_overhead) */
+    uint64_t total = mul_ok(mul_ok(g->ops->order(g), g->degree, ok), 2u * sizeof(uint32_t), ok);
+    return add_ok(total, mul_ok(4u, canon_mem_block_overhead(), ok), ok);
 }
 
 /* spec 11.1, 11.2 (slice S8, docs/slices/S8.md 1.4, D16): the admission plan, a conservative
@@ -658,7 +692,8 @@ static uint64_t dag_bytes(const canon_root *x, uint64_t image, bool *ok)
         uint64_t chain = 0;
         for (uint32_t i = 0; i < d->chains_cap && i < d->count; ++i) {
             const canon_bsgs *c = canon_dag_chain(d, i);
-            const uint64_t b = c != NULL ? canon_bsgs_bytes(c) : 0u;
+            /* spec 11.2: charged units, as in group_bytes */
+            const uint64_t b = c != NULL ? chain_bytes_charged(c, ok) : 0u;
             chain = b > chain ? b : chain;
         }
         per_image = add_ok(per_image, mul_ok(4u, chain, ok), ok);
@@ -688,9 +723,16 @@ static bool plan_bytes(const canon_group *group, const canon_object *object,
     }
     const uint64_t n1 = add_ok(n, 1u, &ok);
     /* fixed overhead: the result handle and its copies, the buffers' minimum capacities and
-     * the allocator's block headers (16 bytes each, at most a few hundred blocks plus a few
-     * per point) */
-    uint64_t total = add_ok(16384u, mul_ok(256u, n, &ok), &ok);
+     * the per-block ledger overhead (spec 11.2 M_allocator_overhead: header + allowance,
+     * canon_mem_block_overhead) of the blocks the terms below charge by payload.  The block
+     * count allowance is unchanged from the payload-era plan (1024 blocks plus 16 per point,
+     * covering the search/enumerator/DAG arrays and scratch blocks co-live at the peak); only
+     * the bytes per block now match what the ledger actually charges, so the plan and the
+     * measured peak are in the same units.  Chain blocks are counted exactly in group_bytes /
+     * dag_bytes on top of this allowance (conservative overlap). */
+    uint64_t total = mul_ok(canon_mem_block_overhead(),
+                            add_ok(1024u, mul_ok(16u, n, &ok), &ok), &ok);
+    total = add_ok(total, 16384u, &ok); /* result handle, copies, minimum capacities */
     total = add_ok(total, add_ok(mul_ok(36u, n, &ok), 8u, &ok), &ok);                /* partition */
     total = add_ok(total, mul_ok(mul_ok(n1, add_ok(mul_ok(2u, n, &ok), 2u, &ok), &ok), W, &ok), &ok);
     total = add_ok(total, mul_ok(mul_ok(n1, mul_ok(2u, n, &ok), &ok), W, &ok), &ok);  /* decisions */
