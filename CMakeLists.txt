@@ -84,7 +84,14 @@ if(Python3_Interpreter_FOUND)
   # Slice S6 review item 8: under the sanitizers the e2e tiers run on seeded subsets
   # (CANON_E2E_FAST=1, tests/python/README.md); without them, in full.
   if(CANON_SANITIZE)
-    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_CHECK=$<TARGET_FILE:canon-check>;CANON_REQUIRE_CLI=1;CANON_E2E_FAST=1")
+    # H-tests-11: rotate the FAST stride per compiler so the gcc and clang sanitizer
+    # legs do not keep exactly the same positional subset of cases.
+    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+      set(CANON_TEST_OFFSET 1)
+    else()
+      set(CANON_TEST_OFFSET 0)
+    endif()
+    set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_CHECK=$<TARGET_FILE:canon-check>;CANON_REQUIRE_CLI=1;CANON_E2E_FAST=1;CANON_TEST_OFFSET=${CANON_TEST_OFFSET}")
   else()
     set(CANON_E2E_ENV "CANON_CLI=$<TARGET_FILE:canon-cli>;CANON_CHECK=$<TARGET_FILE:canon-check>;CANON_REQUIRE_CLI=1")
   endif()

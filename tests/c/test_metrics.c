@@ -134,6 +134,100 @@ static void golden_counters(void)
     canon_workspace_release(ws);
 }
 
+/* H-tests-05 (cheapest items): admission exactly at the budget boundary, and
+ * determinism across presentations under work policy 0x0001.
+ *
+ * Boundary: spec 11.1/D16 admission is by the plan computed at problem creation, so for
+ * one fixed presentation max_live_bytes = planned-1 must refuse with CAPACITY_LIMIT and
+ * planned (and planned+1) must admit, on both backends.  (Across presentations the plan
+ * itself may differ: SUMMARY decision 1.1 records that the plan may read the backend and
+ * the given generators, so no cross-presentation plan equality is asserted.)
+ *
+ * Presentation: spec 5 excludes "generator order" and redundant presentation detail from
+ * mathematical choices, and SUMMARY decision 1.1 keeps 0x0001 presentation-free.  So the
+ * same group given by a reordered list with a duplicate and an identity generator must
+ * give, under 0x0001, the same trace, bytes, deterministic witness and node count. */
+static void admission_triple(canon_context *c, const canon_group *g, const canon_object *x)
+{
+    canon_problem *p = NULL;
+    CHECK(canon_problem_create(c, g, x, CANON_OBJECTIVE_CANONICAL_IMAGE, CANON_PROFILE_P1,
+                               CANON_ENCODING_CDAG_2, CANON_ORDER_CDAG_BYTE_1, NULL,
+                               &p) == CANON_COMPLETE);
+    uint64_t planned = 0;
+    CHECK(canon_problem_planned_bytes(p, &planned) == CANON_COMPLETE && planned > 1);
+    canon_problem_release(p);
+    const canon_status want[3] = {CANON_CAPACITY_LIMIT, CANON_COMPLETE, CANON_COMPLETE};
+    for (int i = 0; i < 3; ++i) {
+        const uint64_t budget = planned - 1u + (uint64_t)i; /* planned-1, planned, planned+1 */
+        canon_capacity cap = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, budget};
+        p = NULL;
+        CHECK(canon_problem_create_with_options(c, g, x, NULL, CANON_OBJECTIVE_CANONICAL_IMAGE,
+                                                CANON_PROFILE_P1, CANON_ENCODING_CDAG_2,
+                                                CANON_ORDER_CDAG_BYTE_1, &cap, NULL,
+                                                &p) == want[i]);
+        CHECK((p == NULL) == (want[i] == CANON_CAPACITY_LIMIT));
+        canon_problem_release(p);
+    }
+}
+
+static void boundary_and_presentation(void)
+{
+    const canon_context_options eo = {CANON_BACKEND_EXPLICIT};
+    canon_context *ectx = NULL;
+    CHECK(canon_context_create_with_options(NULL, &eo, &ectx) == CANON_COMPLETE);
+    /* Sym(4) presentations: A = <(0 1), (0 1 2 3)>; B = the same generators reordered,
+     * with the identity and a duplicate (0 1) added (group creation allows both) */
+    const uint32_t gens_a[8] = {1, 0, 2, 3, 1, 2, 3, 0};
+    const uint32_t gens_b[16] = {1, 2, 3, 0, 0, 1, 2, 3, 1, 0, 2, 3, 1, 0, 2, 3};
+    const uint32_t atom0[1] = {0};
+    canon_context *ctxs[2] = {ctx, ectx};
+    for (int b = 0; b < 2; ++b) {
+        canon_group *ga = NULL, *gb = NULL;
+        canon_object *x = NULL;
+        CHECK(canon_group_create(ctxs[b], 4, gens_a, 2, &ga) == CANON_COMPLETE);
+        CHECK(canon_group_create(ctxs[b], 4, gens_b, 4, &gb) == CANON_COMPLETE);
+        CHECK(canon_object_create_subset(ctxs[b], 4, atom0, 1, &x) == CANON_COMPLETE);
+        admission_triple(ctxs[b], ga, x);
+        /* both presentations under 0x0001, deterministic witness */
+        canon_workspace *ws = NULL;
+        CHECK(canon_workspace_create(ctxs[b], &ws) == CANON_COMPLETE);
+        canon_capacity unpruned = {0, 0, 0, 0, 0, 0, 0, CANON_WORK_POLICY_UNPRUNED, 0};
+        canon_problem_options det = {CANON_WITNESS_DETERMINISTIC, NULL, false};
+        canon_group *gs[2] = {ga, gb};
+        canon_result *rs[2] = {NULL, NULL};
+        canon_metrics ms[2];
+        for (int i = 0; i < 2; ++i) {
+            canon_problem *p = NULL;
+            CHECK(canon_problem_create_with_options(ctxs[b], gs[i], x, NULL,
+                                                    CANON_OBJECTIVE_CANONICAL_IMAGE,
+                                                    CANON_PROFILE_P1, CANON_ENCODING_CDAG_2,
+                                                    CANON_ORDER_CDAG_BYTE_1, &unpruned, &det,
+                                                    &p) == CANON_COMPLETE);
+            CHECK(canon_solve(ws, p, &rs[i]) == CANON_COMPLETE);
+            CHECK(canon_result_metrics(rs[i], &ms[i]) == CANON_COMPLETE);
+            canon_problem_release(p);
+        }
+        size_t ta = 0, tb = 0, ba = 0, bb = 0;
+        const uint8_t *tra = canon_result_trace(rs[0], &ta), *trb = canon_result_trace(rs[1], &tb);
+        const uint8_t *bya = canon_result_bytes(rs[0], &ba), *byb = canon_result_bytes(rs[1], &bb);
+        uint32_t da = 0, db = 0;
+        const uint32_t *wa = canon_result_witness(rs[0], &da), *wb = canon_result_witness(rs[1], &db);
+        CHECK(tra != NULL && trb != NULL && ta == tb && memcmp(tra, trb, ta) == 0);
+        CHECK(bya != NULL && byb != NULL && ba == bb && memcmp(bya, byb, ba) == 0);
+        CHECK(wa != NULL && wb != NULL && da == db && memcmp(wa, wb, da * sizeof *wa) == 0);
+        CHECK(ms[0].p1_nodes == ms[1].p1_nodes && ms[0].p1_leaves == ms[1].p1_leaves);
+        bool valid = false;
+        CHECK(canon_result_verify_witness(rs[1], &valid) == CANON_COMPLETE && valid);
+        canon_result_release(rs[0]);
+        canon_result_release(rs[1]);
+        canon_workspace_release(ws);
+        canon_object_release(x);
+        canon_group_release(ga);
+        canon_group_release(gb);
+    }
+    canon_context_release(ectx);
+}
+
 /* The ledger: after every handle is released the live count returns to the baseline. */
 static void ledger(void)
 {
@@ -468,6 +562,7 @@ int main(void)
 {
     CHECK(canon_context_create(NULL, &ctx) == CANON_COMPLETE);
     golden_counters();
+    boundary_and_presentation();
     ledger();
     tiers();
     review();

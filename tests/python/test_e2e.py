@@ -108,11 +108,18 @@ BACKEND = os.environ.get("CANON_BACKEND", "")
 # Slice S6 review item 8: CANON_E2E_FAST=1 (set by CMake for the sanitizer build) runs the
 # large tiers on seeded subsets; `make check` runs them in full.
 FAST = os.environ.get("CANON_E2E_FAST") == "1"
+# H-tests-11: rotate which cases the FAST stride keeps.  Without an offset the stride is
+# purely positional, so every sanitizer run forever skips the same cases; CMake sets
+# different offsets per compiler so the sanitizer legs' union covers more cases.
+try:
+    OFFSET = int(os.environ.get("CANON_TEST_OFFSET") or 0)
+except ValueError:
+    raise SystemExit("CANON_TEST_OFFSET must be an integer") from None
 
 
 def sampled(i, every):
     """True for every case in full mode, for one case in `every` in fast mode."""
-    return not FAST or i % every == 0
+    return not FAST or (i + OFFSET) % every == 0
 if BACKEND not in ("", "chain", "explicit"):
     raise SystemExit(f"CANON_BACKEND must be chain or explicit, not {BACKEND!r}")
 
@@ -653,6 +660,8 @@ class EnumerationObjectives(CliTestCase):
                         group_bytes_checked.add((n, gi))  # Stab(empty) = G: Group(G) bytes
         if not FAST:
             self.assertEqual(cases, 1 + 2 + 8 + 48 + 480)
+        else:
+            self.assertGreater(cases, 0)  # H-tests-11: a FAST run must sample something
         self.assertEqual(len(group_bytes_checked), 40)  # every T1 group's Group(G) bytes
         self.assertTrue(0 < with_solution < cases)
 
@@ -1545,6 +1554,10 @@ class LabelingAndSigned(CliTestCase):
             # two runs per case (any and deterministic), two more per case with extras (all of
             # n <= 3, two per n = 4 case)
             self.assertEqual(runs, 2 * cases + 2 * (1 + 2 + 16 + 288 + 30 * 16 * 2))
+        else:
+            # H-tests-11: FAST drops the exact counts; it must not sample nothing.
+            self.assertGreater(cases, 0)
+            self.assertGreater(runs, 0)
 
     def test_l1_g1_digraphs(self):
         # the G1 digraphs (n <= 2, every subgroup, every multiplicity vector, both colourings)

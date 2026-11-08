@@ -106,6 +106,45 @@ nice -n 19 ./build/make/test_objectives   # test_objectives: ok
 nice -n 19 ./build/make/test_version      # test_version: ok
 ```
 
-## H-tests-11 / 04 / 05 — if time remains
+## H-tests-11 / 04 / 05 — if time remains (done, cheapest items only)
 
-(see below)
+### H-tests-11 — seeded, rotating FAST sampling
+
+Confirmed: `sampled(i, every) = i % every == 0` was purely positional.
+Changed `tests/python/test_e2e.py`: `CANON_TEST_OFFSET` (integer, default 0,
+non-integer is a `SystemExit`) rotates the stride,
+`sampled = (i + OFFSET) % every == 0` in FAST mode (full mode unchanged).
+`CMakeLists.txt` sets offset 1 for Clang sanitizer builds and 0 otherwise,
+so the two sanitizer CI legs keep different subsets. The two FAST tiers that
+dropped their exact-count assertions now assert `cases > 0` (and `runs > 0`)
+in FAST mode. `checker/tests/` sampling (`i % 7`, `i % 11`) is another lane's
+file and was not touched.
+
+Verified without a second unittest run (the one allowed Python class run was
+already used for H-tests-03) by importing the module in `/tmp/k3_sampled_probe.py`:
+offset 0 keeps {0,4,8}, offset 1 keeps {3,7,11} of `range(12)` at stride 4,
+full mode keeps all; `CANON_TEST_OFFSET=abc` exits with the named message.
+
+### H-tests-05 cheapest items (`tests/c/test_metrics.c`, already registered)
+
+`boundary_and_presentation()`, on both backends:
+
+- Admission boundary triple: read `canon_problem_planned_bytes`, then
+  `max_live_bytes ∈ {planned−1, planned, planned+1}` must give
+  `CAPACITY_LIMIT` (out-pointer NULL), `COMPLETE`, `COMPLETE`. (The existing
+  test had planned and budget=1 but not planned−1/planned+1.) No
+  cross-presentation plan equality is asserted: SUMMARY decision 1.1 records
+  the plan may read backend/generators.
+- Determinism across presentations under policy `0x0001` (spec §5 excludes
+  generator order from mathematical choices): Sym(4) as ⟨(0 1),(0 1 2 3)⟩
+  vs the reordered list with identity + duplicate added, x={0},
+  deterministic witness: identical trace, bytes, witness, `p1_nodes` and
+  `p1_leaves`; witness verifies.
+
+H-tests-04's larger-n items (n=9 §9.4 brute force, D1 multiplicity-300 DAG)
+were **not** done: the lane task's parenthetical named only the two tests
+above as the cheap 04/05 items, and both landed in `test_metrics.c`.
+Left undone, by design: H-tests-04 items 1–2, H-tests-05 interleave test.
+
+Run: `nice -n 19 make build/make/test_metrics && nice -n 19 ./build/make/test_metrics`
+→ `test_metrics: ok` (1534 solves, peak ≤ plan on every one).
