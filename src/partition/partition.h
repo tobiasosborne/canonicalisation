@@ -33,9 +33,14 @@ typedef struct canon_partition {
     uint32_t *pos;     /* n entries: lab[pos[v]] = v */
     uint32_t *cell_of; /* n entries: semantic position of the cell containing v */
     uint32_t *start;   /* n + 1 entries: start[i] = first lab index of cell i; start[cells] = n */
-    /* split scratch */
+    /* split scratch (spec 10 count arrays): workspace storage allocated for cap at init
+     * through src/arena/mem.h and reused for every degree up to cap (the workspace in
+     * src/search/p1_tree.c re-inits only for a larger degree, so it only grows).  pairs_tmp
+     * is the merge-sort scratch of the fallback path and, in the counting path, the bucket
+     * array: pairs_tmp[t].key is the count, then the placement cursor, of key offset t and
+     * pairs_tmp[t].member its output cell index.  The two uses never overlap in one cell. */
     uint32_t *new_start;                          /* n + 1 entries */
-    canon_partition_pair *pairs, *pairs_tmp;      /* n entries each */
+    canon_partition_pair *pairs, *pairs_tmp;      /* cap entries each (1 when cap = 0) */
 } canon_partition;
 
 /* Allocate for degrees up to `cap`, set degree cap and the unit partition: one cell holding
@@ -54,7 +59,12 @@ void canon_partition_reset(canon_partition *p);
 
 /* spec 7.1: split(P, sig) replaces each old cell, in its old position, by its nonempty
  * signature classes in increasing signature order; old cells are never reordered or merged.
- * sig[v] is the uint32 signature of point v.  Returns true iff the number of cells grew. */
+ * sig[v] is the uint32 signature of point v.  Returns true iff the number of cells grew.
+ * Implementation (spec 10): a stable counting split in O(cell size + key range) per cell
+ * when the key range is dense enough, else the previous stable merge sort; both give the
+ * unique ordering by (key, old position), so lab, the cell order and the boundaries are
+ * identical either way (see partition.c for the threshold).  pos/cell_of are written at
+ * placement time, with no separate rebuild pass. */
 bool canon_partition_split(canon_partition *p, const uint32_t *sig);
 
 /* spec 7.1: replace cell C (semantic position `cell`) in place by [{a}, C minus {a}].

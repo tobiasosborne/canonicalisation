@@ -97,30 +97,137 @@ static int pair_cmp(const void *a, const void *b, void *ctx)
     return ka < kb ? -1 : (ka > kb ? 1 : 0);
 }
 
-/* spec 7.1: split(P, sig). */
+/* Counting path for one old cell [lo, hi) whose (key, member) pairs already sit in
+ * p->pairs[lo..hi) in lab order, with keys in [min_key, min_key + range).  Returns the
+ * next free output cell index.  spec 10 licenses count arrays and fixed-width counting
+ * ("Signature sorting may use fixed-width radix or comparison sort"); hashes never order
+ * the classes: buckets are visited in increasing key order.  Stability: members are
+ * scattered in lab (input) order and each key's cursor only advances, so the output
+ * ordering by (key, input position) is the same unique ordering the stable merge sort
+ * produces; lab, the cell order and the boundaries are bit-identical.  pos/cell_of are
+ * written at placement time (spec 10 invariant lab[pos[v]] = v), so split needs no
+ * separate rebuild_index pass. */
+static uint32_t split_cell_counting(canon_partition *p, uint32_t lo, uint32_t hi,
+                                    uint32_t min_key, uint32_t range, uint32_t out)
+{
+    /* Buckets reuse the fallback's sort scratch (partition.h): .key counts, then places;
+     * .member records the output cell index of that key's class. */
+    canon_partition_pair *buckets = p->pairs_tmp;
+    for (uint32_t t = 0; t < range; ++t) {
+        buckets[t].key = 0;
+    }
+    for (uint32_t j = lo; j < hi; ++j) {
+        buckets[p->pairs[j].key - min_key].key += 1u;
+    }
+    /* Prefix over keys in increasing order (spec 7.1: classes in increasing signature
+     * order, in the old cell's position): each nonempty class gets its destination
+     * segment and its output cell index. */
+    uint32_t cursor = lo;
+    for (uint32_t t = 0; t < range; ++t) {
+        uint32_t count = buckets[t].key;
+        if (count > 0) {
+            p->new_start[out] = cursor; /* nonempty classes only */
+            buckets[t].member = out;
+            buckets[t].key = cursor;
+            cursor += count;
+            out += 1u;
+        }
+    }
+    /* Stable scatter in input order, maintaining pos/cell_of at placement (spec 10). */
+    for (uint32_t j = lo; j < hi; ++j) {
+        uint32_t t = p->pairs[j].key - min_key;
+        uint32_t dest = buckets[t].key;
+        buckets[t].key = dest + 1u;
+        uint32_t v = p->pairs[j].member;
+        p->lab[dest] = v;
+        p->pos[v] = dest;
+        p->cell_of[v] = buckets[t].member;
+    }
+    return out;
+}
+
+/* Fallback for one old cell with a sparse key range: the previous algorithm unchanged
+ * (stable merge sort of the pairs through canon_stable_sort, boundaries where the key
+ * changes), except that pos/cell_of are written during the write-back instead of by a
+ * later rebuild_index.  Returns the next free output cell index. */
+static uint32_t split_cell_sorted(canon_partition *p, uint32_t lo, uint32_t hi, uint32_t out)
+{
+    /* spec 7.1: classes in increasing signature order, in the old cell's position */
+    canon_stable_sort(p->pairs + lo, hi - lo, sizeof *p->pairs, p->pairs_tmp, pair_cmp, NULL);
+    p->new_start[out] = lo;
+    uint32_t cell = out;
+    out += 1u;
+    for (uint32_t j = lo; j < hi; ++j) {
+        if (j > lo && p->pairs[j].key != p->pairs[j - 1].key) {
+            p->new_start[out] = j; /* nonempty classes only */
+            cell = out;
+            out += 1u;
+        }
+        uint32_t v = p->pairs[j].member;
+        p->lab[j] = v;
+        p->pos[v] = j; /* spec 10: lab[pos[v]] = v */
+        p->cell_of[v] = cell;
+    }
+    return out;
+}
+
+/* spec 7.1: split(P, sig).
+ *
+ * Counting threshold: a cell of size s takes the counting path iff its key range
+ * R = max - min + 1 satisfies R <= 4 * s and R fits the bucket scratch (cap pairs,
+ * allocated at init; every production caller hands split keys in [0, n), so
+ * R <= n <= cap there: initial 0/1 or colour-rank keys, O-stage ranks and G-stage orbit
+ * ids in src/refine/p1.c).  Why 4 * s: counting costs two passes over R (zero, prefix)
+ * plus the count and scatter passes over s, all plain integer ops, i.e. O(s + R).  With
+ * R <= 4 * s that is O(s) with a small constant independent of log s, and summed over
+ * the cells the split is O(n).  Beyond 4 * s the zero/prefix passes over a mostly empty
+ * range cost more than the merge sort's O(s log s), whose cost does not depend on how
+ * sparse the keys are, so the sparse cell falls back to the sort.  The factor 4 is an
+ * implementation choice under spec 10, not a spec rule; both paths produce the unique
+ * stable ordering, so the choice is unobservable in the output. */
 bool canon_partition_split(canon_partition *p, const uint32_t *sig)
 {
     uint32_t old_cells = p->cells, out = 0;
+    uint32_t buckets_cap = p->cap > 0 ? p->cap : 1u; /* pairs_tmp entries allocated */
     for (uint32_t i = 0; i < old_cells; ++i) {
         uint32_t lo = p->start[i], hi = p->start[i + 1];
+        uint32_t min_key = UINT32_MAX, max_key = 0;
         for (uint32_t j = lo; j < hi; ++j) {
-            p->pairs[j].key = sig[p->lab[j]];
-            p->pairs[j].member = p->lab[j];
-        }
-        /* spec 7.1: classes in increasing signature order, in the old cell's position */
-        canon_stable_sort(p->pairs + lo, hi - lo, sizeof *p->pairs, p->pairs_tmp, pair_cmp, NULL);
-        p->new_start[out++] = lo;
-        for (uint32_t j = lo; j < hi; ++j) {
-            p->lab[j] = p->pairs[j].member;
-            if (j > lo && p->pairs[j].key != p->pairs[j - 1].key) {
-                p->new_start[out++] = j; /* nonempty classes only */
+            uint32_t v = p->lab[j], key = sig[v];
+            p->pairs[j].key = key;
+            p->pairs[j].member = v;
+            if (key < min_key) {
+                min_key = key;
             }
+            if (key > max_key) {
+                max_key = key;
+            }
+        }
+        if (hi - lo <= 1 || min_key == max_key) {
+            /* One class equal to the old cell: the stable order is the input order, so lab
+             * and pos are unchanged; only cell_of may need renumbering when an earlier
+             * cell split (then out > i).  This is the common final-sweep case. */
+            p->new_start[out] = lo;
+            if (out != i) {
+                for (uint32_t j = lo; j < hi; ++j) {
+                    p->cell_of[p->lab[j]] = out;
+                }
+            }
+            out += 1u;
+            continue;
+        }
+        uint64_t range = (uint64_t)max_key - (uint64_t)min_key + 1u; /* no uint32 wrap */
+        if (range <= 4u * (uint64_t)(hi - lo) && range <= (uint64_t)buckets_cap) {
+            out = split_cell_counting(p, lo, hi, min_key, (uint32_t)range, out);
+        } else {
+            out = split_cell_sorted(p, lo, hi, out);
         }
     }
     p->new_start[out] = p->n;
     memcpy(p->start, p->new_start, ((size_t)out + 1u) * sizeof *p->start);
     p->cells = out;
-    rebuild_index(p);
+    /* No rebuild_index: every path above wrote pos/cell_of at placement (or left both
+     * provably unchanged), maintaining the spec 10 invariant directly. */
     return out > old_cells;
 }
 

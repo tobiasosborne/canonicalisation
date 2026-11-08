@@ -176,12 +176,69 @@ int canon_p1_sig_compare(const canon_p1_sig_entry *a, size_t a_len, const canon_
     return 0;
 }
 
-static int entry_cmp(const void *x, const void *y, void *ctx)
+/* Typed stable sort of signature entries by index (spec 7.1: the signature is its
+ * nonzero entries in increasing index order; spec 10: "duplicate updates accumulate
+ * exactly", so the merged list is a pure function of the generated multiset and any
+ * sort by index gives the same merged result; equal indexes are summed by checked
+ * addition at the call site, and every partial sum is <= the total, so the overflow
+ * outcome does not depend on the order of equal-index entries either).  This replaces
+ * one generic canon_stable_sort call per vertex per sweep (void * elements, an
+ * indirect comparator per comparison, memcpy per element per pass): short lists
+ * (len <= 16, the bounded-degree case) take a stable insertion sort with no scratch
+ * and no indirect call; longer lists take the same bottom-up stable merge as
+ * src/util/sort.c but typed, comparing .index directly and moving whole entries by
+ * assignment.  tmp must hold len entries (entries_tmp, half of the 2e-entry scratch,
+ * does: len <= 2e). */
+static void sig_entries_sort(canon_p1_sig_entry *sig, size_t len, canon_p1_sig_entry *tmp)
 {
-    (void)ctx;
-    uint64_t a = ((const canon_p1_sig_entry *)x)->index;
-    uint64_t b = ((const canon_p1_sig_entry *)y)->index;
-    return a < b ? -1 : (a > b ? 1 : 0);
+    if (len < 2) {
+        return;
+    }
+    if (len <= 16) {
+        /* stable insertion sort: shift only strictly greater indexes */
+        for (size_t i = 1; i < len; ++i) {
+            canon_p1_sig_entry x = sig[i];
+            size_t j = i;
+            while (j > 0 && sig[j - 1].index > x.index) {
+                sig[j] = sig[j - 1];
+                --j;
+            }
+            sig[j] = x;
+        }
+        return;
+    }
+    canon_p1_sig_entry *src = sig, *dst = tmp;
+    /* Widths double while below len; `width > len / 2` stops the doubling before it
+     * could wrap (the same arithmetic as src/util/sort.c). */
+    for (size_t width = 1; width < len; width = width > len / 2 ? len : width * 2) {
+        for (size_t lo = 0; lo < len;) {
+            size_t mid = lo + (width < len - lo ? width : len - lo);
+            size_t hi = mid + (width < len - mid ? width : len - mid);
+            size_t i = lo, j = mid, o = lo;
+            while (i < mid && j < hi) {
+                /* Stability: take from the right run only when strictly smaller. */
+                if (src[j].index < src[i].index) {
+                    dst[o++] = src[j++];
+                } else {
+                    dst[o++] = src[i++];
+                }
+            }
+            if (i < mid) {
+                memcpy(dst + o, src + i, (mid - i) * sizeof *dst);
+                o += mid - i;
+            }
+            if (j < hi) {
+                memcpy(dst + o, src + j, (hi - j) * sizeof *dst);
+            }
+            lo = hi;
+        }
+        canon_p1_sig_entry *swap = src;
+        src = dst;
+        dst = swap;
+    }
+    if (src != sig) {
+        memcpy(sig, src, len * sizeof *sig);
+    }
 }
 
 /* First entry of v's signature: v's incident arcs are out_start[v] + in_start[v] entries in. */
@@ -232,7 +289,7 @@ canon_status canon_p1_graph_signatures(const canon_partition *p, const canon_gra
         }
         /* Exact counts: arcs into the same (label, cell, direction) accumulate (spec 10:
          * "duplicate updates accumulate exactly"). */
-        canon_stable_sort(sig, len, sizeof *sig, s->entries_tmp, entry_cmp, NULL);
+        sig_entries_sort(sig, len, s->entries_tmp);
         size_t out = 0;
         for (size_t i = 0; i < len; ++i) {
             if (out > 0 && sig[out - 1].index == sig[i].index) {

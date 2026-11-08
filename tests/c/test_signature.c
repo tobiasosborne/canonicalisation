@@ -325,10 +325,63 @@ static void test_hand(void)
     canon_root_free(&sub);
 }
 
+/* High-degree, duplicate-heavy signatures (R1, E-perf-refine-03): every arc is incident
+ * to vertex 0 (out, in, loops, and parallel arcs into the same (label, cell, direction)
+ * with different multiplicities), so vertex 0's pre-merge entry list is long (past the
+ * small-list path of the typed entry sort) and the exact merge of duplicates is
+ * exercised.  Compared against the dense implementation above, on a nontrivial
+ * partition. */
+static void test_high_degree(void)
+{
+    raw_graph r;
+    r.n = MAXN;
+    r.arc_count = MAXA;
+    for (size_t i = 0; i < r.arc_count; ++i) {
+        const char *l = LABELS[i % MAXL];
+        uint32_t other = (uint32_t)(i % MAXN); /* includes 0: loops at vertex 0 */
+        uint32_t src = i % 3 == 0 ? other : 0;
+        uint32_t dst = i % 3 == 0 ? 0 : other;
+        r.arcs[i] = (canon_arc){src, dst, (const uint8_t *)l, strlen(l), 1 + (i % 3)};
+    }
+    canon_root x;
+    build_root(&x, &r);
+    /* vertex 0 is incident to every arc: its entry list must be past any small-sort cut */
+    const canon_graph *g = &x.u.graph;
+    CHECK(g->out_start[1] - g->out_start[0] + g->in_start[1] - g->in_start[0] > 16u);
+    canon_p1_scratch s;
+    canon_p1_scratch_init(&s);
+    CHECK(canon_p1_scratch_reserve(&s, &x) == CANON_COMPLETE);
+    canon_partition p;
+    CHECK(canon_partition_init(&p, r.n) == CANON_COMPLETE);
+    const uint32_t keys[MAXN] = {2, 0, 1, 0, 2, 1, 0};
+    (void)canon_partition_split(&p, keys);
+    CHECK(canon_p1_graph_signatures(&p, g, &s) == CANON_COMPLETE);
+    for (uint32_t v = 0; v < r.n; ++v) {
+        uint64_t dense[DENSE];
+        size_t len = dense_sig(&r, &p, v, dense);
+        size_t sl = 0;
+        const canon_p1_sig_entry *e = canon_p1_signature(&s, g, v, &sl);
+        uint64_t expanded[DENSE];
+        memset(expanded, 0, sizeof expanded);
+        for (size_t i = 0; i < sl; ++i) {
+            CHECK(e[i].count > 0 && e[i].index < len);
+            CHECK(i == 0 || e[i - 1].index < e[i].index);
+            if (e[i].index < len) {
+                expanded[e[i].index] = e[i].count;
+            }
+        }
+        CHECK(dense_cmp(expanded, dense, len) == 0);
+    }
+    canon_partition_free(&p);
+    canon_p1_scratch_free(&s);
+    canon_root_free(&x);
+}
+
 int main(void)
 {
     test_compare_hand();
     test_hand();
+    test_high_degree();
     test_random_against_dense();
     return check_finish("test_signature");
 }
