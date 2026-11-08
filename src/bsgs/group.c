@@ -30,6 +30,16 @@ canon_status canon_group_alloc(const canon_group_ops *ops, uint32_t degree, void
     return CANON_COMPLETE;
 }
 
+/* Release a signs block (spec 8.4 storage), or nothing for NULL. */
+static void group_signs_free(canon_group_signs *s)
+{
+    if (s != NULL) {
+        canon_perm_table_free(&s->gens);
+        canon_mem_free(s->signs);
+        canon_mem_free(s);
+    }
+}
+
 void canon_group_share(const canon_group *group)
 {
     if (group != NULL) {
@@ -42,11 +52,7 @@ void canon_group_unshare(const canon_group *group)
     if (group != NULL && canon_ref_release(group->refs)) {
         canon_group *owned = group->block; /* the allocation, now unreferenced */
         owned->ops->destroy(owned->impl);
-        if (owned->signs != NULL) {
-            canon_perm_table_free(&owned->signs->gens);
-            canon_mem_free(owned->signs->signs);
-            canon_mem_free(owned->signs);
-        }
+        group_signs_free(owned->signs);
         canon_perm_table_free(&owned->gens);
         canon_mem_free(owned);
     }
@@ -107,6 +113,10 @@ canon_status canon_group_set_signs(canon_group *group, const uint32_t *gens, siz
         memcpy(copy, signs, count * sizeof *copy);
     }
     s->signs = copy;
+    /* B-kernel-05: replace, do not leak, any previous signs block (as
+     * canon_group_set_generators replaces its table); the new block is complete first,
+     * so a failure above left the handle unchanged (spec 17). */
+    group_signs_free(group->signs);
     group->signs = s;
     return CANON_COMPLETE;
 }

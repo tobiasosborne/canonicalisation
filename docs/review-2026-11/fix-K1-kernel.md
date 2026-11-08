@@ -100,3 +100,24 @@ successful runs are unchanged.
 `K = ⟨(1 2)⟩` (and symmetrically) must find `(0 1)` resp. `(1 2)` outside; Sym(3)
 from two presentations must give "nothing outside". `test_coset_least: ok` and
 `test_group_stream: ok` (Group bytes of the production caller unchanged).
+
+## B-kernel-05 — `canon_group_set_signs` leaks on a second call
+
+**Confirmed.** `src/bsgs/group.c` assigned `group->signs = s` without releasing any
+existing block; the §11.2 live-memory ledger showed the leak directly (new test:
+live bytes grew on the second call and never returned to baseline after release).
+
+**Change.** A new `group_signs_free()` helper in `src/bsgs/group.c` (also used by
+`canon_group_unshare`, replacing its open-coded triple) is called on the previous
+block after the new one is fully built, mirroring `canon_group_set_generators`;
+failure paths are unchanged, so a failed call still leaves the handle unchanged
+(spec §17). The `src/bsgs/group.h` contract now says a previous block is freed
+(the old "(signs NULL)" on failure was wrong for a second call). No production
+caller calls it twice today (both backends call it once on a fresh handle), so
+behaviour there is identical.
+
+**Tests.** `tests/c/test_signed_group.c`, new `set_signs_twice()`: three calls with
+different signs/counts; the replacement content is read back each time, live bytes
+after a same-size second call equal those after the first, and after
+`canon_group_release` live bytes return exactly to the pre-create baseline.
+`test_signed_group: ok`, `test_signed: ok`.
